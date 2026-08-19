@@ -87,6 +87,37 @@
 #
 # Variáveis de ambiente exigidas no processo que arranca o `dsh`:
 #   ADMIN_USER, ADMIN_PASS, TELEGRAM_BOT_TOKEN   (ver README.md)
+#
+# -----------------------------------------------------------------------------
+# >>> ORDEM DE CARREGAMENTO: REQUISITO DURO, NÃO VERIFICÁVEL PELO PLUGIN <<<
+# -----------------------------------------------------------------------------
+# O `ctx.intercept` do plugin só envolve os registos feitos DEPOIS do `apply()`
+# dele. Se o pacote que regista `/api` — ou o `dsh-host-frontend-static`, que
+# monta o fallback da SPA — for resolvido ANTES, essas superfícies respondem
+# SEM CREDENCIAL e o plugin não tem como saber.
+#
+# NÃO é hipótese remota: `/api` e a SPA vêm da Camada 1 (Bundle) e este
+# manifesto é Camada 2 (Profile). Reproduzido em laboratório — com o registo
+# antes do `apply`, um POST sem credencial para `/api/commands/execute`
+# devolveu 200 e a RPC executou.
+#
+# COMO GARANTIR A ORDEM:
+#   1. a entrada `guarded-bot-orchestrator` ([2/3] abaixo) tem de vir ANTES,
+#      nesta lista `insert`, de qualquer entrada que registe `/api` ou o
+#      fallback da SPA — está deliberadamente logo a seguir à reescrita do
+#      servidor web, que é a primeira;
+#   2. confirma que nenhuma camada de precedência superior (Camada 3/Home ou um
+#      `--patch` da CLI) reinsere ou reordena essas entradas depois desta;
+#   3. VERIFICA no arranque, que é a única prova que vale:
+#
+#        curl -s -o /dev/null -w '%{http_code}\n' \
+#          -X POST http://127.0.0.1:3080/api/commands/execute
+#        # 401 -> correcto.   200 -> ORDEM ERRADA, /api está aberta.
+#
+# PORQUE NÃO HÁ ASSERÇÃO AUTOMÁTICA: a superfície tipada de `WebServer` expõe
+# `host`, `port`, `register`, `registerFallback` e `registerUpgrade` — e nada
+# que permita enumerar rotas já registadas. O plugin emite um `warn` ruidoso no
+# arranque a declarar este requisito; detectá-lo é impossível nesta versão.
 # =============================================================================
 
 - insert:
@@ -167,10 +198,13 @@
     # [2/3] dsh-guarded-bot-orchestrator — O PLUGIN DESTA DISTRIBUIÇÃO
     # =========================================================================
     # O QUÊ: regista o orquestrador guardado. Ele faz duas coisas:
-    #        (a) intercepta o `ctx.webServer` e barra os prefixos guardados
-    #            (`/api`) com Basic Auth, valida no carregamento que o
-    #            ENDEREÇO DE BIND consta da allowlist `allowedHosts`, e recusa
-    #            permissões proibidas como `danger-full-access`;
+    #        (a) intercepta o `ctx.webServer` — `register`, `registerFallback`
+    #            e `registerUpgrade` — e barra com Basic Auth os prefixos
+    #            guardados (`/api`), o fallback da SPA e todo o handshake de
+    #            WebSocket; valida no carregamento que o ENDEREÇO DE BIND
+    #            consta da allowlist `allowedHosts`, e mantém um veto de
+    #            permissões proibidas como `danger-full-access` (defesa em
+    #            profundidade — ver a nota em `deniedPermissions`);
     #        (b) mantém, sob `ctx.effect()`, um worker de long-polling do
     #            Telegram como subprocesso atómico (spawn via
     #            `ctx.subprocess`, disposer LIFO, tree-kill garantido).
@@ -261,24 +295,63 @@
         # Prefixos de rota que exigem autenticação antes de qualquer
         # processamento. `/api` é a sub-estação RPC descrita na #853 — é
         # exatamente ela que respondia sem credenciais.
+        #
+        # CADA ENTRADA TEM DE COMEÇAR POR '/': o plugin recusa arrancar de
+        # outro modo. Um prefixo como 'api' (sem barra) não casa com caminho
+        # nenhum e produz o pior modo de falha possível — silencioso e com
+        # aparência de sucesso: `/api/commands/execute` responde 200 sem
+        # credencial ENQUANTO a SPA continua a pedir senha (o fallback é
+        # guardado incondicionalmente), e o administrador vê o prompt e conclui
+        # que está protegido. LISTA VAZIA tem o mesmo efeito e produz um `warn`
+        # ruidoso no arranque.
+        #
+        # NOTA — o handshake de WebSocket (`registerUpgrade`) é guardado por
+        # INTEIRO, sem olhar a esta lista: os WebSockets não estão sujeitos a
+        # same-origin policy, pelo que qualquer página aberta no navegador da
+        # máquina poderia abrir `ws://127.0.0.1:3080/...` sem credencial.
         guardedPrefixes:
           - '/api'
-        # Permissões que o plugin recusa mesmo a um pedido AUTENTICADO. É o
-        # travão final contra `commands/execute` a injetar
-        # `/permission danger-full-access` e a derrubar o confinamento
-        # `workspace-write` do Sandbox.
+        # Permissões que o plugin recusa mesmo a um pedido AUTENTICADO, através
+        # do evento em cascata `security/permission-elevate`.
+        #
+        # HONESTIDADE SOBRE O ALCANCE (não é o travão principal): esse evento é
+        # DECLARADO pelo plugin e NENHUM componente documentado do DSH o emite
+        # hoje. O comando perigoso viaja no CORPO do POST para
+        # `/api/commands/execute`, e o portão deliberadamente não lê o corpo.
+        # Este ouvinte é DEFESA EM PROFUNDIDADE, pronto para o dia em que o
+        # evento passe a ser emitido. O que fecha de facto a #853 -> #1769 é o
+        # portão de autenticação + allowlist de origem, mais o bind de loopback.
+        # LISTA VAZIA = nenhuma elevação vetada; o plugin avisa no arranque.
         deniedPermissions:
           - 'danger-full-access'
 
         # --- Worker de long-polling ------------------------------------------
         # Processo filho de longa duração, fora do event loop central do
         # Node, para não monopolizar os pools HTTP internos do DSH.
+        #
+        # AMBIENTE DO WORKER: o plugin NÃO herda `process.env`. Monta um
+        # ambiente a partir de uma allowlist (PATH, HOME, TMPDIR, LANG, LC_*,
+        # TZ, PYTHON*, raízes TLS, SystemRoot/ComSpec no Windows) mais o
+        # `TELEGRAM_BOT_TOKEN`. Porquê: herdar o ambiente inteiro entregava
+        # `ADMIN_USER`/`ADMIN_PASS` — as credenciais do plano de controlo lidas
+        # acima — a um binário Python de terceiros que consome input arbitrário
+        # da Internet. Comprometido o bot, bastava ler `/proc/self/environ`
+        # para autenticar no plano de controlo: exatamente o pivô remoto->local
+        # que este plugin existe para impedir. Precisas de mais variáveis (um
+        # proxy corporativo, por exemplo)? Acrescenta-as à allowlist em
+        # `src/index.ts` (`WORKER_ENV_ALLOWLIST`), explicitamente.
         worker:
           command: 'python3'
           args:
             - 'bot_long_polling.py'
           # Diretório de trabalho absoluto do worker. Absoluto de propósito:
           # o cwd do processo `dsh` não é garantido.
+          #
+          # TEM DE EXISTIR: o plugin valida no arranque que este caminho existe
+          # e é um diretório. Um cwd inexistente faz o spawn falhar com ENOENT,
+          # e uma falha de spawn NÃO emite 'exit' (emite 'error' e 'close') —
+          # é tratada, mas gastaria o orçamento de reinícios a repetir um erro
+          # que nunca se resolve sozinho.
           cwd: '/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator/worker'
           # Token do bot injetado a partir do ambiente pelo mesmo mecanismo
           # `!!js`. NUNCA escrever o token literal aqui.
@@ -290,10 +363,20 @@
           token: !!js '(() => { const t = process.env.TELEGRAM_BOT_TOKEN; if (!t) throw new Error("dsh-guarded-bot-orchestrator: defina TELEGRAM_BOT_TOKEN. worker.token e string no contrato congelado; recuso arrancar com undefined."); return t })()'
           # --- Recuo exponencial na reconexão/reinício do worker ------------
           # Mitiga crash-loops: se o worker morre, espera-se `initialDelayMs`
-          # e duplica-se o atraso a cada nova falha até ao teto
-          # `maxDelayMs`. Esgotado o orçamento `maxAttempts`, a recuperação
-          # CESSA e o plugin desregista-se ativamente — falhar alto e em
-          # silêncio é pior do que falhar alto e visível.
+          # e duplica-se o atraso a cada nova falha até ao teto `maxDelayMs`.
+          # O jitter é somado POR CIMA da base, nunca subtraído dela: o piso do
+          # atraso é sempre `initialDelayMs`.
+          #
+          # DIVERGÊNCIA DOCUMENTADA face à tabela do cliente MCP, que descreve
+          # `maxAttempts` como cessando a recuperação E "desregistando
+          # ativamente o plugin até recarregamento manual": a superfície tipada
+          # desta distribuição (`types/cordis/index.d.ts`) NÃO expõe qualquer
+          # forma de auto-desregisto — `Context` tem `intercept`, `waterfall`,
+          # `parallel`, `on`, `effect` e `get`, e nada que remova a própria
+          # Fiber. Em vez de inventar API inexistente, o plugin entra num
+          # ESTADO TERMINAL explícito (`supervisor.exhausted`, que impede
+          # qualquer novo arranque) e emite um erro inequívoco. Ver README.md,
+          # secção "Divergências assumidas".
           backoff:
             # Valores nominais documentados do DSH (reconnect.initialDelayMs
             # / reconnect.maxDelayMs).

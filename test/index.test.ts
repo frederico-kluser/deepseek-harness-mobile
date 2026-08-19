@@ -20,17 +20,22 @@
 
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { tmpdir } from 'node:os'
 import { describe, it } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 import type { Context, Disposer } from '@deepseek-ai/cordis'
-import type { WebHandler, WebServer } from '@deepseek-ai/dsh-host-webserver'
+import type { WebHandler, WebServer, WebUpgradeHandler } from '@deepseek-ai/dsh-host-webserver'
 import type { ChildProcess, SpawnOptions } from '@deepseek-ai/dsh-host-subprocess'
 
 import {
   apply,
   assertSecureBind,
   assertValidConfig,
+  buildWorkerEnv,
+  canonicalRequestPath,
   computeBackoffDelay,
   createWorkerSupervisor,
   inject,
@@ -39,12 +44,21 @@ import {
   name,
   normalizeRemoteAddress,
   requestsDeniedPermission,
+  routeMayServeGuardedPath,
   verifyBasicAuth,
   type Config,
   type Scheduler,
   type SupervisorDeps,
   type TimerHandle,
+  type WorkerSupervisor,
 } from '../src/index.ts'
+
+/**
+ * `assertValidConfig` exige que `worker.cwd` EXISTA (uma falha de spawn por
+ * cwd inexistente nao emite `'exit'`, ver A-HIGH). Usa-se o diretorio temporario
+ * do sistema, que existe sempre e nao precisa de limpeza.
+ */
+const WORKER_CWD = tmpdir()
 
 /* ========================================================================== */
 /* Credenciais de teste                                                       */
@@ -93,11 +107,17 @@ interface RouteRecord {
   handler: WebHandler
 }
 
+interface UpgradeRecord {
+  path: string
+  handler: WebUpgradeHandler
+}
+
 class FakeWebServer {
   host = '127.0.0.1'
   port = 3080
   fallbackHandler: WebHandler | undefined = undefined
   readonly routes: RouteRecord[] = []
+  readonly upgrades: UpgradeRecord[] = []
   readonly disposed: string[] = []
 
   register(route: RouteRecord): Disposer {
@@ -114,9 +134,10 @@ class FakeWebServer {
     }
   }
 
-  registerUpgrade(): Disposer {
+  registerUpgrade(route: UpgradeRecord): Disposer {
+    this.upgrades.push(route)
     return (): void => {
-      this.disposed.push('upgrade')
+      this.disposed.push(`upgrade:${route.path}`)
     }
   }
 
@@ -125,15 +146,75 @@ class FakeWebServer {
   }
 }
 
+/**
+ * Duble do `Duplex` de um handshake de upgrade. Num tratador de `'upgrade'`
+ * nao ha `ServerResponse`: quem recusa escreve a resposta HTTP CRUA no socket
+ * e destroi-o. E isso que se observa aqui.
+ */
+class FakeSocket {
+  written = ''
+  destroyed = false
+
+  write(chunk: string): boolean {
+    this.written += chunk
+    return true
+  }
+
+  destroy(): void {
+    this.destroyed = true
+  }
+
+  asDuplex(): Duplex {
+    return this as unknown as Duplex
+  }
+}
+
+/**
+ * Duble de `ChildProcess` FIEL AO `node:child_process` no que interessa ao
+ * ciclo de vida.
+ *
+ * PORQUE ISTO IMPORTA (achado A-HIGH): a versao anterior deste duble tinha
+ * `killed = false` fixo e IGNORAVA o `AbortSignal`. A suite exercitava assim um
+ * estado que NAO EXISTE em producao, e o teste do tree-kill passava apenas
+ * porque o duble mentia -- prova por mutacao: remover a guarda `current.killed`
+ * do disposer deixava 49/49 testes a passar, apesar de essa guarda tornar o
+ * tree-kill codigo morto e deixar netos orfaos.
+ *
+ * O que o Node faz de verdade, e que este duble replica:
+ *   - ao abortar o `AbortSignal`, `abortChildProcess()` chama `child.kill()`
+ *     SINCRONAMENTE (logo `killed` passa a `true` durante o proprio
+ *     `abortController.abort()`);
+ *   - se esse `kill()` devolver `true`, e emitido um `'error'` com um
+ *     AbortError.
+ *
+ * O que NAO se replica (de proposito): o `'exit'` assincrono, que no Node
+ * depende do processo real. Cada teste emite-o explicitamente quando quer.
+ */
 class FakeChildProcess extends EventEmitter {
   pid: number | undefined
   killed = false
+  /** Sinais entregues por `kill()` (observabilidade do duble). */
+  readonly killCalls: Array<NodeJS.Signals | number | undefined> = []
   stdout: EventEmitter | null = new EventEmitter()
   stderr: EventEmitter | null = new EventEmitter()
 
-  constructor(pid: number | undefined) {
+  constructor(pid: number | undefined, signal?: AbortSignal | undefined) {
     super()
     this.pid = pid
+
+    signal?.addEventListener('abort', (): void => {
+      if (this.kill()) {
+        const abortError = new Error('The operation was aborted')
+        abortError.name = 'AbortError'
+        this.emit('error', abortError)
+      }
+    })
+  }
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    this.killCalls.push(signal)
+    this.killed = true
+    return true
   }
 }
 
@@ -150,7 +231,7 @@ class FakeSubprocessService {
   readonly children: FakeChildProcess[] = []
 
   spawn(command: string, args: readonly string[], options?: SpawnOptions): ChildProcess {
-    const child = new FakeChildProcess(this.pid)
+    const child = new FakeChildProcess(this.pid, options?.signal)
     this.calls.push({ command, args, options })
     this.children.push(child)
     return child as unknown as ChildProcess
@@ -242,6 +323,10 @@ class FakeContext {
   registerInterceptor(): (this: WebServer, route: RouteRecord) => Disposer {
     return this.methods()['register'] as (this: WebServer, route: RouteRecord) => Disposer
   }
+
+  registerUpgradeInterceptor(): (this: WebServer, route: UpgradeRecord) => Disposer {
+    return this.methods()['registerUpgrade'] as (this: WebServer, route: UpgradeRecord) => Disposer
+  }
 }
 
 class FakeResponse {
@@ -295,6 +380,8 @@ interface ScheduledTask {
   delayMs: number
   callback: () => void
   cleared: boolean
+  /** Ja disparou. Um temporizador que disparou deixou de estar VIVO. */
+  fired: boolean
 }
 
 class FakeScheduler implements Scheduler {
@@ -303,7 +390,13 @@ class FakeScheduler implements Scheduler {
   private nextId = 1
 
   setTimeout(callback: () => void, delayMs: number): TimerHandle {
-    const task: ScheduledTask = { id: this.nextId++, delayMs, callback, cleared: false }
+    const task: ScheduledTask = {
+      id: this.nextId++,
+      delayMs,
+      callback,
+      cleared: false,
+      fired: false,
+    }
     this.scheduled.push(task)
     return task
   }
@@ -314,14 +407,16 @@ class FakeScheduler implements Scheduler {
     this.clearedIds.push(task.id)
   }
 
+  /** Temporizadores VIVOS: agendados, por cancelar e ainda por disparar. */
   get pending(): ScheduledTask[] {
-    return this.scheduled.filter((task) => !task.cleared)
+    return this.scheduled.filter((task) => !task.cleared && !task.fired)
   }
 
   runLast(): void {
     const task = this.scheduled[this.scheduled.length - 1]
     if (task === undefined) throw new Error('nenhuma tarefa agendada')
     if (task.cleared) throw new Error('tarefa ja cancelada')
+    task.fired = true
     task.callback()
   }
 
@@ -345,7 +440,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     worker: {
       command: 'python3',
       args: ['bot_long_polling.py'],
-      cwd: '/tmp/dsh-worker',
+      cwd: WORKER_CWD,
       token: 'token-de-teste',
       backoff: {
         initialDelayMs: 500,
@@ -393,6 +488,34 @@ function mountRoute(
   return { record, disposer }
 }
 
+/** Monta um handshake de upgrade e devolve o registo efetivamente recebido. */
+function mountUpgrade(
+  ctx: FakeContext,
+  route: UpgradeRecord,
+): { record: UpgradeRecord; disposer: Disposer } {
+  const disposer = ctx.registerUpgradeInterceptor().call(ctx.webServer.asWebServer(), route)
+  const record = ctx.webServer.upgrades[ctx.webServer.upgrades.length - 1]
+  if (record === undefined) throw new Error('registerUpgrade nao chegou ao servidor')
+  return { record, disposer }
+}
+
+/**
+ * Corre um handshake de upgrade guardado e espera pela decisao.
+ *
+ * O tratador de `'upgrade'` e SINCRONO por assinatura (`=> void`) mas decide
+ * dentro de uma IIFE assincrona; um `setImmediate` basta para drenar as
+ * microtasks dessa cascata antes de observar o socket.
+ */
+async function runUpgrade(
+  handler: WebUpgradeHandler,
+  req: IncomingMessage,
+): Promise<FakeSocket> {
+  const socket = new FakeSocket()
+  handler(req, socket.asDuplex(), Buffer.alloc(0))
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  return socket
+}
+
 function makeSupervisorDeps(
   scheduler: FakeScheduler,
   overrides: Partial<SupervisorDeps> = {},
@@ -403,7 +526,10 @@ function makeSupervisorDeps(
   const deps: SupervisorDeps = Object.assign(
     {
       scheduler,
-      random: (): number => 1,
+      // `random() === 0` e agora o caso determinista da PROGRESSAO NOMINAL: o
+      // jitter passou a ser somado POR CIMA da base (piso = initialDelayMs),
+      // em vez de subtraido dela (piso = initialDelayMs/2).
+      random: (): number => 0,
       now: (): number => clock.value,
       platform: 'linux' as NodeJS.Platform,
       kill: (pid: number, signal: NodeJS.Signals): void => {
@@ -890,21 +1016,44 @@ describe('computeBackoffDelay', () => {
   }
 
   it('cresce de 500 ms ate ao teto de 10000 ms e satura', () => {
+    // `random() === 0` = sem jitter = progressao nominal exata. (Era `() => 1`
+    // quando o jitter era subtraido da base; agora e somado por cima dela.)
     const sequence = [1, 2, 3, 4, 5, 6, 7, 8].map((attempt) =>
-      computeBackoffDelay(attempt, backoff, () => 1),
+      computeBackoffDelay(attempt, backoff, () => 0),
     )
 
     assert.deepEqual(sequence, [500, 1000, 2000, 4000, 8000, 10000, 10000, 10000])
   })
 
-  it('nunca excede maxDelayMs nem desce abaixo de metade da base (jitter)', () => {
+  it('o PISO nunca fica abaixo de initialDelayMs (jitter por cima da base)', () => {
+    // Regressao do achado A-LOW: com "equal jitter" (base/2 + random*base/2) o
+    // atraso da primeira tentativa descia a 250 ms -- METADE do initialDelayMs
+    // de 500 ms que o DSH prescreve como base cronologica inicial imposta.
+    for (const random of [0, 0.001, 0.25, 0.5, 0.75, 1]) {
+      assert.equal(
+        computeBackoffDelay(1, backoff, () => random) >= backoff.initialDelayMs,
+        true,
+        `random=${random} nao pode produzir atraso abaixo de initialDelayMs`,
+      )
+    }
+
+    for (let attempt = 1; attempt <= 20; attempt += 1) {
+      for (const random of [0, 0.3, 1]) {
+        const delay = computeBackoffDelay(attempt, backoff, () => random)
+        assert.equal(delay >= backoff.initialDelayMs, true)
+        assert.equal(delay <= backoff.maxDelayMs, true)
+      }
+    }
+  })
+
+  it('nunca excede maxDelayMs e o atraso cresce com o jitter', () => {
     for (let attempt = 1; attempt <= 20; attempt += 1) {
       const low = computeBackoffDelay(attempt, backoff, () => 0)
       const high = computeBackoffDelay(attempt, backoff, () => 1)
       const mid = computeBackoffDelay(attempt, backoff, () => 0.5)
 
       assert.equal(high <= backoff.maxDelayMs, true)
-      assert.equal(low >= high / 2, true)
+      assert.equal(low <= high, true, 'a base e o piso; o jitter so pode somar')
       assert.equal(mid >= low && mid <= high, true)
     }
   })
@@ -934,7 +1083,7 @@ describe('supervisor do worker de long-polling', () => {
     assert.notEqual(call, undefined)
     assert.equal(call?.command, 'python3')
     assert.deepEqual(call?.args, ['bot_long_polling.py'])
-    assert.equal(call?.options?.cwd, '/tmp/dsh-worker')
+    assert.equal(call?.options?.cwd, WORKER_CWD)
     assert.deepEqual(call?.options?.stdio, ['ignore', 'pipe', 'pipe'])
     assert.equal(call?.options?.detached, true, 'sem detached o tree-kill por -pid falha com ESRCH')
     assert.equal(call?.options?.signal instanceof AbortSignal, true)
@@ -1210,5 +1359,747 @@ describe('fail loud at load', () => {
 
   it('aceita trustedRemotes vazio (fail-closed e configuracao valida)', () => {
     assert.doesNotThrow(() => assertValidConfig(makeConfig({ trustedRemotes: [] })))
+  })
+})
+
+/* ========================================================================== */
+/* 11. A-CRITICAL / A-HIGH: o tree-kill NAO pode ser codigo morto             */
+/* ========================================================================== */
+
+describe('tree-kill do grupo de processos (achado A-CRITICAL)', () => {
+  it('o duble replica o Node: abortar chama kill() e poe killed = true', () => {
+    const ctx = new FakeContext()
+    ctx.subprocess.pid = 4242
+
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    const child = ctx.subprocess.lastChild()
+    assert.equal(child.killed, false, 'antes do abort o filho nao esta morto')
+
+    supervisor.dispose()
+
+    // ESTE e o estado real de producao que o duble anterior escondia: quando o
+    // disposer chega a linha do tree-kill, `killed` JA e `true`, porque o Node
+    // chama `child.kill()` sincronamente ao processar o abort.
+    assert.equal(child.killed, true)
+    assert.deepEqual(child.killCalls.length, 1, 'o abort entregou exatamente um kill ao filho')
+  })
+
+  it('faz tree-kill do GRUPO mesmo com child.killed ja a true', () => {
+    const ctx = new FakeContext()
+    ctx.subprocess.pid = 4242
+
+    const scheduler = new FakeScheduler()
+    const { deps, kills } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+    supervisor.dispose()
+
+    // ANTI-REGRESSAO DIRETA. Se alguem reintroduzir a guarda
+    // `if (current === undefined || current.killed) return` do exemplo canonico
+    // da documentacao, este assert falha: `killed` e `true` neste ponto e o
+    // `process.kill(-pid, 'SIGKILL')` nunca corre -- que e exatamente como os
+    // netos do worker sobreviviam reparentados ao init.
+    assert.deepEqual(kills, [[-4242, 'SIGKILL']], 'o kill do GRUPO (-pid) tem de acontecer')
+  })
+
+  it('o disposer continua idempotente: 3 chamadas, 1 kill', () => {
+    const ctx = new FakeContext()
+    ctx.subprocess.pid = 909
+
+    const scheduler = new FakeScheduler()
+    const { deps, kills } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    assert.doesNotThrow(() => {
+      supervisor.dispose()
+      supervisor.dispose()
+      supervisor.dispose()
+    })
+
+    assert.deepEqual(kills, [[-909, 'SIGKILL']])
+  })
+})
+
+/* ========================================================================== */
+/* 12. A-HIGH: falha de spawn tem de reiniciar (nao emite 'exit')             */
+/* ========================================================================== */
+
+describe('falha de spawn (achado A-HIGH)', () => {
+  it("reinicia perante 'error' (ENOENT), evento que NAO vem acompanhado de 'exit'", () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    // Falha de spawn real do Node: error(ENOENT) -> close(code=-2). Nunca 'exit'.
+    ctx.subprocess
+      .lastChild()
+      .emit('error', Object.assign(new Error('spawn python3 ENOENT'), { code: 'ENOENT' }))
+
+    assert.equal(scheduler.pending.length, 1, 'a falha de spawn TEM de agendar reinicio')
+    assert.deepEqual(scheduler.delays(), [500])
+    assert.equal(supervisor.attempts, 1, 'e TEM de consumir orcamento')
+    assert.equal(ctx.logger.has('error', 'ENOENT'), true)
+
+    scheduler.runLast()
+    assert.equal(ctx.subprocess.calls.length, 2, 'o worker volta a ser instanciado')
+
+    supervisor.dispose()
+  })
+
+  it("nao reinicia duas vezes quando 'error' e 'exit' disparam na mesma instancia", () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    const child = ctx.subprocess.lastChild()
+    child.emit('error', new Error('falhou'))
+    child.emit('exit', 1, null)
+
+    // Desarme por instancia: um filho consome o orcamento UMA vez.
+    assert.equal(scheduler.scheduled.length, 1)
+    assert.equal(supervisor.attempts, 1)
+
+    supervisor.dispose()
+  })
+
+  it('recusa no arranque um worker.cwd que nao existe', () => {
+    const semCwd = makeConfig()
+    semCwd.worker.cwd = '/caminho/que/nao/existe/dsh-worker'
+
+    assert.throws(() => assertValidConfig(semCwd), /worker\.cwd/u)
+  })
+
+  it('recusa no arranque um worker.cwd que existe mas nao e diretorio', () => {
+    const ficheiro = makeConfig()
+    // O proprio ficheiro de testes existe e NAO e um diretorio.
+    ficheiro.worker.cwd = fileURLToPath(import.meta.url)
+
+    assert.throws(() => assertValidConfig(ficheiro), /nao e um diretorio/u)
+  })
+})
+
+/* ========================================================================== */
+/* 13. A-MEDIUM: substituicao de filho/temporizador e start() idempotente     */
+/* ========================================================================== */
+
+describe('substituicao de recursos (achado A-MEDIUM)', () => {
+  it('o filho anterior e morto quando um novo o substitui', () => {
+    const ctx = new FakeContext()
+    ctx.subprocess.pid = 222
+
+    const scheduler = new FakeScheduler()
+    const { deps, kills } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    ctx.subprocess.lastChild().emit('exit', 1, null)
+    scheduler.runLast() // spawnOnce() -> substitui o filho
+
+    assert.equal(ctx.subprocess.children.length, 2)
+    assert.deepEqual(kills, [[-222, 'SIGKILL']], 'o 1o filho nao pode ficar sem kill')
+
+    supervisor.dispose()
+    assert.deepEqual(
+      kills,
+      [
+        [-222, 'SIGKILL'],
+        [-222, 'SIGKILL'],
+      ],
+      'o 2o filho e morto pelo disposer',
+    )
+  })
+
+  it('start() repetido nao instancia um segundo worker', () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+    supervisor.start()
+    supervisor.start()
+
+    assert.equal(ctx.subprocess.calls.length, 1)
+    assert.equal(ctx.logger.has('warn', 'start() repetido ignorado'), true)
+
+    supervisor.dispose()
+  })
+
+  it('nao deixa dois temporizadores vivos e o disposer nao deixa nenhum', () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    ctx.subprocess.lastChild().emit('exit', 1, null)
+    scheduler.runLast()
+    ctx.subprocess.lastChild().emit('exit', 1, null)
+
+    assert.equal(scheduler.pending.length, 1, 'so um reinicio pendente de cada vez')
+
+    supervisor.dispose()
+    assert.equal(scheduler.pending.length, 0, 'o disposer nao deixa temporizadores vivos')
+  })
+
+  it('remove os ouvintes do filho quando ele termina', () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    const child = ctx.subprocess.lastChild()
+    assert.equal(child.listenerCount('exit'), 1)
+    assert.equal(child.stdout?.listenerCount('data'), 1)
+
+    child.emit('exit', 1, null)
+
+    assert.equal(child.listenerCount('exit'), 0, 'ouvinte de exit tem de ser removido')
+    assert.equal(child.stdout?.listenerCount('data'), 0, 'ouvinte de stdout idem')
+    assert.equal(
+      child.listenerCount('error'),
+      1,
+      "tem de sobrar o absorvedor de 'error' (um EventEmitter sem ele LANCA)",
+    )
+
+    supervisor.dispose()
+  })
+})
+
+/* ========================================================================== */
+/* 14. A-MEDIUM: orcamento esgotado = estado terminal explicito               */
+/* ========================================================================== */
+
+describe('estado terminal do orcamento (achado A-MEDIUM)', () => {
+  it('expoe `exhausted` e recusa qualquer novo arranque', () => {
+    const ctx = new FakeContext()
+    const config = makeConfig()
+    config.worker.backoff.maxAttempts = 2
+
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), config, deps)
+    supervisor.start()
+
+    assert.equal(supervisor.exhausted, false)
+
+    for (let i = 0; i < 2; i += 1) {
+      ctx.subprocess.lastChild().emit('exit', 1, null)
+      scheduler.runLast()
+    }
+    ctx.subprocess.lastChild().emit('exit', 1, null) // 3a falha: ultrapassa o orcamento
+
+    assert.equal(supervisor.exhausted, true, 'estado terminal tem de ser observavel')
+    assert.equal(ctx.logger.has('error', 'estado terminal'), true)
+    assert.equal(ctx.logger.has('error', 'nao expoe auto-desregisto'), true)
+    assert.equal(scheduler.pending.length, 0, 'nada mais e agendado')
+
+    supervisor.dispose()
+  })
+})
+
+/* ========================================================================== */
+/* 15. A-LOW: dispose reentrante durante o tratamento da saida                */
+/* ========================================================================== */
+
+describe('disposer reentrante (achado A-LOW)', () => {
+  it('nao agenda reinicio quando o dispose() acontece DURANTE o tratador de saida', () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const holder: { supervisor: WorkerSupervisor | undefined } = { supervisor: undefined }
+
+    // O `warn` imediatamente anterior ao agendamento e o ponto de reentrancia:
+    // simula um ouvinte de log (ou outra Fiber) que descarta o plugin nesse
+    // instante. Sem a re-verificacao de `disposed` antes do setTimeout, o
+    // temporizador nascia DEPOIS do clearTimeout do disposer.
+    ctx.logger.warn = (_scope: string, message: string): void => {
+      if (message.includes('Reinicio')) holder.supervisor?.dispose()
+    }
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    holder.supervisor = supervisor
+    supervisor.start()
+
+    ctx.subprocess.lastChild().emit('exit', 1, null)
+
+    assert.deepEqual(scheduler.scheduled, [], 'nenhum temporizador pode sobreviver ao disposer')
+  })
+})
+
+/* ========================================================================== */
+/* 16. B-CRITICAL: a credencial universal `undefined:undefined`               */
+/* ========================================================================== */
+
+describe('validacao do par descodificado de encodedAuthString (achado B-CRITICAL)', () => {
+  it('recusa dW5kZWZpbmVkOnVuZGVmaW5lZA== (= undefined:undefined)', () => {
+    const universal = Buffer.from('undefined:undefined').toString('base64')
+    assert.equal(universal, 'dW5kZWZpbmVkOnVuZGVmaW5lZA==')
+
+    assert.throws(
+      () => assertValidConfig(makeConfig({ encodedAuthString: universal })),
+      /literal 'undefined'/u,
+    )
+  })
+
+  it('recusa o literal undefined/null de qualquer um dos lados', () => {
+    for (const par of ['undefined:senha', 'admin:undefined', 'null:senha', 'admin:null']) {
+      assert.throws(
+        () => assertValidConfig(makeConfig({ encodedAuthString: Buffer.from(par).toString('base64') })),
+        /literal/u,
+        `'${par}' tinha de ser recusado`,
+      )
+    }
+  })
+
+  it('recusa um par sem ":" ou com um dos lados vazio', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ encodedAuthString: Buffer.from('semdoispontos').toString('base64') })),
+      /separado por ":"/u,
+    )
+    assert.throws(
+      () => assertValidConfig(makeConfig({ encodedAuthString: Buffer.from('admin:').toString('base64') })),
+      /vazios/u,
+    )
+    assert.throws(
+      () => assertValidConfig(makeConfig({ encodedAuthString: Buffer.from(':senha').toString('base64') })),
+      /vazios/u,
+    )
+  })
+
+  it('aceita uma credencial legitima', () => {
+    assert.doesNotThrow(() => assertValidConfig(makeConfig()))
+  })
+})
+
+/* ========================================================================== */
+/* 17. B-HIGH: ambiente minimo do worker (ADMIN_PASS nao viaja)               */
+/* ========================================================================== */
+
+describe('ambiente do worker por allowlist (achado B-HIGH)', () => {
+  it('nao propaga ADMIN_USER/ADMIN_PASS nem qualquer outro segredo do plano de controlo', () => {
+    const env = buildWorkerEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/dsh',
+        LANG: 'pt_PT.UTF-8',
+        LC_ALL: 'pt_PT.UTF-8',
+        TZ: 'Europe/Lisbon',
+        PYTHONUNBUFFERED: '1',
+        ADMIN_USER: 'admin',
+        ADMIN_PASS: 's3cr3t-do-plano-de-controlo',
+        AWS_SECRET_ACCESS_KEY: 'nao-devia-estar-aqui',
+        SSH_AUTH_SOCK: '/tmp/agent',
+      },
+      'token-do-bot',
+    )
+
+    assert.equal(env['ADMIN_PASS'], undefined, 'ADMIN_PASS NAO pode chegar ao worker')
+    assert.equal(env['ADMIN_USER'], undefined, 'ADMIN_USER NAO pode chegar ao worker')
+    assert.equal(env['AWS_SECRET_ACCESS_KEY'], undefined)
+    assert.equal(env['SSH_AUTH_SOCK'], undefined)
+
+    assert.equal(env['TELEGRAM_BOT_TOKEN'], 'token-do-bot')
+    assert.equal(env['PATH'], '/usr/bin')
+    assert.equal(env['HOME'], '/home/dsh')
+    assert.equal(env['LANG'], 'pt_PT.UTF-8')
+    assert.equal(env['LC_ALL'], 'pt_PT.UTF-8')
+    assert.equal(env['TZ'], 'Europe/Lisbon')
+    assert.equal(env['PYTHONUNBUFFERED'], '1')
+  })
+
+  it('o spawn real do supervisor tambem nao leva ADMIN_PASS', () => {
+    const anterior = process.env['ADMIN_PASS']
+    process.env['ADMIN_PASS'] = 's3cr3t-do-plano-de-controlo'
+
+    try {
+      const ctx = new FakeContext()
+      const scheduler = new FakeScheduler()
+      const { deps } = makeSupervisorDeps(scheduler)
+
+      const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+      supervisor.start()
+
+      const env = ctx.subprocess.calls[0]?.options?.env
+      assert.notEqual(env, undefined)
+      assert.equal(env?.['ADMIN_PASS'], undefined)
+      assert.equal(env?.['TELEGRAM_BOT_TOKEN'], 'token-de-teste')
+
+      supervisor.dispose()
+    } finally {
+      if (anterior === undefined) delete process.env['ADMIN_PASS']
+      else process.env['ADMIN_PASS'] = anterior
+    }
+  })
+})
+
+/* ========================================================================== */
+/* 18. B-HIGH / B-MEDIUM: avisos ruidosos e validacao de guardedPrefixes      */
+/* ========================================================================== */
+
+describe('avisos de arranque e validacao de prefixos', () => {
+  it('avisa em voz alta sobre o REQUISITO DE ORDEM DE CARREGAMENTO', () => {
+    const { ctx } = install()
+    assert.equal(ctx.logger.has('warn', 'REQUISITO DE ORDEM DE CARREGAMENTO'), true)
+  })
+
+  it('avisa quando guardedPrefixes esta vazio (parece seguro e nao esta)', () => {
+    const { ctx } = install({ guardedPrefixes: [] })
+    assert.equal(ctx.logger.has('warn', 'guardedPrefixes esta VAZIO'), true)
+  })
+
+  it('avisa quando deniedPermissions esta vazio', () => {
+    const { ctx } = install({ deniedPermissions: [] })
+    assert.equal(ctx.logger.has('warn', 'deniedPermissions esta VAZIO'), true)
+  })
+
+  it("recusa no arranque um prefixo sem '/' inicial", () => {
+    assert.throws(() => assertValidConfig(makeConfig({ guardedPrefixes: ['api'] })), /comecar por/u)
+    assert.throws(
+      () => assertValidConfig(makeConfig({ guardedPrefixes: ['/api', 'admin'] })),
+      /guardedPrefixes\[1\]/u,
+    )
+  })
+})
+
+/* ========================================================================== */
+/* 19. B-MEDIUM: rota ancestral (`prefix` em `/`) e normalizacao de caminho   */
+/* ========================================================================== */
+
+describe('rotas que PODEM servir um prefixo guardado (achado B-MEDIUM)', () => {
+  it('canonicaliza //api, /API, percent-encoding e segmentos ..', () => {
+    assert.equal(canonicalRequestPath('//api/commands/execute'), '/api/commands/execute')
+    assert.equal(canonicalRequestPath('/API'), '/api')
+    assert.equal(canonicalRequestPath('/%61pi'), '/api')
+    assert.equal(canonicalRequestPath('/%2561pi'), '/api')
+    assert.equal(canonicalRequestPath('/x/../api'), '/api')
+    assert.equal(canonicalRequestPath('\\api'), '/api')
+    assert.equal(canonicalRequestPath('/api/'), '/api')
+    assert.equal(canonicalRequestPath(undefined), '/')
+  })
+
+  it('isGuardedPath apanha as mesmas grafias sem apanhar /apinfo', () => {
+    assert.equal(isGuardedPath('//api/commands/execute', ['/api']), true)
+    assert.equal(isGuardedPath('/API/commands/execute', ['/api']), true)
+    assert.equal(isGuardedPath('/%61pi', ['/api']), true)
+    assert.equal(isGuardedPath('/apinfo', ['/api']), false)
+  })
+
+  it('routeMayServeGuardedPath cobre descendentes E ancestrais por prefixo', () => {
+    const prefixes = ['/api']
+
+    assert.equal(routeMayServeGuardedPath({ kind: 'exact', path: '/api/x' }, prefixes), true)
+    assert.equal(routeMayServeGuardedPath({ kind: 'prefix', path: '//api' }, prefixes), true)
+    assert.equal(routeMayServeGuardedPath({ kind: 'prefix', path: '/' }, prefixes), true)
+    assert.equal(routeMayServeGuardedPath({ kind: 'exact', path: '/' }, prefixes), false)
+    assert.equal(routeMayServeGuardedPath({ kind: 'prefix', path: '/outra' }, prefixes), false)
+    assert.equal(routeMayServeGuardedPath({ kind: 'prefix', path: '/api' }, []), false)
+  })
+
+  it('uma rota `prefix` em / NAO serve /api/commands/execute sem credencial', async () => {
+    const { ctx } = install()
+    let rpcExecuted = false
+
+    const original: WebHandler = (_req, res): void => {
+      rpcExecuted = true
+      res.writeHead(200)
+      res.end('{"ok":true}')
+    }
+
+    const { record } = mountRoute(ctx, { kind: 'prefix', path: '/', handler: original })
+    assert.notEqual(record.handler, original, 'a rota-raiz TEM de ser embrulhada')
+
+    const res = new FakeResponse()
+    await record.handler(
+      makeRequest({ method: 'POST', url: '/api/commands/execute', remoteAddress: '127.0.0.1' }),
+      res.asServerResponse(),
+    )
+
+    assert.equal(res.statusCode, 401)
+    assert.equal(rpcExecuted, false)
+  })
+
+  it('a mesma rota-raiz continua a servir os caminhos NAO guardados', async () => {
+    const { ctx } = install()
+    let served = false
+
+    const { record } = mountRoute(ctx, {
+      kind: 'prefix',
+      path: '/',
+      handler: (_req, res): void => {
+        served = true
+        res.writeHead(200)
+        res.end('spa')
+      },
+    })
+
+    const res = new FakeResponse()
+    await record.handler(makeRequest({ url: '/index.html' }), res.asServerResponse())
+
+    assert.equal(served, true, 'a rota-raiz nao guardada nao pode passar a exigir senha')
+    assert.equal(res.statusCode, 200)
+  })
+
+  it('uma rota registada em //api tambem e guardada', async () => {
+    const { ctx } = install()
+    let rpcExecuted = false
+
+    const { record } = mountRoute(ctx, {
+      kind: 'prefix',
+      path: '//api/commands',
+      handler: (): void => {
+        rpcExecuted = true
+      },
+    })
+
+    const res = new FakeResponse()
+    await record.handler(
+      makeRequest({ url: '//api/commands/execute', remoteAddress: '127.0.0.1' }),
+      res.asServerResponse(),
+    )
+
+    assert.equal(res.statusCode, 401)
+    assert.equal(rpcExecuted, false)
+  })
+})
+
+/* ========================================================================== */
+/* 20. B-MEDIUM: handshake de WebSocket sob o portao                          */
+/* ========================================================================== */
+
+describe('registerUpgrade guardado (achado B-MEDIUM)', () => {
+  it('recusa o handshake sem credencial com 401 escrito no socket cru', async () => {
+    const { ctx, config } = install()
+    let handshakeFeito = false
+
+    const { record } = mountUpgrade(ctx, {
+      path: '/ws',
+      handler: (): void => {
+        handshakeFeito = true
+      },
+    })
+
+    const socket = await runUpgrade(record.handler, makeRequest({ url: '/ws', remoteAddress: '127.0.0.1' }))
+
+    assert.equal(handshakeFeito, false, 'o WebSocket NAO pode ser estabelecido sem credencial')
+    assert.equal(socket.written.startsWith('HTTP/1.1 401 Unauthorized\r\n'), true, socket.written)
+    assert.equal(socket.written.includes(`WWW-Authenticate: Basic realm="${config.realm}"`), true)
+    assert.equal(socket.written.endsWith('\r\n\r\n'), true, 'a resposta crua precisa da linha em branco')
+    assert.equal(socket.destroyed, true)
+  })
+
+  it('recusa com 403 (sem desafio) uma origem fora de trustedRemotes', async () => {
+    const { ctx } = install()
+
+    const { record } = mountUpgrade(ctx, {
+      path: '/ws',
+      handler: (): void => {
+        throw new Error('nao devia ser alcancado')
+      },
+    })
+
+    const socket = await runUpgrade(
+      record.handler,
+      makeRequest({ url: '/ws', remoteAddress: '10.0.0.7', authorization: `Basic ${VALID_CREDENTIAL}` }),
+    )
+
+    assert.equal(socket.written.startsWith('HTTP/1.1 403 Forbidden\r\n'), true, socket.written)
+    assert.equal(socket.written.includes('WWW-Authenticate'), false, '403 nao desafia credencial')
+    assert.equal(socket.destroyed, true)
+  })
+
+  it('deixa passar o handshake com credencial valida, com head e socket intactos', async () => {
+    const { ctx } = install()
+    const recebido: { url: string | undefined; head: number | undefined } = {
+      url: undefined,
+      head: undefined,
+    }
+
+    const { record } = mountUpgrade(ctx, {
+      path: '/ws',
+      handler: (req, _socket, head): void => {
+        recebido.url = req.url
+        recebido.head = head.byteLength
+      },
+    })
+
+    const socket = await runUpgrade(
+      record.handler,
+      makeRequest({ url: '/ws', remoteAddress: '127.0.0.1', authorization: `Basic ${VALID_CREDENTIAL}` }),
+    )
+
+    assert.equal(recebido.url, '/ws')
+    assert.equal(recebido.head, 0)
+    assert.equal(socket.destroyed, false, 'o handshake aprovado nao pode destruir o socket')
+    assert.equal(socket.written, '')
+  })
+
+  it('propaga o disposer nativo de registerUpgrade', () => {
+    const { ctx } = install()
+    const { disposer } = mountUpgrade(ctx, { path: '/ws', handler: (): void => {} })
+
+    assert.equal(typeof disposer, 'function')
+    disposer()
+    assert.deepEqual(ctx.webServer.disposed, ['upgrade:/ws'])
+  })
+})
+
+/* ========================================================================== */
+/* 21. B-HIGH: tokenizador de permissoes endurecido                           */
+/* ========================================================================== */
+
+describe('tokenizador de deniedPermissions endurecido (achado B-HIGH)', () => {
+  it('apanha as evasoes que escapavam: _, percent-encoding e pontuacao nas bordas', () => {
+    const denied = ['danger-full-access']
+
+    for (const comando of [
+      '/permission danger_full_access',
+      '/permission danger%2Dfull%2Daccess',
+      '/permission danger%252Dfull%252Daccess',
+      '/permission .danger-full-access',
+      '/permission danger-full-access.',
+      '/permission "danger-full-access"',
+      '/permission DANGER_FULL_ACCESS',
+      '/permission danger.full.access',
+      '/permission danger+full+access',
+    ]) {
+      assert.equal(
+        requestsDeniedPermission(comando, denied),
+        'danger-full-access',
+        `'${comando}' tinha de ser vetado`,
+      )
+    }
+  })
+
+  it('continua a NAO apanhar permissoes distintas (sem falsos positivos)', () => {
+    const denied = ['danger-full-access']
+
+    assert.equal(requestsDeniedPermission('/permission danger-full-access-audit', denied), undefined)
+    assert.equal(requestsDeniedPermission('/permission workspace-write', denied), undefined)
+    assert.equal(requestsDeniedPermission('/permission read-only', denied), undefined)
+  })
+
+  it('canonicaliza tambem a agulha vinda da configuracao', () => {
+    assert.equal(
+      requestsDeniedPermission('/permission danger-full-access', ['DANGER_FULL_ACCESS']),
+      'DANGER_FULL_ACCESS',
+    )
+  })
+
+  it('o veto continua a curto-circuitar a cascata para as grafias evasivas', async () => {
+    const { ctx } = install()
+    let nextCalled = false
+
+    const result = await ctx
+      .asContext()
+      .waterfall('security/permission-elevate', '/permission danger%2Dfull%2Daccess', async () => {
+        nextCalled = true
+        return true
+      })
+
+    assert.equal(result, false)
+    assert.equal(nextCalled, false)
+  })
+})
+
+/* ========================================================================== */
+/* 22. B-LOW: bind curinga, realm Latin-1 e esquema Basic case-insensitive    */
+/* ========================================================================== */
+
+describe('achados B-LOW', () => {
+  it('L1: reconhece todas as grafias do bind curinga', () => {
+    for (const host of [
+      '0',
+      '0.0',
+      '0.0.0.0',
+      '0.0.0.0.',
+      '::',
+      '::0',
+      '[::]',
+      '0:0:0:0:0:0:0:0',
+      '0000:0000:0000:0000:0000:0000:0000:0000',
+      '::ffff:0.0.0.0',
+      '  0.0.0.0  ',
+    ]) {
+      assert.throws(
+        () => assertSecureBind(host, ['127.0.0.1', host]),
+        /Bind inseguro/u,
+        `'${host}' e o curinga e tinha de ser recusado`,
+      )
+    }
+  })
+
+  it('L1: nao confunde enderecos legitimos com o curinga', () => {
+    assert.doesNotThrow(() => assertSecureBind('127.0.0.1', ['127.0.0.1']))
+    assert.doesNotThrow(() => assertSecureBind('::1', ['::1']))
+    assert.doesNotThrow(() => assertSecureBind('10.0.0.7', ['10.0.0.7']))
+  })
+
+  it('L2: recusa no arranque um realm nao representavel em Latin-1', () => {
+    // Um cabecalho HTTP/1.1 viaja em Latin-1: isto rebentaria dentro do
+    // writeHead com ERR_INVALID_CHAR e devolveria resposta vazia em vez de 401.
+    assert.throws(() => assertValidConfig(makeConfig({ realm: 'DSH \u{1F512}' })), /realm/u)
+    assert.throws(() => assertValidConfig(makeConfig({ realm: 'DSH 你好' })), /realm/u)
+
+    // Latin-1 legitimo continua a passar (acentos do portugues estao abaixo de U+00FF).
+    assert.doesNotThrow(() => assertValidConfig(makeConfig({ realm: 'Interface Segura ção' })))
+  })
+
+  it('L3: o esquema Basic e comparado sem diferenciar maiusculas (RFC 7235)', () => {
+    assert.equal(verifyBasicAuth(`basic ${VALID_CREDENTIAL}`, VALID_CREDENTIAL), true)
+    assert.equal(verifyBasicAuth(`BASIC ${VALID_CREDENTIAL}`, VALID_CREDENTIAL), true)
+    assert.equal(verifyBasicAuth(`BaSiC ${VALID_CREDENTIAL}`, VALID_CREDENTIAL), true)
+
+    // O payload base64 continua sensivel a maiusculas.
+    assert.equal(verifyBasicAuth(`Basic ${VALID_CREDENTIAL.toLowerCase()}`, VALID_CREDENTIAL), false)
+    assert.equal(verifyBasicAuth(`Bearer ${VALID_CREDENTIAL}`, VALID_CREDENTIAL), false)
+  })
+
+  it('L3: uma rota /api aceita a credencial com o esquema em minusculas', async () => {
+    const { ctx } = install()
+    let rpcExecuted = false
+
+    const { record } = mountRoute(ctx, {
+      kind: 'exact',
+      path: '/api/health',
+      handler: (_req, res): void => {
+        rpcExecuted = true
+        res.writeHead(200)
+        res.end('ok')
+      },
+    })
+
+    const res = new FakeResponse()
+    await record.handler(
+      makeRequest({
+        url: '/api/health',
+        remoteAddress: '127.0.0.1',
+        authorization: `basic ${VALID_CREDENTIAL}`,
+      }),
+      res.asServerResponse(),
+    )
+
+    assert.equal(rpcExecuted, true)
+    assert.equal(res.statusCode, 200)
   })
 })

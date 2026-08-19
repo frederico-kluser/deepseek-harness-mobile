@@ -2,8 +2,9 @@
 
 Plugin Cordis para o **DeepSeek Harness (DSH) v0.1**. Faz duas coisas:
 
-1. **Guarda o plano de controlo HTTP.** Intercepta `ctx.webServer` e exige Basic Auth
-   nos prefixos guardados (`/api`), valida no carregamento que o **endereço de bind**
+1. **Guarda o plano de controlo HTTP.** Intercepta `ctx.webServer` — `register`,
+   `registerFallback` **e** `registerUpgrade` (handshake de WebSocket) — e exige Basic
+   Auth nos prefixos guardados (`/api`), valida no carregamento que o **endereço de bind**
    (`ctx.webServer.host`) não é `0.0.0.0`/`::` e consta da allowlist `allowedHosts`, e
    recusa permissões proibidas — nomeadamente `danger-full-access`.
    (`allowedHosts` é a allowlist do **endereço de bind** — a interface local onde se
@@ -14,7 +15,70 @@ Plugin Cordis para o **DeepSeek Harness (DSH) v0.1**. Faz duas coisas:
    loopback — por isso o manifesto entrega `['127.0.0.1']`.)
 2. **Orquestra um worker de long-polling.** Mantém um subprocesso de longa duração
    (bot do Telegram) sob `ctx.effect()`, com disposer LIFO, tree-kill garantido e
-   recuo exponencial contra crash-loops.
+   recuo exponencial contra crash-loops. O worker recebe um ambiente **construído a
+   partir de uma allowlist** — nunca `process.env` inteiro — para que `ADMIN_USER` e
+   `ADMIN_PASS` do plano de controlo nunca cheguem a um binário de terceiros que consome
+   input da Internet.
+
+## Requisitos de instalação segura (leia antes de aplicar)
+
+Três propriedades **não são verificáveis pelo plugin** e passam a ser responsabilidade
+de quem instala. O plugin avisa em voz alta no arranque sobre a primeira; as outras duas
+ficam documentadas aqui.
+
+### 1. Ordem de carregamento — obrigatória
+
+`ctx.intercept` só envolve os registos feitos **depois** do `apply()` deste plugin. Se o
+pacote que regista `/api` (ou o `dsh-host-frontend-static`, que monta o fallback da SPA)
+correr **antes**, essas superfícies respondem **sem credencial**. Não é hipótese remota:
+`/api` e a SPA vêm da **Camada 1 (Bundle)** e este plugin da **Camada 2 (Profile)**.
+Reproduzido em laboratório — com o registo antes do `apply`, um `POST` sem credencial
+para `/api/commands/execute` devolveu **200** e a RPC executou.
+
+**Como garantir a ordem:** a entrada `guarded-bot-orchestrator` do `cordis.patch.yml`
+tem de ser **resolvida antes** das entradas que registam `/api` e o fallback da SPA — na
+prática, colocá-la como **primeira entrada de plugin** do `insert` (a seguir apenas à
+reescrita do servidor web) e confirmar que nenhuma camada superior (Home, `--patch`)
+reordena ou reinsere aquelas entradas depois desta.
+
+**Como verificar que correu bem:** um `curl` sem credencial a `/api` tem de devolver
+`401`. Se devolver `200`, a ordem está errada.
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3080/api/commands/execute
+401     # correcto
+200     # ORDEM ERRADA: o plugin carregou depois de /api
+```
+
+**Porque é só um aviso e não uma asserção:** a superfície tipada de `WebServer`
+(`types/dsh-host-webserver/index.d.ts`) expõe `host`, `port`, `register`,
+`registerFallback` e `registerUpgrade` — e **nada** que permita enumerar rotas já
+registadas. Não há, nesta distribuição, forma de o plugin **detectar** a ordem errada.
+Inventar API que os `.d.ts` não declaram seria pior do que ser honesto.
+
+### 2. `http/auth-check` — o primeiro ouvinte ganha
+
+Num `waterfall` do Cordis, vence o **primeiro** ouvinte que responde sem invocar
+`next()`. Um `http/auth-check` registado por **outro** plugin **antes** deste pode
+devolver `true` e anular a barreira sem que ela chegue a correr. Isto é semântica do
+Cordis, não um bug deste plugin, e não há forma de o impedir pela superfície tipada.
+A mitigação que existe: o `next` **terminal** repete a verificação da credencial, o que
+mantém a política fail-closed quando **não há** ouvintes. Auditar quem subscreve
+`http/auth-check` faz parte da instalação segura.
+
+### 3. `security/permission-elevate` não é emitido por ninguém (hoje)
+
+O evento é **declarado por este plugin** (module augmentation) e **nenhum componente
+documentado do DSH o emite** — a busca nos markdowns-fonte devolve zero ocorrências. O
+comando perigoso viaja no **corpo** do `POST` para `/api/commands/execute`, e o portão
+deliberadamente **não lê o corpo** (ler o stream e depois recusar transformaria um 401
+legível num HTTP 400 opaco e impediria o handler original de o consumir nos pedidos
+aprovados).
+
+Portanto: o ouvinte de veto é um **hook de defesa em profundidade**, pronto para o dia em
+que o evento passe a existir — **não** é o travão principal. O que de facto fecha a #853 é
+o **portão de autenticação + allowlist de origem** sobre `/api`, o fallback e os upgrades,
+somado ao bind de loopback.
 
 ## Porquê
 
@@ -145,6 +209,47 @@ Essa autorização corre **fora** do sandbox do agente, com privilégios totais 
 escrita e rede na máquina — é um vetor clássico de supply chain. É exatamente por isso
 que a distribuição recomendada é pré-compilada (diretório absoluto, npm, ou um `.tgz` de
 `pnpm pack`): elimina a necessidade de `allowBuilds` no cliente final.
+
+## Divergências assumidas face ao doc-fonte
+
+Duas, ambas deliberadas e ambas com o motivo à vista no código.
+
+### O tree-kill ignora `child.killed` (o exemplo canónico está errado)
+
+O disposer do doc-fonte escreve `if (child.pid && !child.killed) process.kill(-child.pid, …)`.
+Essa guarda **torna o tree-kill código morto**: o Node, ao processar
+`abortController.abort()`, chama `child.kill()` de forma **síncrona**, pelo que `killed`
+já é `true` quando a linha seguinte corre. Medido com processos reais (pai `detached` +
+neto):
+
+```console
+$ node probe.mjs            # com a guarda !child.killed
+ANTES  do dispose()  filho: 1449751 1449751 1449744 worker.sh
+                     neto : 1449752 1449751 1449751 sleep
+DEPOIS do dispose()  filho: (pid 1449751 MORTO)
+                     neto : 1449752 1449751    1830 sleep   <-- ÓRFÃO, reparentado ao init
+
+$ node probe.mjs            # sem a guarda (o que este repositório faz)
+DEPOIS do dispose()  filho: (pid 1450742 MORTO)
+                     neto : (pid 1450743 MORTO)
+```
+
+`killed` significa apenas *«um sinal foi entregue ao filho»* — só o `kill` do **grupo**
+alcança os netos. Aqui o tree-kill é sempre tentado quando há `pid`, com `try/catch` para
+o `ESRCH` do grupo já inexistente.
+
+### `maxAttempts` esgotado não desregista o plugin
+
+A tabela do cliente MCP descreve `reconnect.maxAttempts` como cessando a recuperação **e
+desregistando ativamente o plugin** até recarregamento manual. A superfície tipada desta
+distribuição (`types/cordis/index.d.ts`) **não expõe auto-desregisto**: `Context` oferece
+`intercept`, `waterfall`, `parallel`, `on`, `effect` e `get` — nada que remova a própria
+Fiber. Em vez de inventar API inexistente, implementa-se o que a superfície permite:
+
+- **estado terminal explícito e observável** (`supervisor.exhausted`), que impede
+  qualquer novo arranque;
+- **erro inequívoco no log**, dizendo que a recuperação cessou em definitivo e que o
+  desregisto ativo exigiria API do Cordis ausente nesta distribuição.
 
 ## Notas operacionais
 
