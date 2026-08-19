@@ -1,0 +1,42 @@
+{
+  "name": "dsh-guarded-bot-orchestrator",
+  "version": "0.1.0",
+  "description": "Plugin Cordis para o DeepSeek Harness v0.1: interceta a camada HTTP (auth barrier sobre o fallback da Web UI) e orquestra subprocessos de longa duracao com ciclo de vida reversivel.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "types",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "test": "node --test 'test/**/*.test.ts' 'test/**/*.test.js'"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "cordis-plugin"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  }
+}

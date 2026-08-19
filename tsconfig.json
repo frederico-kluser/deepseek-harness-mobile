@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    /* Linguagem e ambiente: Node 24 / ESM puro (package.json "type": "module"). */
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+
+    /* Rigor total: "explicit > implicit" (convencao AGENTS.md do DSH). */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    "skipLibCheck": false,
+
+    /* Somente verificacao: o DSH carrega o plugin a partir do fonte. */
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+
+    /* Os pacotes @deepseek-ai/* sao "vendored" no monorepo do DSH e NAO existem
+       no npm publico. Resolvemos os seus tipos a partir de types/ neste repo.
+       Isto e o que torna possivel o module augmentation
+       `declare module '@deepseek-ai/cordis' { interface Events { ... } }`
+       feito em src/index.ts: o especificador tem de ser resolvivel pelo compilador. */
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/cordis": ["./types/cordis/index.d.ts"],
+      "@deepseek-ai/dsh-host-webserver": ["./types/dsh-host-webserver/index.d.ts"],
+      "@deepseek-ai/dsh-host-subprocess": ["./types/dsh-host-subprocess/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*", "types/**/*", "test/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
