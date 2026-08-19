@@ -1,0 +1,242 @@
+# =============================================================================
+# dsh-guarded-bot-orchestrator — MANIFESTO DE INJEÇÃO (CAMADA PROFILE)
+# =============================================================================
+#
+# Ficheiro alvo (caminho real de instalação):
+#
+#     $DSH_HOME/profiles/<nome_do_perfil>/cordis.patch.yml
+#
+# Exemplo concreto para o perfil "web":
+#
+#     $DSH_HOME/profiles/web/cordis.patch.yml
+#
+# -----------------------------------------------------------------------------
+# ONDE ESTE FICHEIRO VIVE NA TOPOLOGIA DE 4 CAMADAS DO DSH v0.1
+# -----------------------------------------------------------------------------
+# O motor do Cordis parte de um invólucro nulo e aplica as camadas por ordem
+# crescente de precedência. Quem vem depois sobrepõe quem veio antes:
+#
+#   Camada 1 — Bundle   : prioridade MÍNIMA. Grafo essencial vindo dos pacotes
+#                         oficiais listados em `dsh.profile.bundles`
+#                         (package.json), com @deepseek-ai/dsh-base à cabeça.
+#   Camada 2 — Profile  : ESTE FICHEIRO. Precedência intermédia; adapta a
+#                         operação ao projeto/perfil corrente.
+#                         ($DSH_HOME/profiles/<perfil>/cordis.patch.yml)
+#   Camada 3 — Home     : precedência estendida, preferências da máquina
+#                         inteira. ($DSH_HOME/cordis.patch.yml)
+#   Camada 4 — Overlay  : precedência ABSOLUTA e volátil, só durante a chamada
+#                         no terminal. (dsh --patch ./meu-overlay.yml)
+#
+# Consequência prática: tudo o que está aqui vence o Bundle, mas é vencido por
+# um patch em $DSH_HOME/cordis.patch.yml e por qualquer --patch da CLI.
+#
+# -----------------------------------------------------------------------------
+# A MECÂNICA CRÍTICA: WHOLE-ENTRY REPLACE (NÃO É DEEP MERGE)
+# -----------------------------------------------------------------------------
+# O DSH resolve os patches por SUBSTITUIÇÃO ABSOLUTA DA ENTRADA (whole-entry
+# replace), e NÃO por fusão profunda de estruturas (deep merge).
+#
+# Ao alvejar um `id` que já existe numa camada inferior, a entrada inteira do
+# Bundle é EXPURGADA e trocada por esta. Não há herança de irmãos: cada chave
+# que se quer preservar tem de ser REESCRITA EXPLICITAMENTE aqui.
+#
+#   >>> OMITIR UMA CHAVE NÃO A "HERDA" DO BUNDLE — APAGA-A. <<<
+#
+# É por isso que a primeira entrada abaixo (o servidor web) parece redundante:
+# ela reescreve o conjunto INTEIRO das chaves do bundle só para poder mudar
+# UMA delas (`host`). Isso é obrigatório, não é estilo.
+#
+# -----------------------------------------------------------------------------
+# SEGREDOS: NUNCA EM TEXTO PLANO
+# -----------------------------------------------------------------------------
+# A tag sintética `!!js` é avaliada pelo analisador
+# @deepseek-ai/cordis-plugin-include, que injeta código JS nativo do processo
+# Node em execução. É o mecanismo canónico para ler `process.env` sem que
+# qualquer credencial toque o disco em claro. Este ficheiro é versionável e
+# partilhável precisamente porque nenhum segredo está literal nele.
+#
+# Variáveis de ambiente exigidas no processo que arranca o `dsh`:
+#   ADMIN_USER, ADMIN_PASS, TELEGRAM_BOT_TOKEN   (ver README.md)
+# =============================================================================
+
+- insert:
+
+    # =========================================================================
+    # [1/3] SERVIDOR WEB — REESCRITA TOTAL DA ENTRADA DO BUNDLE
+    # =========================================================================
+    # O QUÊ: alveja o `id` do servidor HTTP nativo já declarado pela camada
+    #        Bundle (pacote @deepseek-ai/dsh-host-webserver, o que injecta o
+    #        serviço `ctx.webServer`) e substitui a entrada por completo.
+    #
+    # PORQUÊ: só queremos mudar `host`. Mas como a resolução é whole-entry
+    #        replace, ao tocar neste `id` a entrada original desaparece
+    #        inteira. Por isso `name` e `port` estão aqui REESCRITOS À MÃO:
+    #
+    #          - omitir `name`  => o plugin deixa de ser resolvido e o
+    #                              servidor web simplesmente NÃO ARRANCA;
+    #          - omitir `port`  => a porta 3080 desaparece e a interface
+    #                              deixa de responder onde é esperada.
+    #
+    #        Se a tua instalação do dsh-base declarar chaves adicionais nesta
+    #        entrada, COPIA-AS TAMBÉM para aqui antes de aplicar o patch —
+    #        cada chave ausente é uma chave apagada.
+    - id: host-webserver
+      name: '@deepseek-ai/dsh-host-webserver'
+      config:
+        # ---------------------------------------------------------------
+        # BIND DE LOOPBACK — A RAZÃO DE SER DESTE PATCH
+        # ---------------------------------------------------------------
+        # É PROIBIDO expor este servidor em 0.0.0.0 ou em [::]. O bind fica
+        # fixo no loopback IPv4.
+        #
+        # PORQUÊ (falha real, discussão oficial #853 —
+        # "unauthenticated local/remote code execution via the dsh web UI
+        # control plane", verificada em 0.1.0-rc.6):
+        # com o bind aberto, a sub-estação `/api` do DSH — mais de 60 rotas
+        # RPC — responde a sockets remotos SEM QUALQUER credencial. Entre
+        # elas está `commands/execute`, que consegue injetar sem aprovação
+        # a ordem `/permission danger-full-access`. Nesse instante o
+        # confinamento `workspace-write` do Sandbox cai: o agente passa a
+        # ler e escrever fora da pasta de trabalho e a exfiltrar dados via
+        # Bash emulado, sem vigilância.
+        #
+        # Exposição legítima à rede faz-se SEMPRE por proxy reverso TLS
+        # com autenticação à frente deste loopback — nunca alargando o bind.
+        host: '127.0.0.1'
+        # Reescrita obrigatória (ver acima): não é uma alteração, é
+        # preservação explícita da porta canónica da interface do DSH.
+        port: 3080
+
+    # =========================================================================
+    # [2/3] dsh-guarded-bot-orchestrator — O PLUGIN DESTA DISTRIBUIÇÃO
+    # =========================================================================
+    # O QUÊ: regista o orquestrador guardado. Ele faz duas coisas:
+    #        (a) intercepta o `ctx.webServer` e barra os prefixos guardados
+    #            (`/api`) com Basic Auth + lista de anfitriões permitidos,
+    #            recusando ainda permissões proibidas como
+    #            `danger-full-access`;
+    #        (b) mantém, sob `ctx.effect()`, um worker de long-polling do
+    #            Telegram como subprocesso atómico (spawn via
+    #            `ctx.subprocess`, disposer LIFO, tree-kill garantido).
+    #
+    # PORQUÊ: é a mitigação aplicada da falha #853 — o bind de loopback acima
+    #        fecha a porta à rede, e este plugin fecha a porta ao que já está
+    #        dentro da máquina (outros processos locais, extensões, browsers).
+    #
+    # ATENÇÃO — CONTRATO CONGELADO: as chaves de `config` abaixo casam
+    # EXATAMENTE, uma a uma, com a `interface Config` exportada pelo plugin.
+    # Este bloco é o singleton de configuração da execução: não renomear, não
+    # omitir, não acrescentar chaves fora do contrato.
+    - id: guarded-bot-orchestrator
+      # Resolução pelo nome do pacote (o pacote tem de estar instalado no
+      # perfil). Para instalação por diretório absoluto, ver a entrada [3/3].
+      name: 'dsh-guarded-bot-orchestrator'
+      config:
+        # --- Credencial Basic Auth ------------------------------------------
+        # O analisador @deepseek-ai/cordis-plugin-include injeta código JS
+        # nativo. Usado rigorosamente para evasão de texto plano das
+        # variáveis de ambiente: o par utilizador:senha é montado e
+        # codificado em base64 EM MEMÓRIA, no arranque, e nunca existe em
+        # claro neste ficheiro.
+        encodedAuthString: !!js 'Buffer.from(`${process.env.ADMIN_USER}:${process.env.ADMIN_PASS}`).toString("base64")'
+        # Texto do desafio devolvido no cabeçalho `WWW-Authenticate` das
+        # respostas 401. Puramente informativo para o cliente.
+        realm: 'Secure DSH Interface'
+
+        # --- Perímetro de rede ----------------------------------------------
+        # Anfitriões aceites no cabeçalho `Host` da requisição. Defesa em
+        # profundidade contra DNS rebinding: mesmo que algo reabra o bind
+        # (Camada 3/Home ou um --patch da CLI), pedidos cujo `Host` não seja
+        # o loopback são recusados pelo próprio plugin.
+        allowedHosts:
+          - '127.0.0.1'
+          - '::1'
+        # Origens remotas explicitamente confiadas (p. ex. o IP interno de um
+        # proxy reverso TLS que já autenticou o utilizador). Vazio por
+        # omissão: política fail-closed, ninguém é confiado por defeito.
+        trustedRemotes: []
+
+        # --- Superfície guardada --------------------------------------------
+        # Prefixos de rota que exigem autenticação antes de qualquer
+        # processamento. `/api` é a sub-estação RPC descrita na #853 — é
+        # exatamente ela que respondia sem credenciais.
+        guardedPrefixes:
+          - '/api'
+        # Permissões que o plugin recusa mesmo a um pedido AUTENTICADO. É o
+        # travão final contra `commands/execute` a injetar
+        # `/permission danger-full-access` e a derrubar o confinamento
+        # `workspace-write` do Sandbox.
+        deniedPermissions:
+          - 'danger-full-access'
+
+        # --- Worker de long-polling ------------------------------------------
+        # Processo filho de longa duração, fora do event loop central do
+        # Node, para não monopolizar os pools HTTP internos do DSH.
+        worker:
+          command: 'python3'
+          args:
+            - 'bot_long_polling.py'
+          # Diretório de trabalho absoluto do worker. Absoluto de propósito:
+          # o cwd do processo `dsh` não é garantido.
+          cwd: '/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator/worker'
+          # Token do bot injetado a partir do ambiente pelo mesmo mecanismo
+          # `!!js`. NUNCA escrever o token literal aqui.
+          token: !!js process.env.TELEGRAM_BOT_TOKEN
+          # --- Recuo exponencial na reconexão/reinício do worker ------------
+          # Mitiga crash-loops: se o worker morre, espera-se `initialDelayMs`
+          # e duplica-se o atraso a cada nova falha até ao teto
+          # `maxDelayMs`. Esgotado o orçamento `maxAttempts`, a recuperação
+          # CESSA e o plugin desregista-se ativamente — falhar alto e em
+          # silêncio é pior do que falhar alto e visível.
+          backoff:
+            # Valores nominais documentados do DSH (reconnect.initialDelayMs
+            # / reconnect.maxDelayMs).
+            initialDelayMs: 500
+            maxDelayMs: 10000
+            # Orçamento finito de tentativas antes de desistir.
+            maxAttempts: 10
+            # Se o worker se mantiver vivo e estável durante este período,
+            # o contador de tentativas e o atraso voltam ao início — uma
+            # falha isolada dentro de um mês de uptime não deve consumir o
+            # orçamento de um crash-loop.
+            resetAfterMs: 60000
+
+    # =========================================================================
+    # [3/3] INSTALAÇÃO POR CAMINHO ABSOLUTO DE DIRETÓRIO
+    # =========================================================================
+    # O QUÊ: demonstra a segunda forma de resolução aceite pelo motor — em vez
+    #        do nome de um pacote npm, o `name` é o CAMINHO ABSOLUTO de um
+    #        diretório; o diretório do plugin transita diretamente para as
+    #        chaves nativas de resolução de módulos do Node.
+    #
+    # PORQUÊ: os plugins desta distribuição não vêm do registo npm público.
+    #        São largados pré-compilados em /usr/local/lib/dsh-plugins/ (ver
+    #        README.md: o pnpm >= 10 bloqueia scripts `prepare` de pacotes
+    #        instalados por Git, pelo que a distribuição recomendada é
+    #        pré-compilada). A mesma sintaxe serve à entrada [2/3]: basta
+    #        trocar o `name` por
+    #        '/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator'.
+    #
+    # O plugin abaixo é o interceptor de Basic Auth que protege o FALLBACK do
+    # servidor (a SPA estática servida por dsh-host-frontend-static), camada
+    # distinta dos prefixos `/api` guardados em [2/3]. Ambos leem a mesma
+    # credencial do ambiente, pelo que não há divergência de segredos.
+    - id: core-auth-interceptor
+      name: '/usr/local/lib/dsh-plugins/dsh-basic-auth-interceptor'
+      config:
+        # Mesmo padrão canónico de injeção sem texto plano da entrada [2/3].
+        encodedAuthString: !!js 'Buffer.from(`${process.env.ADMIN_USER}:${process.env.ADMIN_PASS}`).toString("base64")'
+        realm: 'Secure DSH Interface'
+
+# =============================================================================
+# NOTA OPERACIONAL — ESCRITA CONCORRENTE (Issue #441)
+# =============================================================================
+# O carregador reescreve os ficheiros de configuração com O_TRUNC, sem
+# rename atómico de ficheiro temporário. Durante micro-intervalos do arranque
+# o YAML fica com zero bytes. Invocações concorrentes do tipo
+#
+#     dsh --profile web "tarefa A" & dsh --profile web "tarefa B" &
+#
+# podem colidir nessa fenda e ler uma matriz truncada. Em ambientes com
+# concorrência real, serializa os arranques com `flock` sobre este ficheiro.
+# =============================================================================
