@@ -22,9 +22,23 @@ import type { SubprocessService } from '@deepseek-ai/dsh-host-subprocess'
 /* -------------------------------------------------------------------------- */
 
 /**
- * Funcao de anulacao. SINCRONA por contrato: o Cordis acumula disposers na
- * Fiber ativa e executa-os em ordem estritamente inversa a instanciacao
- * (LIFO) quando a Fiber transita para DISPOSED.
+ * Funcao de anulacao. O Cordis acumula disposers na Fiber ativa e executa-os
+ * em ordem estritamente inversa a instanciacao (LIFO) quando a Fiber transita
+ * para DISPOSED.
+ *
+ * GARANTIA REAL DO TIPO (nao inflacionar): o retorno declarado e `void`, o que
+ * o compilador so usa para IGNORAR o valor devolvido -- nao para o proibir.
+ * Por bivariancia de retorno `void` do TypeScript,
+ *
+ *   ctx.effect(async () => { ... })        // REJEITADO: `Promise` nao e funcao
+ *   ctx.effect(() => async () => { ... })  // COMPILA: disposer `async` passa
+ *
+ * ou seja, o tipo impede que a FUNCAO PRODUTORA seja assincrona, mas NAO
+ * consegue impedir um disposer assincrono. A sincronia do disposer e uma
+ * exigencia do MOTOR em tempo de execucao, nao uma garantia verificada: um
+ * disposer que devolva uma `Promise` e tratado como ja concluido, e a ordem
+ * LIFO de erradicacao quebra em silencio. Devolver `Promise` daqui e um bug
+ * que nenhum `tsc` apanha.
  */
 export type Disposer = () => void
 
@@ -54,7 +68,6 @@ export type EventResult<F> = F extends (...args: never[]) => infer R ? R : never
  *   }
  * }
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
 export interface Events {}
 
 /** Nome de qualquer evento declarado em {@link Events}. */
@@ -163,9 +176,11 @@ export interface Context extends Services {
    * Encapsula um recurso alocado (processo nativo, observador de ficheiros,
    * agendador) no contexto temporal da Fiber.
    *
-   * A funcao produtora e obrigada por contrato a devolver um disposer
-   * SINCRONO -- deliberadamente sem `Promise`: o motor precisa de garantir a
-   * ordem LIFO de erradicacao sem intercalar microtasks.
+   * A funcao produtora tem de devolver um {@link Disposer}, e isso o tipo
+   * verifica (uma produtora `async` e rejeitada). Que o proprio disposer seja
+   * SINCRONO e exigencia do motor -- precisa de garantir a ordem LIFO de
+   * erradicacao sem intercalar microtasks -- mas NAO e verificavel pelo tipo:
+   * ver a nota em {@link Disposer}.
    */
   effect(fn: () => Disposer): Disposer
 

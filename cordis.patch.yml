@@ -31,6 +31,19 @@
 # um patch em $DSH_HOME/cordis.patch.yml e por qualquer --patch da CLI.
 #
 # -----------------------------------------------------------------------------
+# REGISTO: UMA SÓ VERDADE SOBRE A CAMADA EM QUE ESTE FICHEIRO ENTRA
+# -----------------------------------------------------------------------------
+# Este ficheiro entra EXCLUSIVAMENTE como Camada 2 (Profile), por cópia para
+# $DSH_HOME/profiles/<perfil>/cordis.patch.yml.
+#
+# O `package.json` deste pacote NÃO declara `dsh.bundle.patch` — e isso é
+# deliberado. Essa chave registaria ESTE MESMO ficheiro como Camada 1 (Bundle,
+# prioridade MÍNIMA), aplicando as mesmas entradas uma segunda vez, noutra
+# camada de precedência. Passariam a existir duas verdades sobre onde este
+# manifesto entra, e a versão de Bundle competiria com a de Profile. O
+# artefacto entregue é o patch de Profile: um único ponto de entrada.
+#
+# -----------------------------------------------------------------------------
 # A MECÂNICA CRÍTICA: WHOLE-ENTRY REPLACE (NÃO É DEEP MERGE)
 # -----------------------------------------------------------------------------
 # O DSH resolve os patches por SUBSTITUIÇÃO ABSOLUTA DA ENTRADA (whole-entry
@@ -47,13 +60,30 @@
 # UMA delas (`host`). Isso é obrigatório, não é estilo.
 #
 # -----------------------------------------------------------------------------
-# SEGREDOS: NUNCA EM TEXTO PLANO
+# SEGREDOS: NUNCA EM TEXTO PLANO — E NUNCA `undefined` EM SILÊNCIO
 # -----------------------------------------------------------------------------
 # A tag sintética `!!js` é avaliada pelo analisador
 # @deepseek-ai/cordis-plugin-include, que injeta código JS nativo do processo
 # Node em execução. É o mecanismo canónico para ler `process.env` sem que
 # qualquer credencial toque o disco em claro. Este ficheiro é versionável e
 # partilhável precisamente porque nenhum segredo está literal nele.
+#
+# ARMADILHA MORTAL — e a razão de cada expressão `!!js` abaixo ser um IIFE com
+# guarda, em vez de uma interpolação directa:
+#
+#     Buffer.from(`${process.env.ADMIN_USER}:${process.env.ADMIN_PASS}`)
+#
+# com as duas variáveis AUSENTES não rebenta. O template literal interpola a
+# string "undefined" e devolve `dW5kZWZpbmVkOnVuZGVmaW5lZA==`, ou seja, a
+# credencial `undefined:undefined`. Isso NÃO é uma credencial inválida: é uma
+# credencial VÁLIDA, FIXA e derivável por qualquer pessoa que leia este
+# ficheiro — abre exactamente a barreira erguida para mitigar a RCE não
+# autenticada da discussão #853. Fail-OPEN disfarçado de fail-closed.
+#
+# Por isso cada expressão `!!js` valida o ambiente e LANÇA no momento do
+# carregamento (*fail loud at load*; "explicit > implicit"). Faltando (ou
+# vindo vazia) uma das variáveis, o processo `dsh` NÃO ARRANCA. Não existe
+# modo degradado, não existe credencial de recurso.
 #
 # Variáveis de ambiente exigidas no processo que arranca o `dsh`:
 #   ADMIN_USER, ADMIN_PASS, TELEGRAM_BOT_TOKEN   (ver README.md)
@@ -80,7 +110,33 @@
     #        Se a tua instalação do dsh-base declarar chaves adicionais nesta
     #        entrada, COPIA-AS TAMBÉM para aqui antes de aplicar o patch —
     #        cada chave ausente é uma chave apagada.
-    - id: host-webserver
+    #
+    # -------------------------------------------------------------------------
+    # >>> O `id` ABAIXO É UM PLACEHOLDER. CONFIRMA-O ANTES DE APLICAR. <<<
+    # -------------------------------------------------------------------------
+    # O `id` da entrada do servidor web é ESPECÍFICO DA INSTALAÇÃO: é o que o
+    # bundle @deepseek-ai/dsh-base declarou na versão que tens instalada.
+    #
+    # NÃO O INVENTAMOS AQUI. A documentação do DSH consultada não publica esse
+    # `id` em lado nenhum, e também NÃO documenta qualquer comando para listar
+    # entradas do grafo: os únicos subcomandos de `dsh plugin` documentados são
+    # de instalação (`dsh plugin --profile <perfil> add <pacote>`). Se a tua
+    # versão da CLI oferecer um comando de listagem, usa-o; caso contrário, a
+    # descoberta é por INSPECÇÃO:
+    #
+    #   abre o `cordis.patch.yml` do bundle @deepseek-ai/dsh-base tal como está
+    #   instalado no perfil e procura a entrada cujo
+    #   `name: '@deepseek-ai/dsh-host-webserver'`. O `id` dessa entrada é o que
+    #   tem de ficar abaixo, LETRA POR LETRA.
+    #
+    # PORQUE ERRAR O `id` NÃO É INÓCUO: a resolução é whole-entry replace POR
+    # `id`. Se o `id` não casar com nenhuma entrada de camada inferior, isto
+    # DEIXA DE SER UM REPLACE E PASSA A SER UM INSERT — nasce uma SEGUNDA
+    # instância do servidor web, enquanto a original continua viva no bind
+    # anterior. As duas disputam a mesma rota/porta e o motor rejeita o
+    # arranque por conflito de rota (*fail loud at load*). Resultado: o bind de
+    # loopback, que é a razão de ser deste patch, NUNCA chega a ser aplicado.
+    - id: '<ID-DA-ENTRADA-DO-SERVIDOR-WEB-NESTA-INSTALACAO>'   # PLACEHOLDER — ver bloco acima
       name: '@deepseek-ai/dsh-host-webserver'
       config:
         # ---------------------------------------------------------------
@@ -112,9 +168,9 @@
     # =========================================================================
     # O QUÊ: regista o orquestrador guardado. Ele faz duas coisas:
     #        (a) intercepta o `ctx.webServer` e barra os prefixos guardados
-    #            (`/api`) com Basic Auth + lista de anfitriões permitidos,
-    #            recusando ainda permissões proibidas como
-    #            `danger-full-access`;
+    #            (`/api`) com Basic Auth, valida no carregamento que o
+    #            ENDEREÇO DE BIND consta da allowlist `allowedHosts`, e recusa
+    #            permissões proibidas como `danger-full-access`;
     #        (b) mantém, sob `ctx.effect()`, um worker de long-polling do
     #            Telegram como subprocesso atómico (spawn via
     #            `ctx.subprocess`, disposer LIFO, tree-kill garantido).
@@ -138,23 +194,68 @@
         # variáveis de ambiente: o par utilizador:senha é montado e
         # codificado em base64 EM MEMÓRIA, no arranque, e nunca existe em
         # claro neste ficheiro.
-        encodedAuthString: !!js 'Buffer.from(`${process.env.ADMIN_USER}:${process.env.ADMIN_PASS}`).toString("base64")'
+        #
+        # O IIFE valida ANTES de codificar e LANÇA se `ADMIN_USER` ou
+        # `ADMIN_PASS` faltar (ou vier vazia). Sem essa guarda a interpolação
+        # produziria a credencial fixa e publicamente derivável
+        # `undefined:undefined` (`dW5kZWZpbmVkOnVuZGVmaW5lZA==`) — uma porta
+        # ABERTA disfarçada de porta fechada. Aqui, ambiente incompleto
+        # significa uma coisa só: o `dsh` não arranca.
+        encodedAuthString: !!js '(() => { const u = process.env.ADMIN_USER, p = process.env.ADMIN_PASS; if (!u || !p) throw new Error("dsh-guarded-bot-orchestrator: defina ADMIN_USER e ADMIN_PASS. Recuso arrancar com a credencial derivavel undefined:undefined."); return Buffer.from(`${u}:${p}`).toString("base64") })()'
         # Texto do desafio devolvido no cabeçalho `WWW-Authenticate` das
         # respostas 401. Puramente informativo para o cliente.
         realm: 'Secure DSH Interface'
 
         # --- Perímetro de rede ----------------------------------------------
-        # Anfitriões aceites no cabeçalho `Host` da requisição. Defesa em
-        # profundidade contra DNS rebinding: mesmo que algo reabra o bind
-        # (Camada 3/Home ou um --patch da CLI), pedidos cujo `Host` não seja
-        # o loopback são recusados pelo próprio plugin.
+        # `allowedHosts` é a ALLOWLIST DO ENDEREÇO DE BIND, isto é, os valores
+        # que `ctx.webServer.host` pode assumir. No carregamento o plugin lê
+        # `ctx.webServer.host` e recusa arrancar se esse endereço for o bind
+        # universal (`0.0.0.0` ou `::`) ou se não constar desta lista.
+        #
+        # NÃO CONFUNDIR:
+        #   - NÃO é uma allowlist do cabeçalho `Host` da requisição (este
+        #     contrato não valida esse cabeçalho);
+        #   - NÃO é `trustedRemotes` (esse é o endereço da PONTA REMOTA).
+        # Isto é o endereço da INTERFACE LOCAL onde o servidor escuta.
+        #
+        # Defesa em profundidade: mesmo que uma camada de precedência superior
+        # (Camada 3/Home ou um `--patch` da CLI) reabra o bind, o plugin falha
+        # alto no carregamento em vez de servir `/api` à rede.
         allowedHosts:
           - '127.0.0.1'
           - '::1'
-        # Origens remotas explicitamente confiadas (p. ex. o IP interno de um
-        # proxy reverso TLS que já autenticou o utilizador). Vazio por
-        # omissão: política fail-closed, ninguém é confiado por defeito.
-        trustedRemotes: []
+        # `trustedRemotes` é a ALLOWLIST DA ORIGEM DA CONEXÃO
+        # (`req.socket.remoteAddress`), avaliada ANTES de sequer se olhar para
+        # a credencial. É o primeiro portão; o Basic Auth é o segundo.
+        #
+        # Os dois códigos de recusa NÃO são intermutáveis:
+        #   - origem fora desta lista       -> 403 Forbidden. Repetir a
+        #     credencial não ajuda: o pedido nunca chega à fase de autenticação.
+        #   - origem confiada, credencial errada -> 401 Unauthorized (com o
+        #     desafio `WWW-Authenticate` e o `realm` acima).
+        #
+        # >>> LISTA VAZIA = NINGUÉM CONFIADO = NEGA TUDO. <<<
+        # É fail-closed literal e intencional — mas com `[]` a instalação fica
+        # INOPERANTE: todo o pedido leva 403, incluindo os de loopback, o do
+        # próprio operador e o XHR da Web UI para `/api`. O plugin emite um
+        # `warn` ruidoso no arranque exactamente por causa disso. Por isso o
+        # valor entregue é o loopback, e não `[]`.
+        #
+        # Uma só entrada basta: o plugin normaliza a origem recebida E as
+        # entradas desta lista pela mesma função, colapsando `::1`,
+        # `::ffff:127.0.0.1`, `0:0:0:0:0:0:0:1`, `[::1]` e zone ids para
+        # `127.0.0.1`. Logo `'127.0.0.1'` já cobre o loopback IPv6; acrescentar
+        # `'::1'` seria inofensivo mas redundante.
+        #
+        # Alargar isto é a única forma correcta de admitir um proxy reverso TLS
+        # que já autenticou o utilizador: acrescenta-se aqui o IP interno desse
+        # proxy — nunca se alarga o bind (ver `allowedHosts` acima).
+        #
+        # NÃO CONFUNDIR com `allowedHosts`: aquilo é a allowlist do endereço de
+        # BIND (a interface local onde se escuta); isto é a allowlist de QUEM
+        # PODE LIGAR-SE (a ponta remota).
+        trustedRemotes:
+          - '127.0.0.1'
 
         # --- Superfície guardada --------------------------------------------
         # Prefixos de rota que exigem autenticação antes de qualquer
@@ -181,7 +282,12 @@
           cwd: '/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator/worker'
           # Token do bot injetado a partir do ambiente pelo mesmo mecanismo
           # `!!js`. NUNCA escrever o token literal aqui.
-          token: !!js process.env.TELEGRAM_BOT_TOKEN
+          #
+          # `!!js process.env.TELEGRAM_BOT_TOKEN` (forma nua) avaliaria para
+          # `undefined` com a variável ausente, violando em silêncio o
+          # `token: string` do Config congelado e pondo o worker a
+          # autenticar-se com lixo. O IIFE LANÇA em vez disso.
+          token: !!js '(() => { const t = process.env.TELEGRAM_BOT_TOKEN; if (!t) throw new Error("dsh-guarded-bot-orchestrator: defina TELEGRAM_BOT_TOKEN. worker.token e string no contrato congelado; recuso arrancar com undefined."); return t })()'
           # --- Recuo exponencial na reconexão/reinício do worker ------------
           # Mitiga crash-loops: se o worker morre, espera-se `initialDelayMs`
           # e duplica-se o atraso a cada nova falha até ao teto
@@ -224,8 +330,10 @@
     - id: core-auth-interceptor
       name: '/usr/local/lib/dsh-plugins/dsh-basic-auth-interceptor'
       config:
-        # Mesmo padrão canónico de injeção sem texto plano da entrada [2/3].
-        encodedAuthString: !!js 'Buffer.from(`${process.env.ADMIN_USER}:${process.env.ADMIN_PASS}`).toString("base64")'
+        # Mesmo padrão canónico de injeção sem texto plano da entrada [2/3],
+        # incluindo a mesma guarda *fail loud at load*: ambiente incompleto
+        # aborta o arranque em vez de derivar `undefined:undefined`.
+        encodedAuthString: !!js '(() => { const u = process.env.ADMIN_USER, p = process.env.ADMIN_PASS; if (!u || !p) throw new Error("dsh-guarded-bot-orchestrator: defina ADMIN_USER e ADMIN_PASS. Recuso arrancar com a credencial derivavel undefined:undefined."); return Buffer.from(`${u}:${p}`).toString("base64") })()'
         realm: 'Secure DSH Interface'
 
 # =============================================================================

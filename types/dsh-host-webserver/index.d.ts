@@ -11,6 +11,7 @@
  * *module augmentation* a partir do codigo do plugin.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 
 /**
  * Funcao de anulacao devolvida por todo o registo. E a ancora da
@@ -35,10 +36,22 @@ export interface WebRoute {
   handler: WebHandler
 }
 
+/**
+ * Manipulador de negociacao de protocolo, com a assinatura nativa do evento
+ * `'upgrade'` de `node:http` (`(req, socket, head)`): o socket ja esta
+ * destacado do ciclo pedido/resposta, pelo que NAO ha `ServerResponse` -- quem
+ * responde escreve os bytes do handshake directamente no `Duplex`.
+ *
+ * Tipado explicitamente (e nao `(...args: any[]) => void`) por causa da
+ * convencao "explicit > implicit" do tsconfig: `any` aqui apagava a unica
+ * informacao util da superficie publica.
+ */
+export type WebUpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => void
+
 /** Rota de negociacao de protocolo (`Connection: Upgrade`), sempre exata. */
 export interface WebUpgradeRoute {
   path: string
-  handler: (...args: any[]) => void
+  handler: WebUpgradeHandler
 }
 
 /**
@@ -65,5 +78,5 @@ export interface WebServer {
   registerFallback(handler: WebRoute['handler']): Disposer
 
   /** Regista um manipulador de `Connection: Upgrade` (ex.: WebSocket). */
-  registerUpgrade(route: { path: string; handler: (...args: any[]) => void }): Disposer
+  registerUpgrade(route: { path: string; handler: WebUpgradeHandler }): Disposer
 }

@@ -14,6 +14,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context, Disposer } from '@deepseek-ai/cordis'
+import type { Duplex } from 'node:stream'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { SubprocessService } from '@deepseek-ai/dsh-host-subprocess'
 
@@ -89,10 +90,14 @@ export async function smoke(ctx: Context, realm: string): Promise<void> {
   /* --- Prova 5: ctx.parallel e tipado a partir de `Events`. --- */
   await ctx.parallel('smoke/permission-elevate', 'tool-fs', 'danger-full-access')
 
-  /* --- Prova 6: os servicos sao propriedades tipadas do Context. --- */
+  /* --- Prova 6: os servicos sao propriedades tipadas do Context, e o
+         manipulador de `upgrade` casa com a assinatura nativa de node:http. --- */
   const disposeUpgrade: Disposer = ctx.webServer.registerUpgrade({
     path: '/ws',
-    handler: (): void => {},
+    handler: (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
+      ctx.logger.debug('smoke', `upgrade ${req.url ?? '?'} (+${head.byteLength}B)`)
+      socket.destroy()
+    },
   })
   disposeUpgrade()
 

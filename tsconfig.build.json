@@ -1,0 +1,33 @@
+{
+  /* CONFIGURACAO DE EMISSAO (`pnpm run build`).
+     Separada do `tsconfig.json` de proposito:
+
+       - `tsconfig.json`      -> `pnpm run typecheck`: `noEmit: true`, e abrange
+                                 `src/**`, `types/**` (incluindo o smoke-test de
+                                 contrato `types/__smoke__.ts`) e `test/**`.
+                                 Verifica tudo, NAO produz artefactos.
+       - `tsconfig.build.json` -> `pnpm run build`: emite JS + `.d.ts` para `dist/`
+                                 a partir de `src/**` APENAS. E `dist/` que
+                                 `main`/`types`/`exports` do package.json publicam,
+                                 porque o Node nao carrega `.ts` a partir de
+                                 `node_modules` (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING).
+
+     `baseUrl`/`paths` sao herdados e continuam relativos ao `tsconfig.json` da
+     raiz, de modo que os tipos "vendored" em `types/**` continuam a resolver os
+     especificadores `@deepseek-ai/*`. Esses ficheiros sao `.d.ts`: entram no
+     programa mas nao emitem, pelo que nao colidem com `rootDir`. */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    /* Exigido pelo compilador: `allowImportingTsExtensions` so e legal com
+       `noEmit` ou `emitDeclarationOnly`. Aqui emitimos a serio. */
+    "allowImportingTsExtensions": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test", "types/__smoke__.ts"]
+}
