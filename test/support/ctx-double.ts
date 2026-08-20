@@ -21,7 +21,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 
 import type { Context, Disposable } from '../../src/dsh/adapter.ts'
-import { FakeSubprocessService } from './_duble-filho.ts'
+import { FakeSubprocessService } from './child-double.ts'
 
 /* ========================================================================== */
 /* Logger                                                                     */

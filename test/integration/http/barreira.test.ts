@@ -25,8 +25,8 @@ import { after, before, describe, it } from 'node:test'
 import type { AddressInfo } from 'node:net'
 
 import { apply } from '../../../src/index.ts'
-import { FakeContext } from '../../unit/_duble-ctx.ts'
-import { EFFECT, makeConfig, VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../../unit/_fixturas.ts'
+import { FakeContext } from '../../support/ctx-double.ts'
+import { EFFECT, makeConfig, VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../../support/fixtures.ts'
 
 const ctx = new FakeContext()
 let port = 0

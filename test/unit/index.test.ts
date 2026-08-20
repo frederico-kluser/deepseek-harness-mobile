@@ -11,8 +11,8 @@ import { describe, it } from 'node:test'
 
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
 import { apply, inject, name } from '../../src/index.ts'
-import { FakeContext } from './_duble-ctx.ts'
-import { EFFECT, flush, install, makeConfig } from './_fixturas.ts'
+import { FakeContext } from '../support/ctx-double.ts'
+import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
 
 describe('manifesto do plugin', () => {
   it('expoe o nome e as dependencias injetadas exigidas pelo contrato', () => {

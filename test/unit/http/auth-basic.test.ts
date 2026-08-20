@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { verifyBasicAuth } from '../../../src/http/auth-basic.ts'
-import { VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../_fixturas.ts'
+import { VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../../support/fixtures.ts'
 
 describe('verifyBasicAuth', () => {
   it('aceita apenas a credencial exata', () => {

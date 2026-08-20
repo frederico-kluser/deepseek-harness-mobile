@@ -1,14 +1,14 @@
 /**
  * FABRICAS de configuracao e de instalacao do plugin.
  *
- * CASA TEMPORARIA -- ver `_duble-ctx.ts`. Ficheiro sem sufixo `.test.ts`.
+ * CASA TEMPORARIA -- ver `ctx-double.ts`. Ficheiro sem sufixo `.test.ts`.
  */
 
 import { tmpdir } from 'node:os'
 
 import type { Config } from '../../src/config/schema.ts'
 import { apply } from '../../src/index.ts'
-import { FakeContext } from './_duble-ctx.ts'
+import { FakeContext } from './ctx-double.ts'
 
 /**
  * `assertValidConfig` exige que o `worker.cwd` efetivo EXISTA (uma falha de

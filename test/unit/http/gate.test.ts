@@ -14,8 +14,8 @@ import type { Config } from '../../../src/config/schema.ts'
 import { createGuardedHandler, createGuardedUpgradeHandler } from '../../../src/http/gate.ts'
 import type { GateDeps } from '../../../src/http/gate.ts'
 import { createGuardLogger } from '../../../src/logging/logger.ts'
-import { FakeContext, FakeResponse, FakeSocket, makeRequest } from '../_duble-ctx.ts'
-import { makeConfig, VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../_fixturas.ts'
+import { FakeContext, FakeResponse, FakeSocket, makeRequest } from '../../support/ctx-double.ts'
+import { makeConfig, VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../../support/fixtures.ts'
 
 interface Bancada {
   ctx: FakeContext

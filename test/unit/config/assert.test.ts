@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import { assertValidConfig } from '../../../src/config/assert.ts'
 import { PACKAGED_WORKER_DIR, resolveWorkerCwd } from '../../../src/config/schema.ts'
-import { makeConfig } from '../_fixturas.ts'
+import { makeConfig } from '../../support/fixtures.ts'
 
 describe('fail loud at load', () => {
   it('recusa configuracao incompleta em vez de preencher por omissao', () => {

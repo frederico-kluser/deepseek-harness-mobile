@@ -13,9 +13,9 @@ import { describe, it } from 'node:test'
 
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../../src/config/schema.ts'
 import { createWorkerSupervisor } from '../../../src/proc/supervisor.ts'
-import { FakeContext } from '../_duble-ctx.ts'
-import { FakeScheduler, makeSupervisorDeps } from '../_duble-filho.ts'
-import { flush, makeConfig, WORKER_CWD } from '../_fixturas.ts'
+import { FakeContext } from '../../support/ctx-double.ts'
+import { FakeScheduler, makeSupervisorDeps } from '../../support/child-double.ts'
+import { flush, makeConfig, WORKER_CWD } from '../../support/fixtures.ts'
 
 const SAIDA_COM_ERRO = { exitCode: 1, signal: null } as const
 

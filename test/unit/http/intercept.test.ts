@@ -18,8 +18,8 @@ import type { Duplex } from 'node:stream'
 import { GuardError } from '../../../src/errors.ts'
 import { BARRIER_OWNER_MARK, installAuthBarrier } from '../../../src/http/intercept.ts'
 import { createGuardLogger, type GuardLogger } from '../../../src/logging/logger.ts'
-import { FakeContext, FakeResponse, FakeSocket, makeRequest } from '../_duble-ctx.ts'
-import { flush } from '../_fixturas.ts'
+import { FakeContext, FakeResponse, FakeSocket, makeRequest } from '../../support/ctx-double.ts'
+import { flush } from '../../support/fixtures.ts'
 
 function log(): GuardLogger {
   return createGuardLogger(new FakeContext().asContext())

@@ -19,7 +19,7 @@ import {
   resolveWorkerCwd,
   resolveWorkerEntrypoint,
 } from '../../../src/config/schema.ts'
-import { makeConfig } from '../_fixturas.ts'
+import { makeConfig } from '../../support/fixtures.ts'
 
 describe('resolvePackagedWorkerDir', () => {
   it('LAYOUT DE FONTE (dev): sobe DOIS niveis, para o irmao da arvore de fonte', () => {
