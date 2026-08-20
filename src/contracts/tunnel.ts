@@ -273,10 +273,16 @@ export interface TunnelConfig {
    * Porta do servidor de metricas, sempre em `127.0.0.1`.
    *
    * OMITIDA significa "o plugin escolhe uma porta livre e passa-a
-   * explicitamente" — NAO significa "deixa o cloudflared decidir". O default do
-   * `cloudflared` 2026.7.3 e `localhost:0`, ou seja porta ALEATORIA, com
-   * fallback 20241-20245. A doc afirma a faixa; o binario afirma o aleatorio.
-   * Adivinhar a porta e o bug (TUN-011).
+   * explicitamente" — NAO significa "deixa o cloudflared decidir".
+   *
+   * >>> NAO AFIRMAMOS QUAL E O DEFAULT DO `cloudflared`. <<< As nossas duas
+   * fontes contradizem-se: a doc oficial fala da faixa 20241-20245, e o
+   * cabecalho de `test/bin/fake-cloudflared.mjs` afirma que ele "pega 20241".
+   * Resolver isto exigiria medir o binario real, o que esta PROIBIDO na suite
+   * (D10). A conclusao operacional e a mesma nos dois mundos e e a unica que
+   * este contrato sustenta: **passa-se sempre `--metrics 127.0.0.1:<porta>`
+   * explicito, e nunca se adivinha** (TUN-011). Quem escrever "o default e X"
+   * em codigo ou comentario esta a afirmar o que nao medimos.
    */
   readonly metricsPort?: number | undefined
   /**
@@ -323,6 +329,34 @@ export interface TunnelDiscoveryInput {
    * deixa `stdout` com ZERO bytes e escreve o banner da URL em `stderr`.
    * `null` quando o chamador nao capturou o fluxo; nesse caso so o caminho
    * primario esta disponivel.
+   *
+   * ---------------------------------------------------------------------------
+   * OBRIGACAO DO CHAMADOR, e ela e DURA (acrescentada no COMMIT PREP 4)
+   * ---------------------------------------------------------------------------
+   * Quem passa este fluxo TEM DE MANTER UM CONSUMIDOR DURAVEL ligado a ele
+   * durante toda a vida do processo — ligado ANTES de chamar `discover()` e
+   * so retirado no `'close'`. `discover()` e LEITOR OPORTUNISTA: acrescenta e
+   * remove apenas o listener dele, e o `dispose()` do scanner NAO chama
+   * `resume()` de proposito, porque faze-lo descartaria em silencio o log de
+   * arranque que o supervisor quer registar.
+   *
+   * O modo de falha de nao haver consumidor duravel foi MEDIDO na costura da
+   * Onda 3: um filho que escreve em `stderr` sem ninguem a ler para de
+   * progredir aos **190 464 bytes** (buffer de pipe do SO mais a fila interna
+   * de escrita do Node; para o `cloudflared`, que escreve de Go direto ao fd,
+   * o tecto e o proprio buffer do pipe). O resultado e **um tunel que congela
+   * sem erro, sem log e sem sinal** — a pior forma de falhar que este projeto
+   * tem, porque nada a denuncia.
+   *
+   * Medicao que corrige um mal-entendido comum, e por isso fica escrita:
+   * remover o ultimo ouvinte `'data'` **NAO pausa** um `Readable` — o
+   * `readableFlowing` fica `true` e os dados sao **descartados em silencio**.
+   * Logo o modo de falha nao e "o scanner pausou o fluxo", e sim "ninguem
+   * chegou a retomar o fluxo, e o pipe encheu".
+   *
+   * UMA `discover()` POR PROCESSO SPAWNADO. Um retry e processo novo com
+   * `stderr` novo. `discover()` nao e reentrante por desenho: o acumulador e
+   * por instancia, e o que ja passou pelo fluxo nao volta.
    */
   readonly stderr: Readable | null
   /**
