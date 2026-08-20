@@ -53,7 +53,7 @@ privado e um canal de conversa fechado entre si e o mantenedor:
 4. preencha o formulário (título e descrição são o mínimo) e submeta.
 
 Ligação direta:
-<https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator/security/advisories/new>
+<https://github.com/frederico-kluser/deepseek-harness-mobile/security/advisories/new>
 
 **Se o botão «Report a vulnerability» não aparecer**, o PVR ainda não foi ativado neste
 repositório (é uma opção que o dono liga em *Settings → Advanced Security*, e que exige o

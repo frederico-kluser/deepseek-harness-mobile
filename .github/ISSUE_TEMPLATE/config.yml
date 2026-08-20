@@ -1,13 +1,13 @@
 blank_issues_enabled: false
 contact_links:
   - name: Encontrou uma vulnerabilidade? Não é aqui.
-    url: https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator/security/advisories/new
+    url: https://github.com/frederico-kluser/deepseek-harness-mobile/security/advisories/new
     about: >-
       Relato de segurança vai por canal privado (Security → Report a vulnerability), nunca
       por issue pública. Leia SECURITY.md antes. Se o botão não aparecer, o e-mail do
       mantenedor está no SECURITY.md.
   - name: Dúvida de uso, instalação ou configuração
-    url: https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator/discussions
+    url: https://github.com/frederico-kluser/deepseek-harness-mobile/discussions
     about: >-
       Pergunta sobre como usar vai em Discussions. Issues são para defeito reproduzível,
       quebra de compatibilidade e proposta de funcionalidade.

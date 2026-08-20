@@ -6,12 +6,12 @@
   "private": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator.git"
+    "url": "git+https://github.com/frederico-kluser/deepseek-harness-mobile.git"
   },
   "bugs": {
-    "url": "https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator/issues"
+    "url": "https://github.com/frederico-kluser/deepseek-harness-mobile/issues"
   },
-  "homepage": "https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator#readme",
+  "homepage": "https://github.com/frederico-kluser/deepseek-harness-mobile#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
