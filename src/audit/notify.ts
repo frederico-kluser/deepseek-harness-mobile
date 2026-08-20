@@ -9,16 +9,21 @@
  */
 
 import type { SessaoNovaObserver } from './events.ts'
+import type { HostIpcChannel } from '../telegram/ipc.ts'
 
 /**
  * Fabrica do observador de "sessao nova". A notificacao viaja pelo IPC
  * host -> worker (mensagem `notify` de `src/contracts/ipc.ts`) e e renderizada
- * por T5.2. TODO(T5.4): preencher o corpo.
+ * por T5.2. `canal` e o canal que T5.1 cria na fiacao (`src/index.ts`) e
+ * entrega AQUI — um observador com zero argumentos obrigaria T5.4 a um
+ * singleton de modulo, que a regra "nada de estado global" (05-QUALIDADE 4.2)
+ * proibe. TODO(T5.4): preencher o corpo.
  *
  * O corpo atual e INERTE de proposito: enquanto o consumidor nao existe, o
  * evento so escreve o audit — que ja e o controlo primario (o Telegram e
  * entrega best-effort, nunca a fonte da verdade).
  */
-export function criarObservadorSessaoNova(): SessaoNovaObserver {
+export function criarObservadorSessaoNova(canal: Pick<HostIpcChannel, 'send'>): SessaoNovaObserver {
+  void canal
   return () => {}
 }
