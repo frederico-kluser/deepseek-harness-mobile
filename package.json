@@ -21,6 +21,10 @@
       "default": "./dist/index.js"
     }
   },
+  "//bin": "PENDENCIA DE `06-REPO-E-CI.md` §9.1 FECHADA (antecipada do COMMIT PREP 7). O alvo e o ARTEFACTO EMITIDO, nunca o `.ts`: um `bin` a apontar para fonte TypeScript e um symlink que o Node recusa executar. A emissao vem de `tsconfig.bin.json`, terceiro projeto de build — `bin/` nao cabe em `tsconfig.build.json` porque `rootDir` la e `src` e o `tsc` responde TS6059 (medido). O ficheiro so e executavel se `bin/dsh-guard-setup.ts` comecar por `#!/usr/bin/env node`; o `tsc` preserva o shebang mas nao o inventa.",
+  "bin": {
+    "dsh-guard-setup": "./dist/bin/dsh-guard-setup.js"
+  },
   "files": [
     "dist",
     "cordis.patch.yml",
@@ -40,7 +44,7 @@
   "scripts": {
     "lint": "oxlint . && eslint .",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.worker.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.bin.json",
     "test": "node --test --test-reporter=spec 'test/unit/**/*.test.ts' 'test/integration/**/*.test.ts'",
     "test:contract": "node --test 'test/contract/**/*.test.ts'",
     "test:security": "node --test --test-reporter=spec 'test/security/**/*.test.ts'",
@@ -68,7 +72,9 @@
     "cloudflare-tunnel",
     "authentication"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "grammy": "1.45.1"
+  },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@deepseek-ai/cordis": "4.0.1",

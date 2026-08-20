@@ -1,0 +1,71 @@
+{
+  /* CONFIGURACAO DE EMISSAO DA CLI (`pnpm run build`, terceira metade).
+     ==========================================================================
+
+     Fecha a PENDENCIA DECLARADA em `06-REPO-E-CI.md` §9.1: o `package.json`
+     precisa do campo `bin` para a CLI de onboarding ser instalavel, mas
+     `09-DECISOES-CANONICAS.md` D2 so manda compilar `src/` e `worker/` — e
+     `bin/` e o TERCEIRO diretorio de fonte da arvore canonica (D1). Sem este
+     projeto, `dist/bin/dsh-guard-setup.js` NAO existe e o campo `bin` aponta
+     para o vazio: `npm i -g` cria um symlink partido, e o utilizador descobre
+     no primeiro `dsh-guard-setup`. O plano roteava isto para o COMMIT PREP 7;
+     foi antecipado porque a Onda 6 tem smoke de onboarding que depende dele.
+
+     PORQUE UM TERCEIRO PROJETO, E NAO `bin/**` DENTRO DE `tsconfig.build.json`
+     --------------------------------------------------------------------------
+     Porque nao compila. MEDIDO nesta worktree, acrescentando `bin/**\/*` ao
+     `include` daquele ficheiro (a barra invertida nos globs deste comentario e
+     escape: `**` seguido de `/` fecharia o proprio comentario):
+
+       error TS6059: File '<raiz>/bin/dsh-guard-setup.ts' is not under
+       'rootDir' '<raiz>/src'. 'rootDir' is expected to contain all source files.
+         The file is in the program because:
+           Matched by include pattern 'bin/**\/*' in 'tsconfig.build.json'
+
+     E o MESMO erro, pela MESMA razao, que o cabecalho de `tsconfig.build.json`
+     ja documenta para `worker/`. As duas saidas seriam:
+
+       - `rootDir: "src"` (o de hoje) -> `src/index.ts` vai para `dist/index.js`,
+         que e o caminho que `main`/`types`/`exports` publicam e que D13 exige —
+         mas `bin/` fica de fora do `rootDir` e da TS6059;
+       - `rootDir: "."` naquele ficheiro -> corrige `bin/` e DESLOCA o entry para
+         `dist/src/index.js`, partindo `main`, `types`, `exports` e D13.
+
+     Nao ha `rootDir` unico que sirva aos dois. Logo o `build` passa de duas para
+     TRES invocacoes encadeadas — pelo mesmo argumento, ja aceite, que o fez
+     passar de uma para duas. Nenhum `rootDir` existente se mexe: `dist/index.js`
+     e `dist/worker/telegram-bot.js` continuam exatamente onde estavam.
+
+     PORQUE `rootDir: "."` AQUI
+     --------------------------------------------------------------------------
+     Identico a `tsconfig.worker.json`, e pela mesma razao: `bin/x.ts` emite para
+     `dist/bin/x.js` — o caminho que o campo `bin` publica — e continua a emitir
+     para la no dia em que a CLI importar `src/**` (que ela pode: ao contrario do
+     worker, `bin/` corre NO MESMO computador e no mesmo contexto de confianca
+     que o host, e a regra de import de `05-QUALIDADE-CODIGO.md` §5.5 nao o
+     proibe). Com `rootDir: "bin"` esse dia daria TS6059 outra vez.
+
+     SEM `declaration`: a CLI e um executavel, nao superficie publica. O
+     `exports` do package.json nao a expoe e ninguem faz `import` dela.
+
+     >>> AVISO PARA O DONO DE `bin/**` (T4.1) <<<
+     O ficheiro emitido so e EXECUTAVEL se o FONTE comecar por
+     `#!/usr/bin/env node`. MEDIDO: o `tsc` PRESERVA o shebang na emissao (posto
+     na linha 1 de um `.ts`, sai na linha 1 do `.js`), mas nao o inventa. Sem
+     ele, `npm i -g` cria o symlink na mesma e o `exec` falha com
+     "Exec format error" — um erro que so aparece na maquina do utilizador. */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    /* Ver a nota em `tsconfig.build.json`: sem isto, um build vermelho deixa
+       `dist/` escrito na mesma e `npm pack` embrulha-o. */
+    "noEmitOnError": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["bin/**/*"],
+  "exclude": ["node_modules", "dist", "test", "types/__smoke__.ts"]
+}
