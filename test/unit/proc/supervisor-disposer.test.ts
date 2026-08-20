@@ -73,7 +73,7 @@ describe('tree-kill do grupo de processos (achado A-CRITICAL)', () => {
 })
 
 describe('falha de spawn (achado A-HIGH)', () => {
-  it('reinicia quando `done` REJEITA -- a falha de spawn nao produz saida normal', async () => {
+  it('reinicia quando `done` REJEITA por causa TRANSITORIA (a falha de spawn nao produz saida normal)', async () => {
     const ctx = new FakeContext()
     const scheduler = new FakeScheduler()
     const { deps } = makeSupervisorDeps(scheduler)
@@ -82,20 +82,68 @@ describe('falha de spawn (achado A-HIGH)', () => {
     supervisor.start()
 
     // "`done` resolves at process close with exit facts and rejects only for
-    // spawn-level failures": com `command`/`cwd` inexistentes nao ha saida
-    // normal nenhuma para observar.
+    // spawn-level failures": numa falha de spawn nao ha saida normal nenhuma
+    // para observar. `EAGAIN` (sem recursos para bifurcar agora) e o exemplo
+    // canonico de causa que PODE melhorar na tentativa seguinte -- ao contrario
+    // de `ENOENT`, que e coberto pelo caso SUP-007 abaixo.
     ctx.subprocess
       .lastChild()
-      .fail(Object.assign(new Error('spawn python3 ENOENT'), { code: 'ENOENT' }))
+      .fail(Object.assign(new Error('spawn python3 EAGAIN'), { code: 'EAGAIN' }))
     await flush()
 
     assert.equal(scheduler.pending.length, 1, 'a falha de spawn TEM de agendar reinicio')
     assert.deepEqual(scheduler.delays(), [500])
     assert.equal(supervisor.attempts, 1, 'e TEM de consumir orcamento')
-    assert.equal(ctx.logger.has('error', 'ENOENT'), true)
+    assert.equal(ctx.logger.has('error', 'EAGAIN'), true)
 
     scheduler.runLast()
     assert.equal(ctx.subprocess.calls.length, 2, 'o worker volta a ser instanciado')
+
+    supervisor.dispose()
+  })
+
+  it('SUP-007: ENOENT e NAO-RETRYABLE -- estado terminal, sem consumir orcamento e sem reagendar', async () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    ctx.subprocess
+      .lastChild()
+      .fail(Object.assign(new Error('spawn /nao/existe ENOENT'), { code: 'ENOENT' }))
+    await flush()
+
+    // O binario ausente nao aparece na decima tentativa. Consumir orcamento com
+    // ele so atrasa em minutos a mensagem que ja estava na PRIMEIRA falha.
+    assert.deepEqual(scheduler.scheduled, [], 'nao pode agendar reinicio nenhum')
+    assert.equal(supervisor.attempts, 0, 'nao pode consumir orcamento')
+    assert.equal(supervisor.exhausted, true, 'estado terminal tem de ser observavel')
+    assert.equal(supervisor.failure?.kind, 'BINARY_NOT_FOUND')
+    assert.equal(supervisor.failure?.retryable, false)
+    assert.equal(ctx.logger.has('error', 'NAO-RETRYABLE'), true)
+    assert.equal(ctx.subprocess.calls.length, 1, 'nenhum spawn novo')
+
+    supervisor.dispose()
+  })
+
+  it('SUP-008: EACCES e NAO-RETRYABLE, com a mesma disciplina do ENOENT', async () => {
+    const ctx = new FakeContext()
+    const scheduler = new FakeScheduler()
+    const { deps } = makeSupervisorDeps(scheduler)
+
+    const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
+    supervisor.start()
+
+    ctx.subprocess
+      .lastChild()
+      .fail(Object.assign(new Error('spawn /tmp/sem-x EACCES'), { code: 'EACCES' }))
+    await flush()
+
+    assert.deepEqual(scheduler.scheduled, [])
+    assert.equal(supervisor.attempts, 0)
+    assert.equal(supervisor.failure?.kind, 'BINARY_NOT_EXECUTABLE')
 
     supervisor.dispose()
   })

@@ -1,33 +1,57 @@
 /**
- * `createWorkerSupervisor` -- ciclo de vida do processo filho de longa duracao,
+ * =============================================================================
+ * O UNICO ciclo de vida de processo longo do repositorio.
+ * =============================================================================
+ *
+ * `createProcessSupervisor` supervisiona QUALQUER processo de longa duracao
  * contra o assento REAL (`spawn(spec: SubprocessSpawnSpec) -> SubprocessHandle`).
+ * O worker do Telegram (`./worker.ts`) e o `cloudflared`
+ * (`../tunnel/supervisor.ts`) sao duas INSTANCIACOES desta funcao, nao duas
+ * copias dela.
+ *
+ * PORQUE GENERALIZAR E NAO DUPLICAR (pergunta falsificavel 1 de T3.1): se
+ * ficarem dois blocos de backoff no repositorio, a generalizacao e ficticia — a
+ * correccao seguinte entra num e nao no outro, e o supervisor que ficar para tras
+ * volta a ter o bug que o outro ja nao tem. A decisao de orcamento e backoff vive
+ * inteira em `./retry.ts`, e so la: `grep -rn 'computeBackoffDelay' src` mostra a
+ * definicao (`./backoff.ts`) e UMA chamada (`./retry.ts`).
+ *
+ * O QUE ESTE FICHEIRO E, entao: a composicao. Ele sabe fazer `spawn`, largar um
+ * handle matando a arvore, ligar os streams ao log, e distinguir "morreu sozinho"
+ * de "nos matamo-lo". Tudo o resto e de outro modulo.
  *
  * REQUISITO DURO DE CONCORRENCIA (Q-5): nenhuma funcao aqui faz `await` de uma
  * operacao dependente da rede ou do reinicio. O tratador de terminacao e
  * SINCRONO e o reagendamento e *fire-and-forget* via `setTimeout`.
  *
- * DIVERGENCIA DOCUMENTADA -- ORCAMENTO ESGOTADO: a tabela do cliente MCP descreve
- * `reconnect.maxAttempts` como cessando a recuperacao E "desregistando ativamente
- * o plugin". A superficie tipada desta distribuicao NAO expoe auto-desregisto:
- * `Context` oferece `intercept`, `waterfall`, `parallel`, `on`, `effect` e `get`
- * -- nada que remova a propria Fiber. Em vez de inventar API inexistente,
- * implementa-se o que a superficie permite: um ESTADO TERMINAL explicito e
- * observavel (`supervisor.exhausted`) mais um erro inequivoco no log. Ver
- * README.md, "Divergencias assumidas".
+ * DIVERGENCIA DOCUMENTADA -- EVENTO TERMINAL: toda a logica pendura no FECHO do
+ * processo, nunca na saida. No `child_process` cru isso e `'close'`; aqui e a
+ * promessa `done` do assento, que colapsa `'exit'` e `'error'` num so caminho.
+ * Medido (`08-PESQUISA-E-FONTES.md`, facto 520): num `ENOENT` a sequencia e
+ * `error -> close` e `'exit'` NUNCA dispara — `child.pid === undefined`,
+ * `child.killed === false`, `close` recebe `(-2, null)`. Um supervisor que espera
+ * por `'exit'` trava para sempre no modo de falha mais comum (binario ausente /
+ * PATH errado). E `'spawn'` NAO e readiness: a doc do Node avisa que ele dispara
+ * "regardless of whether an error occurs within the spawned process".
+ *
+ * A divergencia do ORCAMENTO ESGOTADO (estado terminal observavel em vez do
+ * auto-desregisto que a API do Cordis nao oferece) esta em `./retry.ts`, junto do
+ * codigo que a implementa. A divergencia do TREE-KILL (a guarda `!child.killed`
+ * que tornava o kill do grupo codigo morto) esta em `./tree-kill.ts`.
+ * =============================================================================
  */
 
-import {
-  PACKAGED_WORKER_ENTRYPOINT,
-  resolveWorkerCwd,
-  type Config,
-} from '../config/schema.ts'
+import type { BackoffConfig } from '../config/schema.ts'
 import type { Context, SubprocessHandle, SubprocessSpawnSpec } from '../dsh/adapter.ts'
 import { createGuardLogger, type GuardLogger } from '../logging/logger.ts'
 import { redact } from '../logging/redact.ts'
-import { computeBackoffDelay } from './backoff.ts'
-import { defaultClockDeps, type ClockDeps, type TimerHandle } from './scheduler.ts'
-import { buildWorkerEnv } from './env.ts'
+import { classifyNonRetryable, type ProcessFailure } from './failure.ts'
+import { createRestartBudget, type RestartBudgetHooks } from './retry.ts'
+import { defaultClockDeps, type ClockDeps } from './scheduler.ts'
+import { attachStreamLogging } from './stream-log.ts'
 import { treeKill, type TreeKillDeps } from './tree-kill.ts'
+
+export { createWorkerSupervisor, type WorkerSupervisor } from './worker.ts'
 
 /* ========================================================================== */
 /* Dependencias injetaveis                                                    */
@@ -51,30 +75,77 @@ export const defaultSupervisorDeps: SupervisorDeps = {
 }
 
 /* ========================================================================== */
+/* O que distingue um processo supervisionado de outro                        */
+/* ========================================================================== */
+
+/** Ganchos do ciclo de vida. Todos SINCRONOS, por Q-5. */
+export interface SupervisedProcessHooks extends RestartBudgetHooks {
+  /** Corre logo apos cada `spawn`. E aqui que o pid vai para o pidfile. */
+  onSpawned?(handle: SubprocessHandle): void
+}
+
+/** Descricao completa de um processo a supervisionar. */
+export interface SupervisedProcess extends SupervisedProcessHooks {
+  /**
+   * Nome CURTO, para o log e para a mensagem accionavel (`'worker'`,
+   * `'cloudflared'`). NUNCA o `argv`: o `argv` traz caminhos absolutos e a
+   * mensagem de falha pode ser mostrada ao dono.
+   */
+  readonly name: string
+  readonly backoff: BackoffConfig
+  /**
+   * Monta o spec de UMA tentativa. E chamado a cada `spawn`, e nao uma vez, para
+   * que um valor que muda entre tentativas (uma porta de metricas nova, a posse
+   * do servidor de origem) seja resolvido no instante em que e usado.
+   *
+   * Lancar `SpawnSpecError` aqui e recusar a configuracao: o supervisor entra em
+   * estado terminal `INVALID_SPEC` e NAO faz `spawn` nenhum.
+   */
+  buildSpec(signal: AbortSignal): SubprocessSpawnSpec
+  /** Segredos a redigir das linhas de stdout/stderr encaminhadas para o log. */
+  readonly secrets?: readonly string[] | undefined
+}
+
+/* ========================================================================== */
 /* Supervisor                                                                 */
 /* ========================================================================== */
 
-/** Superficie publica do supervisor. `dispose` e SINCRONO por contrato. */
-export interface WorkerSupervisor {
-  /** Arranca o worker imediatamente (primeira instanciacao). */
+/** Superficie publica do supervisor. `dispose` e SINCRONO por contrato (Q-2). */
+export interface ProcessSupervisor {
+  /** Arranca o processo imediatamente (primeira instanciacao). */
   start(): void
+  /**
+   * REINICIO POR INTENCAO: derruba a instancia corrente e reagenda pelo MESMO
+   * caminho de orcamento e backoff da terminacao espontanea.
+   *
+   * PORQUE ESTA NA SUPERFICIE GENERICA e nao no consumidor: o tunel precisa dele
+   * quando o warmup falha (o processo esta vivo mas a URL nunca apareceu) e a
+   * Onda 5 precisa dele para o `/ligar` explicito. Se cada consumidor o
+   * implementasse, cada um teria a SUA contagem e `maxAttempts` deixaria de
+   * significar alguma coisa.
+   */
+  restart(reason: string): void
   /** Disposer SINCRONO: cancela reinicio, aborta e faz tree-kill. */
   dispose(): void
   /** Reinicios ja consumidos do orcamento (observabilidade/testes). */
   readonly attempts: number
-  /** Estado TERMINAL: `maxAttempts` esgotou e a recuperacao cessou de vez. */
+  /** Estado TERMINAL: a recuperacao cessou de vez. */
   readonly exhausted: boolean
+  /** Causa do estado terminal, quando ha um. */
+  readonly failure: ProcessFailure | undefined
+  /** Sinal do ciclo de vida: abortado no disposer. */
+  readonly signal: AbortSignal
 }
 
-/** Cria o supervisor do processo filho. */
-export function createWorkerSupervisor(
+/** Cria o supervisor de um processo longo. */
+export function createProcessSupervisor(
   ctx: Context,
-  config: Config,
+  target: SupervisedProcess,
   deps: SupervisorDeps = defaultSupervisorDeps,
-): WorkerSupervisor {
-  const { worker } = config
-  const { backoff } = worker
+): ProcessSupervisor {
+  const { name } = target
   const log: GuardLogger = createGuardLogger(ctx)
+  const secrets: readonly string[] = target.secrets ?? []
 
   /**
    * Um unico AbortController para todo o ciclo de vida: o assento reage-lhe
@@ -87,18 +158,12 @@ export function createWorkerSupervisor(
   let handle: SubprocessHandle | undefined
   /** Remove os ouvintes de stream que ESTE supervisor pos no handle corrente. */
   let detachStreamListeners: (() => void) | undefined
-  let restartTimer: TimerHandle | undefined
-  let attempts = 0
   let disposed = false
   let started = false
-  let exhausted = false
+  /** Instante do `spawn` da instancia corrente. Base do calculo de uptime. */
+  let currentStartedAt = 0
 
-  /** Cancela (e esquece) o temporizador de reinicio pendente, se existir. */
-  const clearRestartTimer = (): void => {
-    if (restartTimer === undefined) return
-    deps.scheduler.clearTimeout(restartTimer)
-    restartTimer = undefined
-  }
+  const isCancelled = (): boolean => disposed || abortController.signal.aborted
 
   /**
    * Larga o handle corrente: desliga os ouvintes de stream, pede a terminacao ao
@@ -124,65 +189,48 @@ export function createWorkerSupervisor(
     treeKill(current, { platform: deps.platform, kill: deps.kill })
   }
 
-  const spawnOnce = (): void => {
-    if (disposed || abortController.signal.aborted || exhausted) return
+  const budget = createRestartBudget({
+    name,
+    backoff: target.backoff,
+    scheduler: deps.scheduler,
+    random: deps.random,
+    log,
+    hooks: target,
+    isCancelled,
+    runAttempt: (): void => {
+      spawnOnce()
+    },
+  })
+
+  function spawnOnce(): void {
+    if (isCancelled() || budget.exhausted) return
 
     // Substituicao segura: o filho e o temporizador anteriores sao libertados
     // ANTES de existir um novo, para que nunca haja dois fora de contabilidade.
     releaseCurrentHandle()
-    clearRestartTimer()
+    budget.cancelPending()
 
     const startedAt = deps.now()
+    currentStartedAt = startedAt
 
-    /**
-     * ARGV: `[command, entrypoint, ...args]` -- o entrypoint e ANTEPOSTO aqui e
-     * NAO vem do manifesto. Nao pode vir: um caminho relativo no
-     * `cordis.patch.yml` resolveria contra o `cwd` do HOST (o workspace do
-     * utilizador) e o absoluto so e conhecido em runtime. As tres decisoes
-     * canonicas dizem a mesma frase: *"O `argv` do spawn resolve
-     * `dist/worker/telegram-bot.js` relativo a `import.meta.url`, nunca por
-     * `cwd`."*
-     *
-     * `worker.command` e `process.execPath` (o MESMO Node do host, sem depender
-     * do `PATH`) e `worker.args` sao argumentos EXTRA, valor normal `[]`. Montar
-     * `[command, ...args]` -- como esta linha fazia -- dava, com o manifesto
-     * real, `argv: ['/caminho/para/node']`: um REPL do Node, nao o worker.
-     */
-    const argv: readonly string[] = [worker.command, PACKAGED_WORKER_ENTRYPOINT, ...worker.args]
+    let spec: SubprocessSpawnSpec
+    try {
+      // O spec e montado A CADA tentativa, com o `signal` do ciclo de vida: a
+      // intencao de anulacao transita nativamente para a arvore do filho.
+      spec = target.buildSpec(abortController.signal)
+    } catch (error) {
+      // Recusa de CONFIGURACAO, antes de existir processo nenhum. Nao consome
+      // orcamento: tentar de novo com a mesma configuracao da o mesmo resultado.
+      // `conclude` trata isto como nao-retryable e entra em estado terminal.
+      const detail = error instanceof Error ? error.message : String(error)
+      log.error(`Nao foi possivel montar o arranque de ${name}: ${redact(detail, secrets)}`)
+      budget.conclude(`Arranque de ${name} recusado na montagem do spec.`, coerceSpecError(error), 0)
+      return
+    }
 
     // Regista o argv EFETIVO, e nao `command + args`: era a diferenca entre os
-    // dois que escondia a ausencia do entrypoint.
-    log.info(`Alocando subprocesso isolado de longa duracao: ${argv.join(' ')}`)
-
-    /**
-     * ARMADILHA CRITICA, HOJE RESOLVIDA PELO ASSENTO -- registada porque a
-     * decisao continua a valer. O tree-kill faz `process.kill(-pid, 'SIGKILL')`,
-     * e o `-pid` do POSIX so designa um grupo se o filho for LIDER DO SEU
-     * PROPRIO GRUPO, o que exigia `detached: true` (`setsid`). Sem a flag, `-pid`
-     * nao correspondia a grupo nenhum, a chamada falhava com ESRCH, o `catch`
-     * engolia o erro e o tree-kill NAO ACONTECIA: os netos do worker sobreviviam
-     * a transicao da Fiber como zumbis. `SubprocessSpawnSpec` NAO tem campo
-     * `detached` e nao precisa: o handle e, por contrato, "a live child process
-     * rooted in its own process tree", e a implementacao local faz `detached`
-     * para poder sinalizar o grupo. Deixou de ser flag nossa; passou a ser
-     * garantia do assento de que dependemos.
-     */
-    const spec: SubprocessSpawnSpec = {
-      argv,
-      cwd: resolveWorkerCwd(config),
-      // Isolamento dos canais stdio: o worker nao satura o terminal do DSH e
-      // stdin fica fechado (um long-poller nao le do operador). `'pipe'` entrega
-      // os `Readable` crus, que e o que o encaminhamento para o log usa.
-      stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
-      // Janela de cortesia da escalada SIGTERM -> grace -> SIGKILL do assento.
-      graceMs: worker.graceMs,
-      // A intencao de anulacao transita nativamente para a arvore do filho.
-      signal: abortController.signal,
-      // Ambiente CONSTRUIDO a partir de uma allowlist, nunca herdado inteiro:
-      // `process.env` levava `ADMIN_USER`/`ADMIN_PASS` do plano de controlo para
-      // dentro do worker. Ver `buildWorkerEnv`.
-      env: buildWorkerEnv(process.env, worker.token),
-    }
+    // dois que escondia a ausencia do entrypoint no supervisor do worker.
+    log.info(`Alocando subprocesso isolado de longa duracao: ${redact(spec.argv.join(' '), secrets)}`)
 
     const spawned = ctx.subprocess.spawn(spec)
     handle = spawned
@@ -193,41 +241,16 @@ export function createWorkerSupervisor(
     // Fica como latch barato e para tornar a intencao legivel.
     let settled = false
 
-    // Q-4: o worker e um cliente HTTP do Telegram e a API poe o token DENTRO do
-    // caminho do URL. Uma unica mensagem de erro de rede impressa pelo bot punha
-    // o token em claro no log do plano de controlo. Ver `src/logging/redact.ts`.
-    const onStdout = (chunk: Buffer): void => {
-      log.debug(`[Worker STDOUT]: ${redact(chunk.toString().trim(), [worker.token])}`)
-    }
-
-    const onStderr = (chunk: Buffer): void => {
-      log.warn(`[Worker STDERR]: ${redact(chunk.toString().trim(), [worker.token])}`)
-    }
-
-    /**
-     * ABSORVEDOR OBRIGATORIO. Um `EventEmitter` que emite `'error'` SEM ouvinte
-     * LANCA no processo hospedeiro. Antes o emissor em risco era o
-     * `ChildProcess`; agora o handle nao e emissor (a falha viaja em `done`, que
-     * tem SEMPRE tratador de rejeicao ligado abaixo) e os emissores em risco sao
-     * os dois `Readable` -- um EPIPE neles derrubava o DSH inteiro. NAO sao
-     * removidos no desarme, exatamente como o anterior nao era.
-     */
-    const absorbStreamError = (error: Error): void => {
-      log.debug(`[Worker STREAM]: ${error.message}`)
-    }
-
     /**
      * Caminho UNICO de terminacao: a saida normal (`done` resolve) e a falha de
      * spawn (`done` rejeita).
      *
      * PORQUE UNIFICADO: antes so se escutava `'exit'`. Com `command` ou `cwd`
      * inexistente o `child_process` emitia `error(ENOENT) -> close(code=-2)` e
-     * nunca `'exit'` -- medido: uma linha de log e o worker PERMANENTEMENTE
-     * morto, sem reinicio, sem consumir `maxAttempts` e sem sinal ao operador. O
-     * assento colapsa os dois casos numa promessa, e ambos percorrem o mesmo
-     * caminho de backoff/orcamento.
+     * nunca `'exit'` -- medido: uma linha de log e o processo PERMANENTEMENTE
+     * morto, sem reinicio, sem consumir `maxAttempts` e sem sinal ao operador.
      */
-    const handleTermination = (description: string): void => {
+    const handleTermination = (description: string, cause?: unknown): void => {
       if (settled) return
       settled = true
 
@@ -236,8 +259,9 @@ export function createWorkerSupervisor(
 
       // Desligamento intencional (disposer ja correu, ou o sinal de abort ja foi
       // emitido): a Fiber esta a ser descartada, NAO se reinicia nada.
-      if (disposed || abortController.signal.aborted) {
-        log.info('Worker terminado a pedido do disposer; sem reinicio.')
+      if (isCancelled()) {
+        log.info(`${name} terminado a pedido do disposer; sem reinicio.`)
+        target.onTerminated?.({ description, willRetry: false })
         return
       }
 
@@ -245,117 +269,67 @@ export function createWorkerSupervisor(
        * Este handle ja foi substituido: a sua morte pertence ao ciclo anterior.
        * Sem esta guarda, um filho largado por `releaseCurrentHandle()` levava
        * consigo uma tentativa do orcamento e agendava um SEGUNDO reinicio,
-       * ficando dois workers vivos. Com um unico gatilho (a propria terminacao) a
-       * guarda quase nunca dispara; existe para o gatilho INDEPENDENTE que a Onda
-       * 5 acrescenta (reinicio por intencao, `/ligar`), e o teste exercita-a
-       * assim -- segundo `spawnOnce` sem terminacao do primeiro.
+       * ficando dois processos vivos. E tambem o que torna `restart()` seguro.
        */
       if (handle !== spawned) return
 
-      // Uptime saudavel zera o orcamento: uma falha isolada ao fim de horas nao
-      // deve gastar o orcamento reservado a crash-loops.
-      const uptimeMs = deps.now() - startedAt
-      if (uptimeMs >= backoff.resetAfterMs) attempts = 0
-
-      attempts += 1
-
-      if (attempts > backoff.maxAttempts) {
-        // Orcamento finito esgotado: cessa-se a recuperacao e entra-se em ESTADO
-        // TERMINAL (ver a divergencia no cabecalho deste ficheiro). Falhar alto e
-        // visivelmente e melhor do que reiniciar para sempre em silencio.
-        exhausted = true
-        log.error(
-          `Orcamento de reinicios esgotado (${backoff.maxAttempts}). ${description} ` +
-            'Recuperacao automatica CESSADA em definitivo (estado terminal): ' +
-            'o worker NAO volta a arrancar ate o plugin ser recarregado a mao. ' +
-            'Esta distribuicao do Cordis nao expoe auto-desregisto do plugin.',
-        )
-        return
-      }
-
-      const delayMs = computeBackoffDelay(attempts, backoff, deps.random)
-
-      log.warn(
-        `${description} Reinicio ${attempts}/${backoff.maxAttempts} ` +
-          `agendado para daqui a ${delayMs} ms.`,
-      )
-
-      // RE-VERIFICACAO IMEDIATAMENTE ANTES DE AGENDAR. `disposed` foi lido no
-      // inicio deste tratador, mas entre esse instante e este ha logging (e, num
-      // host real, ouvintes de terceiros) que pode desencadear o descarte da
-      // Fiber. Sem esta segunda leitura, o disposer ja teria feito o seu
-      // `clearTimeout` e mesmo assim ficaria um temporizador vivo a ressuscitar o
-      // worker depois de DISPOSED.
-      if (disposed || abortController.signal.aborted) return
-
-      /**
-       * REAGENDAMENTO FIRE-AND-FORGET -- e AQUI que mora o requisito duro (Q-5).
-       * Este tratador retorna IMEDIATAMENTE: nunca `await sleep(...)`, nunca
-       * espera pelo worker dentro de um ouvinte do Cordis. `ctx.parallel` aguarda
-       * o retorno EXAUSTIVO de todos os subscritores e `ctx.waterfall` bloqueia a
-       * cascata inteira -- reter um retorno a espera da rede congela o subsistema
-       * e interrompe o ciclo de deducao do agente. (Precedente no proprio DSH: o
-       * downlink em SSE esgotava as ~6 sessoes por origem do HTTP/1.1; a correcao
-       * foi migrar para um WebSocket dedicado.)
-       *
-       * O handle e guardado e o disposer faz `clearTimeout` -- de outro modo,
-       * descarregar o plugin deixaria um temporizador pendurado a ressuscitar o
-       * worker depois da Fiber ja estar DISPOSED.
-       */
-      clearRestartTimer()
-      restartTimer = deps.scheduler.setTimeout((): void => {
-        restartTimer = undefined
-        spawnOnce()
-      }, delayMs)
+      budget.conclude(description, cause, deps.now() - startedAt)
     }
 
-    detachStreamListeners = (): void => {
-      spawned.stdout?.removeListener('data', onStdout)
-      spawned.stderr?.removeListener('data', onStderr)
-    }
+    detachStreamListeners = attachStreamLogging(spawned, { name, log, secrets })
 
-    spawned.stdout?.on('data', onStdout)
-    spawned.stderr?.on('data', onStderr)
-    spawned.stdout?.on('error', absorbStreamError)
-    spawned.stderr?.on('error', absorbStreamError)
+    // O gancho corre DEPOIS de os ouvintes estarem ligados e ANTES de qualquer
+    // terminacao poder ser observada: e onde o pid entra no pidfile e onde o
+    // `stderr` e entregue a descoberta de URL.
+    target.onSpawned?.(spawned)
 
     void spawned.done.then(
       (outcome): void => {
         handleTermination(
-          `Worker encerrado (code=${String(outcome.exitCode)} signal=${String(outcome.signal)}).`,
+          `${name} encerrado (code=${String(outcome.exitCode)} signal=${String(outcome.signal)}).`,
         )
       },
       (error: unknown): void => {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = redact(error instanceof Error ? error.message : String(error), secrets)
 
         // Anulacao intencional: registar isto como `logger.error` produzia um
         // erro FALSO em cada desligamento limpo do plugin -- ruido que treina o
         // operador a ignorar erros a serio.
-        if (disposed || abortController.signal.aborted) {
-          log.debug(`Worker abortado a pedido do disposer: ${message}`)
+        if (isCancelled()) {
+          log.debug(`${name} abortado a pedido do disposer: ${message}`)
           handleTermination('Anulacao intencional.')
           return
         }
 
         log.error(`Falha na costura de subprocesso: ${message}`)
-        handleTermination(`Falha ao alocar o worker: ${message}.`)
+        handleTermination(`Falha ao alocar o ${name}: ${message}.`, error)
       },
     )
   }
 
   /**
-   * Arranque UNICO. `start()` repetido nao instancia um segundo worker: o ciclo
+   * Arranque UNICO. `start()` repetido nao instancia um segundo processo: o ciclo
    * de vida deste supervisor tem exatamente um filho vivo de cada vez, e a
    * reentrancia acidental (dois `ctx.effect`, um `start()` manual em cima do
    * arranque do `apply`) deixava o primeiro filho fora de qualquer disposer.
    */
   const start = (): void => {
     if (started) {
-      log.warn('start() repetido ignorado: o supervisor ja tem um worker.')
+      log.warn('start() repetido ignorado: o supervisor ja tem um processo.')
       return
     }
     started = true
     spawnOnce()
+  }
+
+  const restart = (reason: string): void => {
+    if (isCancelled() || budget.exhausted || !started) return
+
+    // A instancia corrente e derrubada ANTES de se decidir o reinicio: sem isto
+    // ficariam dois processos vivos assim que o temporizador disparasse. A morte
+    // dela, quando chegar, cai na guarda `handle !== spawned` e nao conta duas vezes.
+    releaseCurrentHandle()
+    budget.conclude(reason, undefined, deps.now() - currentStartedAt)
   }
 
   const dispose = (): void => {
@@ -366,11 +340,11 @@ export function createWorkerSupervisor(
     if (disposed) return
     disposed = true
 
-    log.info('Descarregando o plugin; abortando processo filho...')
+    log.info(`Descarregando o plugin; abortando ${name}...`)
 
     // (a) Cancelar o reinicio pendente ANTES de matar, para nao correr o risco de
     //     o temporizador disparar entre o kill e o fim do disposer.
-    clearRestartTimer()
+    budget.cancelPending()
 
     // (b) O sinal de abort inicia, no assento, a escalada de terminacao sobre a
     //     arvore, e marca para o tratador de terminacao que a saida foi
@@ -386,12 +360,33 @@ export function createWorkerSupervisor(
 
   return {
     start,
+    restart,
     dispose,
+    signal: abortController.signal,
     get attempts(): number {
-      return attempts
+      return budget.attempts
     },
     get exhausted(): boolean {
-      return exhausted
+      return budget.exhausted
+    },
+    get failure(): ProcessFailure | undefined {
+      return budget.failure
     },
   }
+}
+
+/**
+ * Garante que um erro vindo do construtor de spec chega ao orcamento como
+ * NAO-RETRYABLE.
+ *
+ * PORQUE NAO SE CONFIA SO NO TIPO: `buildSpec` e codigo do consumidor e pode
+ * lancar um `TypeError` por defeito de programacao. Um defeito de programacao
+ * tambem nao melhora na tentativa seguinte — reiniciar dez vezes um spec que nao
+ * compila e so ruido. O que muda e a mensagem, e por isso a classificacao
+ * original e preservada quando existe.
+ */
+function coerceSpecError(error: unknown): unknown {
+  if (classifyNonRetryable(error) !== undefined) return error
+  const detail = error instanceof Error ? error.message : String(error)
+  return Object.assign(new Error(detail), { code: 'EINVAL', cause: error, __spec: true })
 }
