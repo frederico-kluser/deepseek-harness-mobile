@@ -1,33 +1,75 @@
 {
-  /* CONFIGURACAO DE EMISSAO (`pnpm run build`).
-     Separada do `tsconfig.json` de proposito:
+  /* CONFIGURACAO DE EMISSAO DO PLUGIN (`pnpm run build`, primeira metade).
+     ==========================================================================
 
-       - `tsconfig.json`      -> `pnpm run typecheck`: `noEmit: true`, e abrange
-                                 `src/**`, `types/**` (incluindo o smoke-test de
-                                 contrato `types/__smoke__.ts`) e `test/**`.
-                                 Verifica tudo, NAO produz artefactos.
-       - `tsconfig.build.json` -> `pnpm run build`: emite JS + `.d.ts` para `dist/`
-                                 a partir de `src/**` APENAS. E `dist/` que
-                                 `main`/`types`/`exports` do package.json publicam,
-                                 porque o Node nao carrega `.ts` a partir de
-                                 `node_modules` (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING).
+     Tres projetos, tres papeis. Separados de proposito:
+
+       - `tsconfig.json`        -> `pnpm run typecheck`: `noEmit: true`, abrange
+                                   `src/**`, `types/**` (incluindo o smoke de
+                                   contrato `types/__smoke__.ts`), `test/**`,
+                                   `worker/**` e `bin/**`. Verifica TUDO, nao
+                                   produz artefacto nenhum.
+       - `tsconfig.build.json`  -> emite `src/**` para `dist/`, com `rootDir`
+                                   em `src`, de modo que `src/index.ts` vira
+                                   `dist/index.js` — o caminho que `main`,
+                                   `types` e `exports` publicam.
+       - `tsconfig.worker.json` -> emite `worker/**` para `dist/worker/`.
+
+     PORQUE SAO DOIS PROJETOS DE EMISSAO, E NAO UM
+     --------------------------------------------------------------------------
+     `09-DECISOES-CANONICAS.md` D13 exige que o tarball contenha os TRES
+     ficheiros `dist/index.js`, `dist/index.d.ts` e `dist/worker/telegram-bot.js`.
+     O `tsc` calcula o caminho de saida como `outDir + (caminho - rootDir)`, e
+     NAO existe um unico `rootDir` que satisfaca as duas metades ao mesmo tempo:
+
+       - `rootDir: "src"` da `src/index.ts -> dist/index.js` (certo), mas
+         `worker/**` fica FORA do `rootDir` e o compilador emite `TS6059`
+         ("File is not under 'rootDir'") — que foi exatamente o que aconteceu
+         quando o glob de `worker/` entrou no `include` deste ficheiro: 12 erros
+         TS6059, um por ficheiro de `worker/`, e `pnpm run build` vermelho.
+       - `rootDir: "."` corrige o worker mas empurra o entry para
+         `dist/src/index.js`, quebrando `main`/`types`/`exports` e D13.
+
+     Logo o `build` de D4 passa a ser DUAS invocacoes encadeadas:
+
+         "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.worker.json"
+
+     Unico desvio deste repositorio face ao bloco de scripts canonico de D4, e
+     ele e forcado: com uma invocacao so, D13 e insatisfazivel. `tsc -b` com
+     project references seria a alternativa, mas exigiria `composite: true` nos
+     dois projetos e trocaria `-p` por `-b` — mais superficie mudada, mesmo
+     resultado.
 
      `baseUrl`/`paths` sao herdados e continuam relativos ao `tsconfig.json` da
-     raiz, de modo que os tipos "vendored" em `types/**` continuam a resolver os
+     raiz, de modo que os tipos espelhados em `types/**` continuam a resolver os
      especificadores `@deepseek-ai/*`. Esses ficheiros sao `.d.ts`: entram no
      programa mas nao emitem, pelo que nao colidem com `rootDir`. */
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    /* Exigido pelo compilador: `allowImportingTsExtensions` so e legal com
-       `noEmit` ou `emitDeclarationOnly`. Aqui emitimos a serio. */
-    "allowImportingTsExtensions": false,
+    /* PORQUE `noEmitOnError`
+       ----------------------------------------------------------------------
+       Por omissao o `tsc` EMITE mesmo quando ha erro de tipo: sai != 0 e
+       escreve o `dist/` na mesma. Medido aqui: com `src/index.ts` a acusar 4
+       erros, `pnpm run build` saiu 2 e ainda assim deixou 232 ficheiros em
+       `dist/` -- incluindo um `dist/index.js` de 73 kB. E `npm pack` embrulha
+       o que estiver la: `files` diz `dist`, nao "dist de um build que passou".
+       O resultado seria um tarball publicavel construido a partir de fonte
+       quebrado, e o `check-tarball.mjs` da Onda 7 encontraria os tres
+       ficheiros de D13 e diria que esta tudo bem.
+
+       Com esta flag, um build vermelho nao deixa artefacto nenhum para tras. */
+    "noEmitOnError": true,
+    /* `allowImportingTsExtensions` fica LIGADO (herdado) porque
+       `rewriteRelativeImportExtensions` esta ligado no pai: o compilador
+       reescreve `./x.ts` para `./x.js` na emissao. Ver a nota no
+       `tsconfig.json`. */
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*", "worker/**/*"],
-  "exclude": ["node_modules", "dist", "test", "types/__smoke__.ts"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test", "worker", "bin", "types/__smoke__.ts"]
 }

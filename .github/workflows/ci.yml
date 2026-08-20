@@ -1,0 +1,348 @@
+# =============================================================================
+# CI — o gate de PR.
+#
+# Referencia: docs/plano/06-REPO-E-CI.md secao 6.3, com a lista de required
+# checks de 09-DECISOES-CANONICAS.md D14 e a matriz de D12.
+#
+# TRES PRINCIPIOS QUE NAO SAO ESTILO:
+#
+#  1. `permissions: {}` no TOPO. O GITHUB_TOKEN nasce sem nenhuma permissao e
+#     cada job pede exatamente a que precisa. E um dos 23 checks do OpenSSF
+#     Scorecard (Token-Permissions) e a diferenca entre um workflow
+#     comprometido conseguir ou nao escrever no repositorio.
+#  2. Actions PINADAS POR SHA, nunca por tag. Uma tag e movel; um SHA nao.
+#     Cada SHA abaixo foi lido da API de tags do GitHub em 2026-08-20, nao de
+#     memoria. O comentario ao lado diz a que tag correspondia nesse dia.
+#  3. NENHUM passo tem `continue-on-error`. Um step que sai != 0 reprova o job,
+#     e um job reprovado reprova o check. E o que faz o CI FALHAR quando o
+#     typecheck quebra, em vez de so reportar.
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # Cancela runs velhos do mesmo ref: economiza minutos e evita merge com um CI
+  # defasado verde.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Um postinstall com husky grava `core.hooksPath` no `.git`. Em CI isso e
+  # inutil; em worktree partilhada e contaminacao.
+  HUSKY: '0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # O job chama o SCRIPT, nunca os binarios soltos: o gate de onda roda
+      # `pnpm lint` e o CI tem de medir exatamente a mesma coisa (09 D4).
+      # `pnpm lint` == `oxlint . && eslint .`; a politica de cada passada vive
+      # em `.oxlintrc.json` e em `eslint.config.js`, porque o script canonico
+      # nao leva flags.
+      - run: pnpm lint
+
+  # ---------------------------------------------------------------------------
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `tsc --noEmit`. Sai 2 com erro de tipo; o step reprova; o job fica
+      # vermelho. NAO ha `continue-on-error` aqui, de proposito.
+      #
+      # NOTA (06 secao 5.1): o job `tsc7 --noEmit` informativo do plano NAO
+      # esta aqui porque `typescript-7` nao esta instalado. Instalar TS 7 lado
+      # a lado nao e gratis: `typescript-eslint@8.67.0` declara
+      # `typescript >=4.8.4 <6.1.0` e LANCA em tempo de carregamento da config
+      # com TS 7 no lugar do `typescript` principal. Entra quando a migracao
+      # TS 6/7 for feita a serio.
+      - run: pnpm typecheck
+
+  # ---------------------------------------------------------------------------
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # DUAS invocacoes de tsc: `src/**` -> `dist/` (rootDir `src`, para que
+      # `src/index.ts` vire `dist/index.js`) e `worker/**` -> `dist/worker/`.
+      # A justificacao completa esta no cabecalho de `tsconfig.build.json`:
+      # nao existe um unico `rootDir` que produza os tres ficheiros que D13
+      # exige no tarball.
+      - run: pnpm run build
+
+      - name: O layout de dist/ e o que D13 exige
+        # Guarda barata enquanto `scripts/check-tarball.mjs` (entrega da Onda 7,
+        # T7.1) nao existe. Verifica os tres ficheiros nomeados por D13.
+        run: |
+          set -eu
+          for f in dist/index.js dist/index.d.ts dist/worker/telegram-bot.js; do
+            test -f "$f" || { echo "FALTA: $f (09-DECISOES-CANONICAS.md D13)"; exit 1; }
+          done
+          echo "dist/ tem os tres ficheiros de D13."
+
+      # `publint` deteta o package manager sozinho (usa `pnpm pack`) e sai 1
+      # quando ha mensagem de nivel `error`.
+      - run: pnpm exec publint
+
+      # `attw --pack .` corre `npm pack` NA PASTA, analisa o TARBALL resultante
+      # e apaga-o — nao analisa `src/`. O README do attw avisa que `--pack` so
+      # suporta npm; funciona aqui porque o runner tem npm e o `npm pack` deste
+      # pacote nao corre lifecycle nenhum (nao ha `prepack`/`prepare`).
+      # O perfil `esm-only` vive em `.attw.json`, porque o script canonico de
+      # D4 nao leva flags: sem ele, o perfil `strict` reprova o pacote pelo
+      # aviso CJSResolvesToESM, que para um pacote deliberadamente ESM-only nao
+      # e defeito nenhum.
+      - run: pnpm exec attw --pack .
+
+      - name: Smoke do artefacto publicado
+        # Instala o TARBALL, nao o workspace. Apanha erro de `files`, de
+        # `exports` e de ESM que nenhum teste de unidade apanha.
+        run: |
+          set -eu
+          pnpm pack --pack-destination /tmp
+          mkdir -p /tmp/smoke && cd /tmp/smoke && npm init -y >/dev/null
+          npm i /tmp/dsh-guarded-bot-orchestrator-*.tgz
+          node --input-type=module -e "const p = await import('dsh-guarded-bot-orchestrator'); if (typeof p.apply !== 'function') { console.error('o entry publicado nao exporta apply()'); process.exit(1) }"
+
+  # ---------------------------------------------------------------------------
+  test:
+    # Matriz canonica de 09-DECISOES-CANONICAS.md D12:
+    #   ubuntu x 24, ubuntu x 26, macos x 24.
+    # Node 22 fica FORA porque o pacote declara `engines.node >= 24` — testar
+    # em 22 um pacote que declara >=24 nao e cobertura, e ruido.
+    # Windows fica FORA porque o pacote declara `"os": ["linux","darwin"]`: o
+    # supervisor depende de process group POSIX (`detached` + `kill(-pid)`).
+    # A combinacao macOS existe porque `detached`/reparenting tem semantica
+    # propria no darwin e o supervisor depende disso.
+    name: test (${{ matrix.os }}, ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false # queremos ver TODAS as combinacoes que quebraram
+      matrix:
+        os: [ubuntu-latest]
+        node: ['24', '26']
+        include:
+          - os: macos-latest
+            node: '24'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # unit + integration. Cobertura e OUTRO job: um `test` que tambem mede
+      # cobertura sao dois comandos disfarcados de um (09 D4).
+      # `test/live/**` NUNCA entra aqui — e essa a razao de o glob de `test`
+      # nomear `unit` e `integration` em vez de `test/**`.
+      - run: pnpm test
+
+  # ---------------------------------------------------------------------------
+  test-contract:
+    name: test-contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Compara os `.d.ts` espelhados em `types/**` com os do npm real e
+      # confirma que `@deepseek-ai/dsh-host-subprocess` continua a dar 404.
+      # PRECISA de rede (registry).
+      - run: pnpm test:contract
+
+  # ---------------------------------------------------------------------------
+  test-security:
+    name: test-security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Suite adversarial: lista fechada de ataques. `test:invariants` foi
+      # absorvido por este script (09 D4) — a invariante de bind e um teste
+      # nomeado daqui, nao um script proprio.
+      - run: pnpm test:security
+
+  # ---------------------------------------------------------------------------
+  test-e2e:
+    name: test-e2e
+    # OFFLINE. So dubles. NUNCA sobe tunel real — isso e `live.yml`, que so
+    # corre por `workflow_dispatch` e nao e required check (09 D10).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:e2e
+      - name: Nenhum processo sobreviveu
+        if: always()
+        # Vazar processo em teste e bug, nao ruido. `pgrep` sai 1 quando nao
+        # encontra nada, que e o caso bom.
+        run: '! pgrep -f fake-cloudflared'
+
+  # ---------------------------------------------------------------------------
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Pisos globais: 90 linhas / 85 branches / 95 funcoes. `node --test`
+      # sai != 0 sozinho quando um piso nao e atingido — nao ha ferramenta
+      # extra nem catraca por enquanto.
+      #
+      # PENDENCIA: `scripts/coverage-ratchet.mjs` (a catraca que reprova quando
+      # o numero CAI, mesmo acima do minimo) e entrega de outra onda; enquanto
+      # nao existir, este job so cobra o piso.
+      - run: pnpm test:cov
+
+  # ---------------------------------------------------------------------------
+  supply-chain:
+    name: supply-chain
+    # ESTE JOB E A REGRA DO `minimumReleaseAge` CODIFICADA.
+    #
+    # pnpm 11 traz `minimumReleaseAge` LIGADO por omissao (1440 minutos = 24 h)
+    # e `verifyDepsBeforeRun: install`, o que significa que ha um install
+    # implicito antes de CADA `pnpm run <script>`. Consequencia medida na
+    # Onda 0: pinar um pacote publicado ha menos de 24 h nao produz um aviso —
+    # produz `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` e o GATE INTEIRO VERMELHO.
+    #
+    # Pior: quando o `pnpm add` encontra um pacote demasiado novo, ele NAO
+    # falha — escreve `minimumReleaseAgeExclude` num `pnpm-workspace.yaml`
+    # gerado e segue em frente. Isso transforma uma politica de supply chain
+    # numa lista de excecoes silenciosa. Este job recusa esse ficheiro.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Nenhuma excecao a politica de idade de publicacao
+        run: |
+          set -eu
+          if [ -f pnpm-workspace.yaml ] && grep -q 'minimumReleaseAgeExclude' pnpm-workspace.yaml; then
+            echo "pnpm-workspace.yaml declara minimumReleaseAgeExclude."
+            echo "Isso desliga a politica de supply chain para as entradas listadas."
+            echo "Se a excecao for mesmo necessaria, justifique-a por escrito e"
+            echo "remova esta guarda de proposito, num commit proprio."
+            exit 1
+          fi
+          echo "Sem lista de excecoes."
+
+      - name: O lockfile passa a politica de idade (verificacao a frio)
+        # Num runner limpo nao ha cache de verificacao: este install re-verifica
+        # as ~180 entradas do lockfile contra a politica. E o unico sitio onde
+        # isso e garantidamente medido, porque em maquina local o pnpm reusa um
+        # `~/.cache/pnpm/lockfile-verified.jsonl` de ate algumas horas.
+        run: pnpm install --frozen-lockfile
+
+      - name: Idade de publicacao de cada pino direto
+        # A regra escrita: AO PINAR DEPENDENCIA, VERIFICAR A IDADE ANTES.
+        # Aqui ela e cobrada de forma independente do cache do pnpm.
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs"
+            const CUTOFF_MIN = 1440 // default de minimumReleaseAge no pnpm 11
+            const pkg = JSON.parse(readFileSync("package.json", "utf8"))
+            const pins = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }
+            let bad = 0
+            for (const [name, range] of Object.entries(pins)) {
+              if (!/^\d/.test(range)) { console.log(`- ${name}@${range}: nao e pino exato, ignorado`); continue }
+              const meta = await (await fetch(`https://registry.npmjs.org/${name.replace("/", "%2f")}`)).json()
+              const at = meta?.time?.[range]
+              if (!at) { console.error(`x ${name}@${range}: versao inexistente no registry`); bad++; continue }
+              const ageMin = (Date.now() - Date.parse(at)) / 60000
+              const ok = ageMin >= CUTOFF_MIN
+              console.log(`${ok ? "v" : "x"} ${name}@${range} publicado ${at} (${(ageMin / 60).toFixed(1)} h)`)
+              if (!ok) bad++
+            }
+            if (bad) { console.error(`\n${bad} pino(s) mais novo(s) que o cutoff de ${CUTOFF_MIN} min.`); process.exit(1) }
+          '
+
+  # ---------------------------------------------------------------------------
+  secrets-scan:
+    name: secrets-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # o scan precisa do historico
+      # O token do Telegram viaja NA URL (`bot<n>:<token>`), o que o torna
+      # trivialmente commitavel por acidente num script ou num log colado.
+      # NOTA: `gitleaks-action` e gratuito para conta pessoal / open source;
+      # organizacoes precisam de `GITLEAKS_LICENSE`.
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

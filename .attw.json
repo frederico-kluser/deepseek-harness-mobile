@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Perfil do `attw` (@arethetypeswrong/cli), lido automaticamente pelo binario.",
+    "EXISTE porque o script canonico de 09-DECISOES-CANONICAS.md D4 e literal e",
+    "nao leva flags: `package:check` == `publint && attw --pack . && node scripts/check-tarball.mjs`.",
+    "",
+    "PORQUE `esm-only`, e nao o `strict` de omissao:",
+    "este pacote e ESM puro por decisao (`type: module`, `exports` com `types`",
+    "antes de `default`, sem entry CJS). Com o perfil `strict`, o attw reprova",
+    "com `CJSResolvesToESM` -- 'um require() resolveu para um ficheiro ESM'.",
+    "MEDIDO neste repositorio: `attw --pack .` sem esta config sai 1; com ela,",
+    "sai 0. Para um pacote deliberadamente ESM-only, esse aviso descreve a",
+    "decisao, nao um defeito: o consumidor CJS usa import() dinamico.",
+    "",
+    "`--pack` corre `npm pack` NA PASTA, analisa o TARBALL e apaga-o. Nao",
+    "analisa `src/`. O README do attw avisa que `--pack` so suporta npm;",
+    "funciona aqui porque ha npm no PATH e este pacote nao tem `prepack` nem",
+    "`prepare`.",
+    "",
+    "T7.1 (Onda 7) deve RE-VERIFICAR isto quando `dist/` existir de verdade:",
+    "hoje o build ainda esta vermelho por causa de `src/index.ts` (T1.1), e um",
+    "tarball sem `dist/index.d.ts` faz o attw dizer 'does not contain types' e",
+    "sair 0 por ausencia de superficie, nao por aprovacao."
+  ],
+  "profile": "esm-only"
+}

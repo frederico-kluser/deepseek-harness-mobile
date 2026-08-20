@@ -19,6 +19,22 @@
     /* Somente verificacao: o DSH carrega o plugin a partir do fonte. */
     "noEmit": true,
     "allowImportingTsExtensions": true,
+
+    /* PORQUE `rewriteRelativeImportExtensions`
+       ----------------------------------------------------------------------
+       `pnpm test` corre `.ts` DIRETO, por type stripping do Node -- e o type
+       stripping nao reescreve extensao: o especificador relativo tem de ser
+       literalmente `./x.ts`. `test/index.test.ts` ja o faz
+       (`from '../src/index.ts'`), e toda a arvore de D1 vai fazer o mesmo
+       assim que o monolito for dissolvido.
+
+       Sem esta flag, `allowImportingTsExtensions` so e legal com `noEmit` --
+       ou seja, `pnpm run build` passaria a falhar com TS5097 no primeiro
+       import relativo com extensao. Com ela ligada, o compilador aceita
+       `./x.ts` no fonte E reescreve para `./x.js` na emissao, o que faz o
+       runner de teste e o emissor concordarem sem que ninguem escreva a
+       extensao errada de proposito. Requer TypeScript >= 5.7. */
+    "rewriteRelativeImportExtensions": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
 

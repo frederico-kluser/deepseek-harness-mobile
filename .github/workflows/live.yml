@@ -1,0 +1,53 @@
+# =============================================================================
+# LIVE — a suite que fala com a internet de verdade.
+#
+# NUNCA automatica. Sem `push`, sem `pull_request`, sem `schedule`.
+# So `workflow_dispatch`, e ainda assim exige que quem dispara escreva
+# `DSH_GUARD_LIVE_TESTS=1` na caixa de input.
+#
+# PORQUE (09-DECISOES-CANONICAS.md D10, 06-REPO-E-CI.md secao 6.4):
+# `test/live/**` sobe um tunel `cloudflared` REAL. Um quick tunnel exposto e
+# descobrivel em segundos, e o CI e ambiente partilhado. O que corre em PR e
+# `test-e2e`, que e OFFLINE e usa dubles.
+#
+# Este workflow NAO e required check. Nao ha atalho para o tornar automatico:
+# se algum dia alguem acrescentar `pull_request` aqui, esta a expor um tunel
+# por PR — incluindo PR de fork.
+# =============================================================================
+name: live
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Escreva DSH_GUARD_LIVE_TESTS=1 para confirmar que quer subir um tunel REAL'
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  HUSKY: '0'
+
+jobs:
+  live:
+    name: live
+    # A guarda de dedo-gordo: sem a string exata, o job nem arranca.
+    if: ${{ inputs.confirm == 'DSH_GUARD_LIVE_TESTS=1' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:live
+        env:
+          DSH_GUARD_LIVE_TESTS: '1'
+      - name: Nenhum tunel sobreviveu
+        if: always()
+        run: '! pgrep -f cloudflared'

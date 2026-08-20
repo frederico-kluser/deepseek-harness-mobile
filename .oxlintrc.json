@@ -1,0 +1,112 @@
+{
+  // ==========================================================================
+  // GATE DE LINT — PASSADA 1 (rapida).
+  // `pnpm lint` == `oxlint . && eslint .`  (09-DECISOES-CANONICAS.md D4).
+  //
+  // O script canonico NAO leva flags, portanto toda a politica do oxlint tem
+  // de viver neste ficheiro. Divisao de trabalho com a passada 2:
+  //   - aqui  : o que e sintatico e barato (865+ regras, 50-100x mais rapido);
+  //   - eslint: SO o que precisa do type checker (eslint.config.js).
+  //
+  // Codigo de saida: sem `--deny-warnings`, o oxlint sai 0 com warnings e != 0
+  // com erros. `correctness` e a unica categoria em `error` — e a que descreve
+  // codigo que esta simplesmente ERRADO, nao codigo de que nao se gosta.
+  // ==========================================================================
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["unicorn", "typescript", "oxc", "promise", "node", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "env": {
+    "es2024": true,
+    "node": true
+  },
+  "rules": {
+    // R1 — `@deepseek-ai/dsh-host-subprocess` da 404 REAL no registry npm
+    // (erro E1 da Onda 0; CONTRACT-004 assere-o contra a rede). A mesma regra
+    // esta em eslint.config.js: as duas passadas guardam-na, porque basta uma
+    // delas correr para o nome nao voltar. Apanha tambem `import type`.
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@deepseek-ai/dsh-host-subprocess",
+            "message": "Pacote INEXISTENTE (404 no registry npm - CONTRACT-004). O assento de subprocessos e `@deepseek-ai/dsh-subprocess` / `@deepseek-ai/dsh-subprocess-local`. Ver docs/spikes/api-dsh.md."
+          }
+        ]
+      }
+    ],
+
+    // catch vazio proibido (05-QUALIDADE-CODIGO.md §6.3).
+    "no-empty": ["error", { "allowEmptyCatch": false }],
+
+    // -------------------------------------------------------------------
+    // TRANSITORIO (2/2) — REVER QUANDO O ESQUELETO ESTIVER PREENCHIDO.
+    //
+    // Duas regras do unicorn que colidem com o ESQUELETO do COMMIT PREP: os
+    // ficheiros da arvore canonica de D1 nascem VAZIOS, ou com um marcador de
+    // modulo ESM vazio, e so ganham corpo na onda do seu dono. Deixa-las
+    // ligadas poria TODA onda ate a 5 vermelha por ficheiro-por-preencher,
+    // que e ruido, nao defeito.
+    //
+    // Ao contrario do bloco TRANSITORIO (1/2) mais abaixo, este NAO tem um
+    // unico dono: o esqueleto so fecha quando a ultima sub-tarefa da Onda 5
+    // preencher o ultimo ficheiro. Nao pode, portanto, ser apagado por T1.1.
+    //
+    //   >>> CONDICAO DE EXPIRACAO, verificavel por comando:
+    //   >>>   grep -rlE '^export \{\}$' src worker bin --include='*.ts'
+    //   >>>   find src worker bin -name '*.ts' -empty
+    //   >>> Quando os DOIS nao devolverem nada, apague estas duas linhas e
+    //   >>> confirme que `pnpm lint` continua verde. Quando isto foi escrito
+    //   >>> (Onda 1) o primeiro devolvia 68 ficheiros e o segundo 2.
+    // -------------------------------------------------------------------
+    "unicorn/require-module-specifiers": "off",
+    "unicorn/no-empty-file": "off"
+  },
+  "overrides": [
+    {
+      // ---------------------------------------------------------------------
+      // TRANSITORIO (1/2) — APAGAR NO COMMIT DE T1.1.
+      // `src/index.ts` e `test/index.test.ts` sao o monolito pre-refactor da
+      // Onda 0. Importam HOJE o pacote 404 e sao a origem dos 30 erros de
+      // `tsc --noEmit` que T1.1 fecha NESTA MESMA onda, dissolvendo os dois
+      // ficheiros na arvore canonica de D1. Rebaixar para `warn` mantem o
+      // achado visivel sem tornar o gate da onda refem de um defeito que ja
+      // tem dono. Ver o bloco homonimo em eslint.config.js.
+      // ---------------------------------------------------------------------
+      "files": ["src/index.ts", "test/index.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "warn",
+          {
+            "paths": [
+              {
+                "name": "@deepseek-ai/dsh-host-subprocess",
+                "message": "Pacote INEXISTENTE (404 no registry npm - CONTRACT-004). T1.1: ao dissolver este ficheiro, APAGUE o override transitorio do .oxlintrc.json."
+              }
+            ]
+          }
+        ],
+        "no-control-regex": "warn",
+        "typescript/no-this-alias": "warn"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "dist/**",
+    "coverage/**",
+    "node_modules/**",
+    // Espelhos byte-a-byte de tarballs de terceiros (`pnpm types:fetch`).
+    // O gate real deles e test/contract/dsh-types.test.ts (sha256 por ficheiro).
+    "types/**",
+    // Artefactos de emissao commitados lado a lado com o fonte.
+    "worker/**/*.js",
+    "worker/**/*.d.ts",
+    "worker/**/*.js.map",
+    "worker/**/*.d.ts.map",
+    // Evidencia congelada dos spikes da Onda 0 (tem package.json proprio).
+    "scripts/spike/**"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  /* CONFIGURACAO DE EMISSAO DO WORKER (`pnpm run build`, segunda metade).
+     ==========================================================================
+
+     `worker/` e um PROCESSO SEPARADO (09-DECISOES-CANONICAS.md D2): o plugin
+     faz `spawn` de `node dist/worker/telegram-bot.js`. D13 exige esse ficheiro
+     dentro do tarball. A justificacao de haver dois projetos de emissao, e nao
+     um, esta no cabecalho de `tsconfig.build.json`.
+
+     PORQUE `rootDir: "."` E NAO `rootDir: "worker"`
+     --------------------------------------------------------------------------
+     Com `rootDir: "."` + `outDir: "dist"`, `worker/telegram-bot.ts` emite para
+     `dist/worker/telegram-bot.js` — o caminho que D13 pede. `rootDir: "worker"`
+     daria o mesmo hoje, mas quebraria no dia em que o worker importar
+     `src/contracts/ipc.ts` (que 05-QUALIDADE-CODIGO.md §5.5 autoriza
+     explicitamente: e a UNICA coisa de `src/` que o worker pode importar):
+     esse ficheiro ficaria fora do `rootDir` e voltariamos ao `TS6059`. Com
+     `rootDir: "."` ele emite para `dist/src/contracts/ipc.js` e o especificador
+     relativo `../src/contracts/ipc.js` continua a resolver a partir de
+     `dist/worker/`.
+
+     SEM `declaration`: o worker e um executavel, nao superficie publica. O
+     `exports` do package.json nao o expoe e ninguem faz `import` dele. */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    /* Ver a nota em `tsconfig.build.json`: sem isto, um build vermelho
+       deixa `dist/` escrito na mesma e `npm pack` embrulha-o. */
+    "noEmitOnError": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["worker/**/*"],
+  "exclude": ["node_modules", "dist", "test", "types/__smoke__.ts"]
+}
