@@ -50,6 +50,8 @@ import {
   type IpcIntentName,
   type IpcMessage,
   type IpcMessageToWorker,
+  type IpcNotifyMessage,
+  type IpcPairingChallengeMessage,
   type IpcParseResult,
   type IpcStateMessage,
 } from '../contracts/ipc.ts'
@@ -185,7 +187,7 @@ const INTENTS: readonly IpcIntentName[] = [
  */
 const LEGAL_TYPES: Readonly<Record<IpcDirection, readonly string[]>> = {
   'to-host': ['intent'],
-  'to-worker': ['state', 'ack', 'error'],
+  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge'],
 }
 
 /** Sentido em que a linha viaja. `to-host` = o que o worker pode enviar. */
@@ -262,6 +264,16 @@ function isId(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value)
 }
 
+/**
+ * sha256 em hex, 64 caracteres. Usado pelo `pairing.challenge` (S3-b): o
+ * digest e o campo mais sensivel do contrato — espaco 10^6 reversivel em
+ * milissegundos — e aceitar outra forma aqui seria aceitar lixo que um
+ * codigo mau poderia querer esconder atras de um "digest" falso.
+ */
+function isSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
+
 /* ========================================================================== */
 /* Validacao / reconstrucao                                                   */
 /* ========================================================================== */
@@ -302,6 +314,8 @@ const HANDLERS: Readonly<Record<string, IpcTypeHandler>> = {
   state: buildState,
   ack: buildAck,
   error: buildError,
+  notify: buildNotify,
+  'pairing.challenge': buildPairingChallenge,
 }
 
 /**
@@ -431,6 +445,42 @@ function buildError(bag: Record<string, unknown>): IpcParseResult {
     code,
     message: text,
     ...(requestId === undefined ? {} : { requestId }),
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `notify` (host -> worker): texto proativo composto por T5.4, renderizado
+ * por T5.2. O `\n` e legitimo (mensagem de varias linhas); controlo nao.
+ * Limite: o proprio limite de mensagem do Telegram.
+ */
+function buildNotify(bag: Record<string, unknown>): IpcParseResult {
+  const { texto } = bag
+  if (!isDisplayText(texto, MAX_MESSAGE_CHARS)) return fail('forma-invalida')
+
+  const message: IpcNotifyMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'notify',
+    texto,
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `pairing.challenge` (host -> worker): o desafio de pareamento COMO DIGEST,
+ * nunca o codigo em claro. O digest e sha256 hex de 64 caracteres (S3-b:
+ * NUNCA em log, NUNCA para o Telegram).
+ */
+function buildPairingChallenge(bag: Record<string, unknown>): IpcParseResult {
+  const { digest, expiresAt } = bag
+  if (!isSha256Hex(digest)) return fail('forma-invalida')
+  if (!isFiniteNumber(expiresAt)) return fail('forma-invalida')
+
+  const message: IpcPairingChallengeMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'pairing.challenge',
+    digest,
+    expiresAt,
   }
   return { ok: true, message }
 }

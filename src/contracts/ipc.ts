@@ -1,8 +1,8 @@
 /**
- * Contrato do canal IPC host <-> worker do Telegram. CONGELADO no COMMIT PREP 4.
+ * Contrato do canal IPC host <-> worker do Telegram. CONGELADO no COMMIT PREP 4;
+ * EMENDADO pelo COMMIT PREP 5, que acrescentou `notify` e `pairing.challenge`.
  *
- * LEITURA LIVRE, ESCRITA PROIBIDA ate ao COMMIT PREP 5 — que acrescenta a
- * mensagem `notify` e mais nada.
+ * LEITURA LIVRE, ESCRITA PROIBIDA na Onda 5 (03-ONDAS.md 16).
  *
  * ===========================================================================
  * PORQUE O BOT E UM SUBPROCESSO, E NAO CODIGO DENTRO DA FIBER
@@ -79,6 +79,23 @@
  * exercita **todos** os caminhos que produzem payload, serializa cada um, e
  * assere que a string do segredo **nao aparece em nenhum, em codificacao
  * nenhuma**.
+ *
+ * **S3-b — A EXCECAO UNICA E NOMEADA: O DIGEST DO CODIGO DE PAREAMENTO.**
+ * (COMMIT PREP 5.) A mensagem `pairing.challenge` transporta o sha256 do
+ * codigo de pareamento de 6 digitos, e S3 diz "nem o digest" — com razao,
+ * para o SEGREDO PERMANENTE. O codigo de pareamento e diferente em TUDO o
+ * que importa: espaco de 10^6 (o digest e reversivel por forca bruta em
+ * milissegundos), TTL de 5 minutos, e IMPRESSO NO TERMINAL da maquina —
+ * quem consegue ler este pipe ja esta na maquina e ja o pode ler no ecra.
+ * A regra nao foi relaxada; foi SEPARADA EM DUAS:
+ *
+ *   - o digest NUNCA sai da maquina: proibido em log, em stderr, em payload
+ *     para o Telegram, em `callback_data`, em qualquer resposta a um pedido;
+ *   - o worker guarda-o apenas como VERIFICADOR em memoria (rotacao via
+ *     `rotateChallenge` de T4.4) e nunca o devolve ao canal.
+ *
+ * O teste comportamental de S3 (SEC-14) permanece INTEGRAL: ele mede o
+ * segredo PERMANENTE, e continua a exigir vazio.
  *
  * **S4 — LINHA MALFORMADA E DESCARTADA, O CANAL SOBREVIVE.**
  * JSON invalido, `v` desconhecido, `type` desconhecido, linha truncada:
@@ -273,11 +290,60 @@ export interface IpcIntentMessage extends IpcEnvelope {
 }
 
 // ---------------------------------------------------------------------------
-// A uniao, e o que o PREP 5 acrescenta
+// PREP 5 — as duas mensagens novas
 // ---------------------------------------------------------------------------
 
-/** host -> worker. O **PREP 5** acrescenta `notify` a esta uniao, e mais nada. */
-export type IpcMessageToWorker = IpcStateMessage | IpcAckMessage | IpcErrorMessage
+/**
+ * Notificacao proativa. Composta pelo HOST (`src/audit/notify.ts`, T5.4),
+ * renderizada pelo WORKER (T5.2). Best-effort por construcao: a falha de
+ * entrega nao derruba o canal nem o pedido que a originou.
+ *
+ * `texto` e MOSTRADO ao dono no Telegram: vale a mesma regra de
+ * `IpcErrorMessage.message` — sem segredo, sem token, sem caminho absoluto
+ * (S3). O `\n` e legitimo (mensagem de varias linhas); controlo nao.
+ *
+ * O mapeamento texto -> botoes inline NAO viaja: e decisao de T5.2, dona dos
+ * comandos, e usa a gramatica `g1:<accao>:<token>` de `worker/lib/keyboard.ts`.
+ */
+export interface IpcNotifyMessage extends IpcEnvelope {
+  readonly type: 'notify'
+  /** 1..4096 caracteres (limite de mensagem do Telegram). */
+  readonly texto: string
+}
+
+/**
+ * O desafio de pareamento, a UNICA forma em que o codigo pode atravessar o
+ * canal: como DIGEST, nunca em claro (a lacuna reportada por T4.4 — o codigo
+ * e gerado no host, verificado no worker, e antes nao havia canal).
+ *
+ * `digest` = sha256 hex de 64 caracteres do codigo de 6 digitos. O worker
+ * constroi o VERIFICADOR a partir dele — a mesma reducao que
+ * `createPairingChallenge` (T4.4) faz do claro — e rota o desafio com
+ * `rotateChallenge`. Ver a invariante S3-b: o digest e reversivel em
+ * milissegundos e NUNCA sai da maquina.
+ */
+export interface IpcPairingChallengeMessage extends IpcEnvelope {
+  readonly type: 'pairing.challenge'
+  /** sha256 hex, 64 caracteres. Nunca em log (S3-b). */
+  readonly digest: string
+  /** Epoch ms em que o codigo deixa de valer. TTL de 5 min decidido no host. */
+  readonly expiresAt: number
+}
+
+// ---------------------------------------------------------------------------
+// A uniao
+// ---------------------------------------------------------------------------
+
+/**
+ * host -> worker. O COMMIT PREP 5 acrescentou `notify` e `pairing.challenge`
+ * a esta uniao; a partir daqui e ela que define o vocabulario do sentido.
+ */
+export type IpcMessageToWorker =
+  | IpcStateMessage
+  | IpcAckMessage
+  | IpcErrorMessage
+  | IpcNotifyMessage
+  | IpcPairingChallengeMessage
 
 /** worker -> host. */
 export type IpcMessageFromWorker = IpcIntentMessage

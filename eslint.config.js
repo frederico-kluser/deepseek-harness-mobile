@@ -120,7 +120,10 @@ export default defineConfig([
        `pnpm types:fetch`. Lintar codigo gerado e ruido: o gate real deles e
        `test/contract/dsh-types.test.ts` (sha256 por ficheiro). */
     'types/**',
-    /* Artefactos de emissao commitados lado a lado com o fonte. */
+    /* Artefactos de emissao commitados lado a lado com o fonte.
+       EXCECAO NOMEADA (PREP 5): worker/lib/vendor-shims.d.ts NAO e artefacto
+       de emissao — e FONTE (4 linhas de declaracoes ambiente que o grammY
+       exige), embora case com o padrao. Nao apagar em limpeza de artefactos. */
     'worker/**/*.js',
     'worker/**/*.d.ts',
     'worker/**/*.js.map',

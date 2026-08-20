@@ -358,9 +358,12 @@ describe('S4: linha malformada e descartada, e o canal SOBREVIVE', () => {
 
 describe('um tipo do FUTURO degrada em silencio em vez de partir o canal', () => {
   /**
-   * O contrato esta congelado com quatro tipos e JA SE SABE que cresce: o
-   * COMMIT PREP 5 acrescenta `notify` e uma mensagem de PAREAMENTO (o codigo e
-   * gerado no host e verificado no worker, e hoje nao tem por onde atravessar).
+   * O vocabulario cresce, e JA CRESCEU: o COMMIT PREP 5 acrescentou `notify`
+   * e `pairing.challenge` (o digest do codigo de pareamento, gerado no host e
+   * verificado no worker — a lacuna que T4.4 reportou). As duas saem da lista
+   * de "futuro" e passam a ser tipos VALIDOS, cobertos na tabela de paridade.
+   * AQUI fica o que o teste sempre quis medir: um tipo que NINGUEM conhece
+   * ainda.
    *
    * O cenario que este teste fixa nao e hipotetico: durante um reinicio do
    * plugin, o processo filho vivo ainda e o do binario ANTERIOR. Uma ponta
@@ -368,8 +371,8 @@ describe('um tipo do FUTURO degrada em silencio em vez de partir o canal', () =>
    * cair, porque cair aqui e derrubar o canal de controlo do dono.
    */
   const FUTURAS: readonly string[] = [
-    '{"v":1,"type":"notify","text":"o tunel expira em 5 minutos"}',
-    '{"v":1,"type":"pairing.challenge","code":"123456"}',
+    '{"v":1,"type":"futuro.desconhecido","x":1}',
+    '{"v":1,"type":"outro.futuro"}',
   ]
 
   it('cada uma delas e `tipo-desconhecido`, e nada mais acontece', () => {

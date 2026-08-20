@@ -64,10 +64,12 @@ import { isGuardedPath } from './path.ts'
 import { challengeBasicAuth, denyNotFound, denyUntrustedOrigin, denyUpgrade } from './responses.ts'
 import {
   authenticateRequest,
+  recordAudit,
   rewriteAuthenticatedTunnelRequest,
   type GateAuth,
   type TunnelOriginRegistry,
 } from './session-auth.ts'
+import { emitSessaoNova, type SessaoNovaEvent } from '../audit/events.ts'
 
 /** Tudo o que o portao precisa de saber, injetado -- nada resolvido por dentro. */
 export interface GateDeps {
@@ -296,6 +298,18 @@ function refusedAtPerimeter(deps: GateDeps, req: IncomingMessage, surface: strin
 }
 
 /**
+ * Teto da memoria de "sessoes ja vistas" do ponto de chamada PREP 5.
+ *
+ * PORQUE EXISTE: sem teto, um host com meses de uptime acumularia um hash por
+ * sessao emitida — crescimento sem limite. 1024 espelha
+ * `MAX_TRACKED_IDENTITIES` de session-auth.ts; a eviccao tira a MAIS ANTIGA
+ * (Map preserva ordem de insercao). Consequencia aceite e documentada: uma
+ * sessao expulsa pode re-notificar ao voltar — notificar duas vezes e melhor
+ * do que nao notificar.
+ */
+const SESSAO_NOVA_TETO = 1024
+
+/**
  * Constroi o handler guardado que envolve um despacho original.
  *
  * A SUPERFICIE E GUARDADA INTEIRA, e isso e estrutural: no ponto de despacho
@@ -309,6 +323,9 @@ export function createGuardedHandler(
   surface: string,
 ): WebRequestHandler {
   const { ctx, log, config } = deps
+
+  /** Sessoes ja VISTAS por este handler (ponto de chamada PREP 5). */
+  const sessoesVistas = new Map<string, true>()
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let authorized: boolean
@@ -374,6 +391,49 @@ export function createGuardedHandler(
         req,
         async (): Promise<boolean> => outcome.authorized,
       )
+
+      /* ---- L3.1: sessao NOVA — PONTO DE CHAMADA CONGELADO NO COMMIT PREP 5 -- */
+      /**
+       * Primeiro uso AUTORIZADO de uma sessao. O evento escreve no AuditSink
+       * ANTES do fan-out de observadores (T5.4 implementa o consumidor em
+       * `src/audit/notify.ts`): "o log e a fonte da verdade; a notificacao e
+       * best-effort" (03-ONDAS 10).
+       *
+       * Fail-closed: se a escrita de auditoria falhar, o pedido e NEGADO com
+       * o MESMO 401 de credencial errada — a doutrina da auditoria (ver
+       * recordAudit) nao ganha uma excecao no caminho de sucesso.
+       *
+       * O CAMINHO DE UPGRADE NAO EMITE, de proposito: a primeira requisicao
+       * HTTP da sessao precede qualquer upgrade com a mesma sessao (o
+       * navegador pede a pagina antes de abrir o WebSocket). Se a
+       * implementacao medir um caminho real em que isso nao vale, reporta
+       * (03 13.2) e o PREP 6 corrige.
+       */
+      if (authorized && outcome.session !== null) {
+        const idHash = outcome.session.idHash
+        if (!sessoesVistas.has(idHash)) {
+          if (sessoesVistas.size >= SESSAO_NOVA_TETO) {
+            const maisAntiga = sessoesVistas.keys().next().value
+            if (maisAntiga !== undefined) sessoesVistas.delete(maisAntiga)
+          }
+          sessoesVistas.set(idHash, true)
+          const evento: SessaoNovaEvent = {
+            evento: 'sessao_nova',
+            resultado: 'permitido',
+            sessao_id_hash: idHash,
+          }
+          const registado = recordAudit(deps.auth(), log, evento)
+          if (!registado) {
+            log.warn(
+              `[${surface}] sessao nova NAO registada (auditoria indisponivel); ` +
+                `pedido NEGADO (fail-closed): ${String(req.method)} ${String(req.url)}`,
+            )
+            challengeBasicAuth(res, config.realm)
+            return
+          }
+          emitSessaoNova(evento, log)
+        }
+      }
     } catch (error) {
       /**
        * NENHUM CAMINHO DE ERRO TERMINA EM "DEIXA PASSAR".
@@ -399,7 +459,6 @@ export function createGuardedHandler(
       challengeBasicAuth(res, config.realm)
       return
     }
-
     // A LANDMINE DO TUNEL. Ver `rewriteAuthenticatedTunnelRequest`: isto desarma
     // o anti-rebinding do NUCLEO, e e a camada L2.5 acima que passa a sustentar
     // essa garantia. So corre DEPOIS de autenticar, e so para pedidos do tunel.
