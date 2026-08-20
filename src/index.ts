@@ -529,6 +529,21 @@ export function apply(ctx: Context, config: Config): void {
    * async, in which case unloading awaits them". Nos nao usamos essa tolerancia;
    * a regra Q-2 do projeto e mais apertada do que a do host, de proposito.)
    */
+  /**
+   * O CANAL IPC E O DEAD-MAN'S SWITCH, ligados aqui por consequencia e nao por
+   * escolha desta funcao.
+   *
+   * `createWorkerSupervisor` declara `stdio.stdin: 'pipe'`, e e isso -- e so
+   * isso -- que arma as duas coisas: o sentido host -> worker do protocolo JSONL
+   * (`src/contracts/ipc.ts`) e a defesa que sobrevive a um `SIGKILL` NESTE
+   * processo. Se o `dsh` for morto sem cortesia, o disposer abaixo NAO CORRE --
+   * nem o `abort`, nem o tree-kill do grupo. O que corre e o nucleo, que fecha o
+   * descritor; o worker ve EOF no `stdin` e termina-se a si proprio.
+   *
+   * NAO SE PASSA `onIntent`: a maquina de controlo e da Onda 5. Ate la o canal
+   * responde `INTERNAL` a qualquer intencao -- fail-closed, com log, e nunca
+   * silencio.
+   */
   ctx.effect((): Disposable => {
     const supervisor = createWorkerSupervisor(ctx, config)
     supervisor.start()

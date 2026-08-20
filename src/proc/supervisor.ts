@@ -51,7 +51,11 @@ import { defaultClockDeps, type ClockDeps } from './scheduler.ts'
 import { attachStreamLogging } from './stream-log.ts'
 import { treeKill, type TreeKillDeps } from './tree-kill.ts'
 
-export { createWorkerSupervisor, type WorkerSupervisor } from './worker.ts'
+export {
+  createWorkerSupervisor,
+  type WorkerSupervisor,
+  type WorkerSupervisorOptions,
+} from './worker.ts'
 
 /* ========================================================================== */
 /* Dependencias injetaveis                                                    */
@@ -109,6 +113,26 @@ export interface SupervisedProcess extends SupervisedProcessHooks {
    * muda DEPOIS do arranque. Ver {@link StreamLogOptions.secrets}.
    */
   readonly secrets?: (() => readonly string[]) | undefined
+  /**
+   * CANAL DE PROTOCOLO sobre os pipes do filho, quando ele tem um.
+   *
+   * Recebe o handle acabado de instanciar e devolve o DESARME SINCRONO. Corre no
+   * MESMO ponto de {@link attachStreamLogging} e e desarmado no MESMO ponto —
+   * fecho do processo ou substituicao/disposer — para que o canal nunca
+   * sobreviva ao filho a que pertence.
+   *
+   * QUANDO PRESENTE, `stdout` DEIXA DE IR PARA O LOG: passa a ser deste
+   * consumidor, porque a invariante S2 de `../contracts/ipc.ts` diz que ali so
+   * viaja JSONL. `stderr` continua no log, exatamente como antes — e ele que
+   * carrega TODO o texto humano do filho.
+   *
+   * PORQUE UM GANCHO NA SUPERFICIE GENERICA e nao codigo em `./worker.ts`: e
+   * aqui que vive a garantia de ordenacao ("ligado antes de `onSpawned`,
+   * desligado no fecho") e a garantia de que nunca ha um instante sem quem
+   * drene. Um consumidor instalado por fora, em `onSpawned`, herdava so metade
+   * dessas garantias.
+   */
+  readonly attachChannel?: ((handle: SubprocessHandle) => () => void) | undefined
 }
 
 /* ========================================================================== */
@@ -302,7 +326,25 @@ export function createProcessSupervisor(
      * omissao no Linux, mais a fila interna do Node). Um `cloudflared` verboso
      * enche isso e CONGELA no `write` -- sem erro, sem log e sem sinal.
      */
-    detachStreamListeners = attachStreamLogging(spawned, { name, log, secrets })
+    const detachLogging = attachStreamLogging(spawned, {
+      name,
+      log,
+      secrets,
+      // Ver `SupervisedProcess.attachChannel`: com canal, `stdout` e protocolo.
+      stdoutIsProtocol: target.attachChannel !== undefined,
+    })
+
+    // O canal entra no MESMO bloco sincrono do encaminhamento de log, e antes de
+    // `onSpawned`. O filho ainda nao pode ter escrito nada (nem sequer foi
+    // agendado), e um `Readable` sem ouvinte de `'data'` retem o que chegar --
+    // portanto nao ha janela em que o `stdout` fique sem quem o leia.
+    const detachChannel = target.attachChannel?.(spawned)
+
+    // UM so desarme para os dois, para que o ponto de fecho continue a ser um so.
+    detachStreamListeners = (): void => {
+      detachChannel?.()
+      detachLogging()
+    }
 
     // O gancho corre DEPOIS de os ouvintes estarem ligados e ANTES de qualquer
     // terminacao poder ser observada: e onde o pid entra no pidfile e onde o

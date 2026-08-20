@@ -39,6 +39,24 @@ export interface StreamLogOptions {
    * do PROPRIO DONO -- nenhuma regex o adivinha.
    */
   readonly secrets: () => readonly string[]
+  /**
+   * `stdout` do filho e um CANAL DE PROTOCOLO, nao log humano (invariante S2 de
+   * `src/contracts/ipc.ts`).
+   *
+   * PORQUE ISTO E UMA OPCAO E NAO UMA MUDANCA GLOBAL: o `cloudflared` continua a
+   * escrever diagnostico em `stdout`/`stderr` e continua a querer os dois no log.
+   * O worker do Telegram, a partir da Onda 4, escreve JSONL em `stdout` — e
+   * encaminhar JSONL para `logger.debug` linha a linha era o habito ANTERIOR que
+   * o contrato manda mudar: uma copia de cada mensagem do protocolo no log do
+   * plano de controlo e ruido que treina o operador a nao ler o log.
+   *
+   * O QUE **NAO** MUDA COM ISTO: o absorvedor de `'error'` do `stdout` continua
+   * ligado (um `EventEmitter` que emite `'error'` sem ouvinte LANCA no processo
+   * hospedeiro), e o DRENO nao fica orfao — `createProcessSupervisor` liga o
+   * consumidor do canal no MESMO bloco sincrono, antes de o filho poder ter
+   * corrido. Nunca ha um instante em que ninguem esteja a drenar.
+   */
+  readonly stdoutIsProtocol?: boolean | undefined
 }
 
 /**
@@ -68,13 +86,17 @@ export function attachStreamLogging(
     log.debug(`[${name} STREAM]: ${error.message}`)
   }
 
-  handle.stdout?.on('data', onStdout)
+  const logStdout = options.stdoutIsProtocol !== true
+
+  if (logStdout) handle.stdout?.on('data', onStdout)
   handle.stderr?.on('data', onStderr)
+  // Os absorvedores de `'error'` ficam nos DOIS streams em qualquer dos modos:
+  // eles nao dependem de quem le os dados, e sim de o stream poder falhar.
   handle.stdout?.on('error', absorbStreamError)
   handle.stderr?.on('error', absorbStreamError)
 
   return (): void => {
-    handle.stdout?.removeListener('data', onStdout)
+    if (logStdout) handle.stdout?.removeListener('data', onStdout)
     handle.stderr?.removeListener('data', onStderr)
   }
 }

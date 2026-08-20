@@ -2,16 +2,25 @@
  * `createWorkerSupervisor` -- o worker de long-polling do Telegram, expresso como
  * UMA INSTANCIACAO de `createProcessSupervisor`.
  *
- * PORQUE ESTE FICHEIRO E TAO CURTO: e essa a prova de que a generalizacao e real.
- * Tudo o que era ciclo de vida (backoff com jitter, orcamento em janela
- * deslizante, `AbortController` unico, tree-kill do grupo, disposer sincrono
- * LIFO, evento terminal unico) vive em `./supervisor.ts` e e partilhado com o
- * supervisor do `cloudflared`. O que sobra aqui e SO o que distingue o worker de
- * qualquer outro processo longo: o `argv`, o `cwd`, o `stdio` e o ambiente.
+ * O QUE ESTE FICHEIRO NAO TEM, e essa e a prova de que a generalizacao e real:
+ * nada de ciclo de vida. Backoff com jitter, orcamento em janela deslizante,
+ * `AbortController` unico, tree-kill do grupo, disposer sincrono LIFO e evento
+ * terminal unico vivem em `./supervisor.ts` e sao partilhados com o supervisor
+ * do `cloudflared`. Aqui esta SO o que distingue o worker de qualquer outro
+ * processo longo: o `argv`, o `cwd`, o `stdio`, o ambiente -- e, desde a Onda 4,
+ * o CANAL.
+ *
+ * O ficheiro cresceu nesta onda (de ~90 para ~225 linhas) e a razao esta toda
+ * numa frase: o worker passou a ser o unico processo do repositorio com um
+ * PROTOCOLO. `stdin` passou de `'ignore'` a `'pipe'`, e com isso vieram o
+ * sentido host -> worker (`send`), o decisor de intencoes e o dead-man's switch.
+ * O `cloudflared` nao tem nada disto e continua a nao ter -- pelo que a
+ * alternativa (empurrar o canal para a superficie generica) tornaria a
+ * generalizacao MENOS real, nao mais.
  *
  * `src/proc/supervisor.ts` reexporta este simbolo, e nao ao contrario: quem
- * importava `createWorkerSupervisor` de la (`src/index.ts`, T4.3) continua a
- * compilar sem tocar em nada.
+ * importava `createWorkerSupervisor` de la (`src/index.ts`) continua a compilar
+ * sem tocar em nada.
  */
 
 import {
@@ -19,7 +28,10 @@ import {
   resolveWorkerCwd,
   type Config,
 } from '../config/schema.ts'
-import type { Context, SubprocessSpawnSpec } from '../dsh/adapter.ts'
+import type { IpcIntentMessage, IpcMessageToWorker } from '../contracts/ipc.ts'
+import type { Context, SubprocessHandle, SubprocessSpawnSpec } from '../dsh/adapter.ts'
+import { createGuardLogger, type GuardLogger } from '../logging/logger.ts'
+import { createHostIpcChannel, type HostIpcChannel } from '../telegram/ipc.ts'
 import { buildWorkerEnv } from './env.ts'
 import {
   createProcessSupervisor,
@@ -31,21 +43,89 @@ import {
 /**
  * Superficie publica do supervisor do worker.
  *
- * Continua a ser um tipo proprio (e nao um alias nu de `ProcessSupervisor`) para
- * que a Onda 4 lhe possa acrescentar o que o IPC precisar sem alargar a
- * superficie generica, que e partilhada com o tunel.
+ * Continua a ser um tipo proprio (e nao um alias nu de `ProcessSupervisor`)
+ * porque a Onda 4 lhe acrescentou o que o IPC precisa -- {@link send} -- sem
+ * alargar a superficie generica, que e partilhada com o tunel.
  */
-export interface WorkerSupervisor extends ProcessSupervisor {}
+export interface WorkerSupervisor extends ProcessSupervisor {
+  /**
+   * Difunde uma mensagem host -> worker pelo canal JSONL.
+   *
+   * `false` quando ela nao saiu: nao ha filho vivo, o canal esta saturado
+   * (backpressure) ou a mensagem viola o contrato. NUNCA lanca e NUNCA bloqueia
+   * -- um `write` que bloqueasse num pipe cheio congelava o DSH inteiro.
+   */
+  send(message: IpcMessageToWorker): boolean
+}
+
+/** O que distingue este supervisor do generico, alem do `argv`. */
+export interface WorkerSupervisorOptions {
+  /**
+   * Decide UMA intencao vinda do worker e devolve a resposta.
+   *
+   * SINCRONO e TOTAL (devolve sempre uma mensagem), porque o contrato diz que o
+   * `ack` e "sempre emitido -- inclusive nos caminhos de erro": sem resposta, o
+   * cliente do Telegram fica com a barra de progresso eterna e o dono nao sabe
+   * se o comando chegou. Trabalho lento responde `accepted` JA e difunde o resto
+   * depois, por {@link WorkerSupervisor.send}.
+   *
+   * AUSENTE, o canal responde `INTERNAL` a tudo -- ver
+   * {@link rejeitarSemControlador}. E fail-closed e e visivel no log; nao ha
+   * caminho em que uma intencao seja ignorada em silencio.
+   */
+  readonly onIntent?: ((intent: IpcIntentMessage) => IpcMessageToWorker) | undefined
+}
+
+/**
+ * Resposta do canal quando NENHUM controlador esta montado.
+ *
+ * A maquina de controlo (transicoes legais, nonce, TTL) e da Onda 5. Ate la a
+ * unica resposta honesta e `INTERNAL`: e o codigo do vocabulario fechado cuja
+ * `message` "nao pode denunciar topologia", e responder e obrigatorio -- calar
+ * seria deixar o dono a olhar para uma barra de progresso que nunca acaba.
+ */
+function rejeitarSemControlador(log: GuardLogger, intent: IpcIntentMessage): IpcMessageToWorker {
+  log.warn(
+    `Intencao '${intent.intent}' recebida sem controlador montado; respondida com INTERNAL.`,
+  )
+  return {
+    v: 1,
+    type: 'error',
+    requestId: intent.requestId,
+    code: 'INTERNAL',
+    message: 'Este comando ainda nao esta disponivel nesta instalacao.',
+  }
+}
 
 /** Cria o supervisor do processo filho do worker do Telegram. */
 export function createWorkerSupervisor(
   ctx: Context,
   config: Config,
   deps: SupervisorDeps = defaultSupervisorDeps,
+  options: WorkerSupervisorOptions = {},
 ): WorkerSupervisor {
   const { worker } = config
+  const log = createGuardLogger(ctx)
 
-  return createProcessSupervisor(
+  /**
+   * FORNECEDOR de segredos, PARTILHADO pelo encaminhamento de log do filho e
+   * pelo canal IPC.
+   *
+   * Uma so definicao de proposito: enquanto o `attachStreamLogging` tinha
+   * `redact()` e o canal nao, o MESMO token do bot saia mascarado quando era o
+   * filho a imprimi-lo e EM CLARO quando era o host a registar a excecao de um
+   * decisor de intencoes. Duas listas eram duas politicas.
+   */
+  const secrets = (): readonly string[] => [worker.token]
+
+  /**
+   * O canal da INSTANCIA CORRENTE. Estado de CLOSURE, nunca de modulo: dois
+   * supervisores no mesmo processo (o teste corre dezenas) teriam de partilhar
+   * um canal, e o `send` de um acabaria no `stdin` do filho do outro.
+   */
+  let channel: HostIpcChannel | undefined
+
+  const supervisor = createProcessSupervisor(
     ctx,
     {
       name: 'worker',
@@ -56,7 +136,7 @@ export function createWorkerSupervisor(
       // configuracao e nao muda em runtime, mas a superficie e uma so para os
       // dois supervisores -- duas assinaturas para o mesmo campo era a fenda por
       // onde a generalizacao deixaria de ser real.
-      secrets: (): readonly string[] => [worker.token],
+      secrets,
       buildSpec: (signal: AbortSignal): SubprocessSpawnSpec => ({
         /**
          * ARGV: `[command, entrypoint, ...args]` -- o entrypoint e ANTEPOSTO aqui
@@ -74,10 +154,34 @@ export function createWorkerSupervisor(
          */
         argv: [worker.command, PACKAGED_WORKER_ENTRYPOINT, ...worker.args],
         cwd: resolveWorkerCwd(config),
-        // Isolamento dos canais stdio: o worker nao satura o terminal do DSH e
-        // stdin fica fechado (um long-poller nao le do operador). `'pipe'`
-        // entrega os `Readable` crus, que e o que o encaminhamento para o log usa.
-        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
+        /**
+         * OS TRES CANAIS EM `'pipe'` -- e o `stdin` e a mudanca estrutural da
+         * Onda 4.
+         *
+         * Ate aqui `stdin` era `'ignore'` (fd 0 em `/dev/null`), com a
+         * justificacao "um long-poller nao le do operador". Continua a ser
+         * verdade que ele nao le do OPERADOR; o que ele passa a ler e o
+         * PROTOCOLO -- e o pipe compra duas coisas que `/dev/null` nao dava:
+         *
+         *   1. o sentido host -> worker do canal JSONL, sem abrir porta nenhuma
+         *      nem ficheiro nenhum (`../contracts/ipc.ts`);
+         *   2. o DEAD-MAN'S SWITCH: morto o `dsh` com `SIGKILL`, o nucleo fecha
+         *      este descritor, o worker ve EOF e termina sozinho. E a UNICA
+         *      defesa que sobrevive a um `SIGKILL` no supervisor, porque
+         *      `detached` + `kill(-pid)` no disposer depende de o disposer
+         *      chegar a correr.
+         *
+         * MEDIDO -- e a pergunta que a revisao exigiu: passar `stdin` a `'pipe'`
+         * NAO altera o tree-kill nem o `detached`. `ps -o pid,ppid,pgid,sid`
+         * mostra o filho como lider do seu proprio grupo e da sua propria sessao
+         * (`pgid === sid === pid`) com os dois `stdio`, e o neto continua a
+         * morrer com o grupo. Evidencia em
+         * `test/integration/proc/stdio-pipe-nao-regride-tree-kill.test.ts`.
+         *
+         * `'pipe'` entrega os streams crus: `stdout` vai para o canal (S2 -- so
+         * JSONL) e `stderr` continua a ir para o log do host.
+         */
+        stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
         // Janela de cortesia da escalada SIGTERM -> grace -> SIGKILL do assento.
         graceMs: worker.graceMs,
         // A intencao de anulacao transita nativamente para a arvore do filho.
@@ -87,7 +191,56 @@ export function createWorkerSupervisor(
         // para dentro do worker. Ver `buildWorkerEnv`.
         env: buildWorkerEnv(process.env, worker.token),
       }),
+      /**
+       * O CANAL, ligado e desligado pelo supervisor generico -- ver
+       * `SupervisedProcess.attachChannel`. Aqui so se diz QUEM decide as
+       * intencoes; o QUANDO (antes de `onSpawned`, desarmado no fecho) e
+       * garantia da camada de cima.
+       */
+      attachChannel: (handle: SubprocessHandle): (() => void) => {
+        const corrente = createHostIpcChannel({
+          input: handle.stdout,
+          output: handle.stdin,
+          log,
+          secrets,
+          onIntent: (intent: IpcIntentMessage): IpcMessageToWorker =>
+            options.onIntent?.(intent) ?? rejeitarSemControlador(log, intent),
+        })
+        channel = corrente
+
+        return (): void => {
+          corrente.dispose()
+          // So limpa se ainda for o corrente: numa substituicao, o canal NOVO ja
+          // esta em `channel` e apaga-lo aqui deixava o `send` mudo com um filho
+          // vivo -- o mesmo defeito que `releaseCurrentHandle` corrigiu para o
+          // handle.
+          if (channel === corrente) channel = undefined
+        }
+      },
     },
     deps,
   )
+
+  /**
+   * Delegacao CAMPO A CAMPO, e nao `{ ...supervisor }`: o espalhamento copia
+   * VALORES, e `attempts`, `exhausted` e `failure` sao getters -- ficariam
+   * congelados no valor que tinham no instante da copia, e um teste de orcamento
+   * passaria a ler sempre `0`.
+   */
+  return {
+    start: supervisor.start,
+    restart: supervisor.restart,
+    dispose: supervisor.dispose,
+    signal: supervisor.signal,
+    get attempts(): number {
+      return supervisor.attempts
+    },
+    get exhausted(): boolean {
+      return supervisor.exhausted
+    },
+    get failure(): ProcessSupervisor['failure'] {
+      return supervisor.failure
+    },
+    send: (message: IpcMessageToWorker): boolean => channel?.send(message) ?? false,
+  }
 }

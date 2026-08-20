@@ -50,6 +50,27 @@ const WORKER_ENV_ALLOWLIST: readonly string[] = [
 const WORKER_ENV_PREFIXES: readonly string[] = ['LC_']
 
 /**
+ * Marca "este processo foi arrancado pelo plugin, com o canal IPC armado".
+ *
+ * PARA QUE SERVE, e para que NAO serve. Nao e credencial, nao autoriza nada e o
+ * dead-man's switch nao depende dela: o EOF do `stdin` termina o worker haja ou
+ * nao marca. O que ela compra e uma MENSAGEM: corrido a mao, o worker tem `fd 0`
+ * num terminal ou em `/dev/null`, e no segundo caso via EOF imediato e saia sem
+ * dizer porque — indistinguivel de uma avaria. Com a marca ausente ele escreve
+ * uma linha em `stderr` a explicar.
+ *
+ * VALOR DUPLICADO EM `worker/ipc.ts` (`WORKER_IPC_ENV_VAR`) e nao importado: o
+ * worker so pode importar `src/contracts/ipc.ts` de `src/`
+ * (`05-QUALIDADE-CODIGO.md` 5.5). `test/unit/proc/env.test.ts` assere que as
+ * duas constantes sao iguais, para que a divergencia seja um teste vermelho e
+ * nao uma mensagem que desaparece.
+ *
+ * SOBREVIVE AO `scrubbedParentEnv()` do assento — que remove todos os `DSH_*`
+ * HERDADOS — porque o `env` explicito do spec e mesclado DEPOIS da limpeza.
+ */
+export const WORKER_IPC_ENV_MARK = 'DSH_GUARD_IPC'
+
+/**
  * Monta o ambiente do worker: allowlist + o token do bot.
  *
  * O token entra por ambiente e NUNCA por argv, porque `argv` e legivel por
@@ -73,6 +94,7 @@ export function buildWorkerEnv(source: NodeJS.ProcessEnv, token: string): NodeJS
   }
 
   env['TELEGRAM_BOT_TOKEN'] = token
+  env[WORKER_IPC_ENV_MARK] = '1'
 
   return env
 }

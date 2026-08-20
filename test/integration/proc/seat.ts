@@ -73,7 +73,21 @@ export class RealSubprocessHandle {
       // `detached: true` faz do filho o LIDER DO SEU PROPRIO GRUPO (`setsid(2)`).
       // Sem isto, `process.kill(-pid)` falha com ESRCH e o tree-kill nao existe.
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      /**
+       * O `stdio` vem do SPEC, e nao fixo aqui — foi a Onda 4 que o obrigou:
+       * o worker do Telegram passou a pedir `stdin: 'pipe'` (canal JSONL +
+       * dead-man's switch) e o `cloudflared` continua em `'ignore'`. Um assento
+       * que ignorasse o campo tornava o teste cego exatamente para a diferenca
+       * que a onda introduziu.
+       *
+       * Modo `collect` nao e suportado por este assento minimo: nenhum consumidor
+       * do repositorio o pede, e implementa-lo aqui seria dublar API por dublar.
+       */
+      stdio: [
+        spec.stdio.stdin === 'pipe' ? 'pipe' : 'ignore',
+        spec.stdio.stdout === 'pipe' ? 'pipe' : 'ignore',
+        spec.stdio.stderr === 'pipe' ? 'pipe' : 'ignore',
+      ],
       env: { ...process.env, ...spec.env } as NodeJS.ProcessEnv,
       ...(spec.signal === undefined ? {} : { signal: spec.signal }),
     })
@@ -125,7 +139,11 @@ export class RealSubprocessHandle {
     return this.child.stderr ?? undefined
   }
 
-  readonly stdin = undefined
+  /** Presente sse o spec pediu `stdin: 'pipe'` — e o sentido host -> worker. */
+  get stdin(): NodeJS.WritableStream | undefined {
+    return this.child.stdin ?? undefined
+  }
+
   readonly collected = {}
 
   sampleKilled(at: string): void {

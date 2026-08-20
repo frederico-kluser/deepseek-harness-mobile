@@ -38,7 +38,11 @@ describe('supervisor do worker de long-polling', () => {
     // elemento, ou seja um REPL do Node em vez do worker.
     assert.deepEqual(spec?.argv, [process.execPath, PACKAGED_WORKER_ENTRYPOINT])
     assert.equal(spec?.cwd, WORKER_CWD)
-    assert.deepEqual(spec?.stdio, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+    // `stdin: 'pipe'` e a mudanca estrutural da Onda 4, e nao e comodidade: e
+    // ela que arma o sentido host->worker do canal JSONL E o dead-man's switch
+    // (morto o host com SIGKILL, o nucleo fecha este descritor e o worker ve
+    // EOF). Voltar a `'ignore'` aqui desarma as duas coisas em silencio.
+    assert.deepEqual(spec?.stdio, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })
     assert.equal(spec?.graceMs, 3000, 'graceMs e obrigatorio: o assento nao aplica defaults')
     assert.equal(spec?.signal instanceof AbortSignal, true)
     assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], 'token-de-teste')
@@ -46,7 +50,18 @@ describe('supervisor do worker de long-polling', () => {
     supervisor.dispose()
   })
 
-  it('encaminha stdout/stderr do worker para o logger', () => {
+  /**
+   * O HABITO ANTERIOR MUDOU, E A MUDANCA E A INVARIANTE S2.
+   *
+   * Ate a Onda 4 o `stdout` do worker ia para `logger.debug` linha a linha. A
+   * partir do canal IPC ele e EXCLUSIVAMENTE JSONL (`src/contracts/ipc.ts`, S2)
+   * e pertence ao analisador -- copiar cada mensagem do protocolo para o log do
+   * plano de controlo era ruido que treina o operador a nao ler o log.
+   *
+   * `stderr` NAO muda: continua a ser o unico destino do texto humano do filho,
+   * e continua a passar por `redact()` antes de chegar ao logger.
+   */
+  it('encaminha SO o stderr do worker para o logger; o stdout e do canal (S2)', () => {
     const ctx = new FakeContext()
     const { deps } = makeSupervisorDeps(new FakeScheduler())
 
@@ -57,7 +72,7 @@ describe('supervisor do worker de long-polling', () => {
     child.stdout.emit('data', Buffer.from('a sondar updates\n'))
     child.stderr.emit('data', Buffer.from('timeout na rede\n'))
 
-    assert.equal(ctx.logger.has('debug', 'a sondar updates'), true)
+    assert.equal(ctx.logger.has('debug', 'a sondar updates'), false, 'stdout NAO vai para o log')
     assert.equal(ctx.logger.has('warn', 'timeout na rede'), true)
 
     supervisor.dispose()

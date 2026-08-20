@@ -300,9 +300,14 @@ describe('substituicao de recursos (achado A-MEDIUM)', () => {
 
     assert.equal(child.stdout.listenerCount('data'), 0, 'ouvinte de stdout tem de ser removido')
     assert.equal(child.stderr.listenerCount('data'), 0, 'ouvinte de stderr idem')
+    // DOIS absorvedores de `'error'` no `stdout`, e nenhum deles sai no desarme:
+    // o de `attachStreamLogging` e o do canal IPC (`createHostIpcChannel`), que
+    // desde a Onda 4 tambem le este stream. Um `EventEmitter` que emite
+    // `'error'` SEM ouvinte LANCA no processo hospedeiro, e um EPIPE num stream
+    // de um filho ja morto derrubaria o DSH inteiro -- por isso ficam os dois.
     assert.equal(
       child.stdout.listenerCount('error'),
-      1,
+      2,
       "tem de sobrar o absorvedor de 'error' (um EventEmitter sem ele LANCA)",
     )
 
