@@ -1,0 +1,335 @@
+# =============================================================================
+# dsh-guarded-bot-orchestrator — CAMADA 2 (PROFILE), EXEMPLO E OPCIONAL
+# =============================================================================
+#
+# ISTO É UM EXEMPLO. Não é aplicado por ninguém automaticamente, e o plugin
+# funciona sem ele.
+#
+# O que ele faz é o ENDURECIMENTO DE BIND: fixa o endereço de escuta do
+# servidor web no loopback, de modo que nem `--host` na linha de comando nem um
+# `DSH_*` no ambiente o consigam alargar. É a metade da mitigação que precisa de
+# alvejar uma linha de OUTRO pacote — e é por isso que vive aqui, e não no
+# bundle.
+#
+# -----------------------------------------------------------------------------
+# ONDE ESTE FICHEIRO VAI
+# -----------------------------------------------------------------------------
+#     $DSH_HOME/profiles/<perfil>/cordis.patch.yml
+#
+# Ex.: `$DSH_HOME/profiles/web/cordis.patch.yml`.
+#
+# O `dsh plugin --profile <perfil> add ...` cria esse ficheiro vazio (`[]`) com
+# este cabeçalho seu:
+#
+#     # Your patch layer for this dsh profile, applied after every bundle layer:
+#     # a top-level YAML array of loader patch entries (id-targeted config
+#     # overrides, disables, and insert lists; `!!js` expressions allowed).
+#
+# Já existe um ficheiro lá? NÃO o substitua — o conteúdo é seu, de outras
+# decisões suas. ACRESCENTE as entradas abaixo ao array existente.
+#
+# -----------------------------------------------------------------------------
+# PORQUE ISTO ESTÁ SEPARADO DO `cordis.patch.yml` DO PACOTE
+# -----------------------------------------------------------------------------
+# O `cordis.patch.yml` do pacote é a Camada 1 (Bundle) e é aplicado
+# AUTOMATICAMENTE a toda a gente que corre `dsh plugin add`. As entradas abaixo
+# alvejam por `id` uma linha que o pacote NÃO controla — a do servidor web.
+#
+# Se elas vivessem no bundle, cada instalação em que esse `id` não existisse
+# (outro perfil, outro modo, outra versão do harness) transformaria o *override*
+# num *insert*: nasceria uma SEGUNDA instância do servidor web, as duas
+# disputariam a mesma porta e o motor rejeitaria o arranque por conflito de
+# rota. Um `dsh plugin add` que quebra o boot da máquina.
+#
+# Separando, cada ficheiro entra em exatamente UMA camada e o passo arriscado
+# passa a ser deliberado, verificável e reversível.
+#
+# -----------------------------------------------------------------------------
+# >>> A MECÂNICA: WHOLE-CONFIG REPLACE, ENDEREÇADO POR `id` <<<
+# -----------------------------------------------------------------------------
+# Uma entrada com `id` de uma linha já existente é um OVERRIDE, e o override
+# substitui o `config` INTEIRO da linha alvo. Não há deep merge.
+#
+#   >>> DENTRO DO `config`, OMITIR UMA CHAVE NÃO A "HERDA" — APAGA-A. <<<
+#
+# É por isso que a entrada [1/2] abaixo repete `port` mesmo só querendo mudar
+# `host`: sem essa repetição a porta desapareceria.
+#
+# O QUE **NÃO** É PRECISO REPETIR: `name`, `inject` e as outras chaves de LINHA.
+# Elas vivem ao lado do `config`, não dentro dele, e sobrevivem ao override.
+#
+#   O motor, em `@deepseek-ai/dsh-app-boot@0.1.0-rc.7/lib/index.js:100-103`:
+#
+#       for (const [key, value] of Object.entries(overrides)) {
+#         if (key === "id") continue;
+#         target[key] = value;
+#       }
+#
+#   É um SHALLOW MERGE das chaves de topo da linha. Chave que o patch não traz
+#   nem é tocada — daí `name` e `inject` sobreviverem. E como `config` é uma
+#   dessas chaves de topo, fornecê-lo substitui o objeto INTEIRO, sem fusão por
+#   dentro. As duas metades da regra saem da mesma linha de código.
+#
+#   Confirmado nos dois sentidos: `@deepseek-ai/dsh-web-app@0.1.0-rc.7/cordis.patch.yml`
+#   faz 33 overrides sobre linhas do `dsh-base` (`- id: system-prompt`,
+#   `- id: hmr`, `- id: tools`, `- id: tool-bash`, ...) e NENHUM repete o
+#   `name`; e `@deepseek-ai/dsh-base@0.1.0-rc.7/cordis.patch.yml` L5-8 diz
+#   *"A patch replaces the targeted row's whole `config` rather than merging
+#   into it"*.
+#
+#   >>> ARMADILHA — REPETIR `name` NÃO É INÓCUO, É ARRISCADO. <<<
+#   `dsh-app-boot/lib/index.js:96-98`:
+#
+#       if (name && name !== target.name) {
+#         warn("patch: name mismatch for %C (expected %C, got %C), skipping", ...);
+#         continue;
+#       }
+#
+#   Um `name` repetido que não bata CERTO com o instalado faz o patch inteiro
+#   ser SALTADO — com aviso em stderr e exit 0, o mesmo fail-open de baixo.
+#   A receita antiga ("repita `name` para não o apagar") não só era
+#   desnecessária: criava uma segunda forma de perder o endurecimento em
+#   silêncio, por exemplo se o pacote do servidor web for renomeado.
+#
+#   >>> CORREÇÃO DE UMA VERSÃO ANTERIOR DESTE FICHEIRO. <<<
+#   >>> Ela dizia que a substituição era da ENTRADA inteira e que omitir `name` <<<
+#   >>> faria o servidor web não arrancar, e por isso repetia `name`. Isso é    <<<
+#   >>> FALSO, e foi refutado pela medição acima. A parte verdadeira — omitir   <<<
+#   >>> `port` apaga a porta — vale, porque `port` está DENTRO do `config`.     <<<
+#
+# -----------------------------------------------------------------------------
+# ORDEM DAS ENTRADAS: IRRELEVANTE
+# -----------------------------------------------------------------------------
+# `@deepseek-ai/dsh-base@0.1.0-rc.7/cordis.patch.yml`, linhas 12-13: *"Row order
+# carries no load semantics (activation is service-availability driven); the
+# grouping is for readers."* Não existe `priority`, `before` ou `after`.
+#
+# A barreira do plugin também não tem exigência de ordem: ela troca o dono do
+# despacho no `node:http.Server`, por onde TODA requisição passa, em vez de
+# envolver registos de rota um a um. Ver `docs/spikes/interceptacao.md` §9.2.
+#
+# -----------------------------------------------------------------------------
+# CREDENCIAL: NÃO ESTÁ AQUI TAMBÉM
+# -----------------------------------------------------------------------------
+# Nenhuma entrada deste ficheiro declara credencial, e nenhuma deriva credencial
+# de `ADMIN_USER`/`ADMIN_PASS` por `!!js`. Essas variáveis saíram do fluxo. A
+# credencial é gerada por CSPRNG pelo próprio plugin e o seu digest vive em
+# `$XDG_STATE_HOME/dsh-guarded-bot/state.json` (`0600`). O utilizador do Basic
+# Auth é fixo, `dsh`.
+#
+# Este ficheiro fica no `$DSH_HOME` de uma pessoa, mas o `$DSH_HOME` acaba em
+# backups, em dotfiles versionados e em capturas de ecrã. Nenhum segredo aqui.
+# (`02-SEGURANCA.md` §8.2 regra 6; `09-DECISOES-CANONICAS.md` D19.)
+# =============================================================================
+
+# =============================================================================
+# [1/2] ENDURECIMENTO DE BIND — fixa o servidor web no loopback
+# =============================================================================
+# O QUÊ: override do `config` da linha do servidor web, para que o endereço de
+#        escuta seja o loopback IPv4 e mais nada.
+#
+# PORQUÊ (falha real, discussão oficial #853 — *"unauthenticated local/remote
+#        code execution via the dsh web UI control plane"*, verificada em
+#        0.1.0-rc.6): com o bind aberto, a sub-estação `/api` do DSH — mais de
+#        60 rotas RPC — responde a sockets remotos SEM QUALQUER credencial.
+#        Entre elas está `commands/execute`, que injeta sem aprovação a ordem
+#        `/permission danger-full-access`. Nesse instante o confinamento
+#        `workspace-write` do Sandbox cai: o agente passa a ler e escrever fora
+#        da pasta de trabalho e a exfiltrar dados via Bash emulado.
+#
+#        Exposição legítima à rede faz-se SEMPRE por proxy reverso TLS com
+#        autenticação à frente deste loopback — nunca alargando o bind.
+#
+# -----------------------------------------------------------------------------
+# O `id` ABAIXO — CONFIRME-O ANTES DE APLICAR
+# -----------------------------------------------------------------------------
+# Nome canónico do valor: `<ID-DA-ENTRADA-DO-SERVIDOR-WEB-NESTA-INSTALACAO>`.
+#
+# MEDIDO: nesta linha suportada o valor é `webserver`, declarado por
+# `@deepseek-ai/dsh-web-app@0.1.0-rc.7/cordis.patch.yml:115`. Foi verificado
+# ponta a ponta num perfil limpo — ver o comando de confirmação abaixo.
+#
+# Continua a ser específico da instalação, e por três razões concretas:
+#   1. quem declara a linha é o bundle de MODO, não o `dsh-base`. O perfil `web`
+#      ativa `@deepseek-ai/dsh-web-app` e tem a linha; `@deepseek-ai/dsh-headless`
+#      NÃO declara servidor web nenhum (medido: as suas únicas linhas são
+#      `code-runtime`, `headless-startup` e `headless-runner`);
+#   2. o conjunto de bundles ativos é do perfil — está em
+#      `$DSH_HOME/profiles/<perfil>/package.json`, sob `dsh.profile.bundles`;
+#   3. uma versão futura pode renomear a linha.
+#
+# CONFIRME COM O PRÓPRIO `dsh` (esta é a forma canónica, e substitui a antiga
+# instrução de "abrir o cordis.patch.yml do bundle e procurar à mão"):
+#
+#     dsh --profile web --dump-default-config | grep -B1 dsh-host-webserver
+#     # - id: webserver
+#     #   name: '@deepseek-ai/dsh-host-webserver'
+#
+# >>> ERRAR O `id` FALHA PARA O LADO ERRADO — MEDIDO. <<<
+# Isto foi reproduzido em laboratório contra `@deepseek-ai/dsh@0.1.0-rc.7` num
+# perfil limpo, e o resultado CORRIGE o que versões anteriores desta
+# documentação afirmavam.
+#
+# O que se dizia: *"um `id` que não case deixa de ser um replace e passa a ser
+# um insert; nasce uma segunda instância do servidor web, as duas disputam a
+# mesma porta e o motor rejeita o arranque (fail loud at load)"*.
+#
+# O QUE ACONTECE DE VERDADE, com o `id` trocado pelo texto do placeholder:
+#
+#     $ dsh --profile web --dump-config
+#     dsh: [.../profiles/web/cordis.patch.yml] patch: entry
+#          "<ID-DA-ENTRADA-DO-SERVIDOR-WEB-NESTA-INSTALACAO>" not found
+#     $ echo $?
+#     0
+#
+# A entrada é SALTADA, com um aviso em stderr. O `dsh` ARRANCA. Continua a
+# haver uma só linha de servidor web — e o `host` dela continua a ser
+# `!!js ctx.webStartup.host ?? '127.0.0.1'`, ou seja, `dsh web --host 0.0.0.0`
+# volta a funcionar.
+#
+# Isto é PIOR do que o boot rejeitado que se temia, e é por isso que está
+# escrito aqui em vez de ser omitido: o modo de falha é FAIL-OPEN e SILENCIOSO.
+# Não há explosão nenhuma para o avisar. Fica um aviso numa linha, no meio do
+# arranque, e um servidor sem o endurecimento que julga ter aplicado.
+#
+# (A segunda instância existe mesmo — mas por outro caminho: um `insert` cujo
+# `id` COLIDE com uma linha já existente produz DUAS linhas com o mesmo `id`,
+# sem aviso nenhum e com exit 0. Também medido. É exatamente por isso que o
+# `cordis.patch.yml` do pacote só insere o `id` do PRÓPRIO plugin, que ninguém
+# mais declara.)
+#
+# >>> A VERIFICAÇÃO QUE DE FACTO DETECTA O ERRO <<<
+# Contar linhas de servidor web NÃO detecta nada — dá 1 nos dois casos. O que
+# distingue é o VALOR de `host`: tem de ser o literal.
+#
+#     dsh --profile web --dump-config | grep -A4 'id: webserver'
+#     #     host: 127.0.0.1                        <- correcto, aplicou
+#     #     host: !!js ctx.webStartup.host ?? ...  <- NÃO aplicou, `id` errado
+#
+# Note `--dump-config`, e NÃO `--dump-default-config`: este último é um
+# diagnóstico de recuperação que IGNORA DE PROPÓSITO a camada de perfil, para
+# não rebentar com um patch de utilizador partido. Usá-lo aqui mostraria sempre
+# a configuração sem este ficheiro, e faria qualquer verificação parecer
+# falhada. (Para descobrir o `id`, acima, qualquer um dos dois serve — a linha
+# do servidor web vem da camada de bundle.)
+- id: webserver
+  config:
+    # O endurecimento. Literal, e deliberadamente NÃO
+    # `!!js ctx.webStartup.host ?? '127.0.0.1'` — que é o valor de origem.
+    #
+    # A diferença é a que interessa: a expressão de origem HONRA
+    # `ctx.webStartup.host`, ou seja, honra `dsh web --host 0.0.0.0`. O literal
+    # abaixo torna essa bandeira INERTE. O default de fábrica já é o loopback;
+    # o que este ficheiro acrescenta é que ele deixa de ser um default e passa a
+    # ser um teto.
+    #
+    # É PROIBIDO trocar isto por `0.0.0.0` ou `[::]`. Se o fizer, o plugin
+    # recusa arrancar — `0.0.0.0` não consta de `allowedHosts` e a verificação
+    # de bind falha alto. Isso é a defesa em profundidade a funcionar, não um
+    # bug.
+    host: '127.0.0.1'
+
+    # REPETIÇÃO OBRIGATÓRIA, não é uma alteração.
+    #
+    # `port` está DENTRO do `config`, e o override substitui o `config` inteiro.
+    # Omitir esta linha APAGA a porta.
+    #
+    # A expressão é a de origem, copiada tal e qual, de propósito: assim
+    # `dsh web --port 8080` continua a funcionar. Endurecemos o ENDEREÇO, que é
+    # o que expõe à rede; a PORTA não é uma decisão de segurança.
+    #
+    # Trocar por um literal (`port: 3080`) também funciona, mas tem o efeito
+    # colateral de tornar `--port` inerte. Escolha consciente.
+    port: !!js ctx.webStartup.port ?? 3080
+
+    # NOTA: `name: '@deepseek-ai/dsh-host-webserver'` e `inject: [webStartup]`
+    # NÃO aparecem aqui, e é correto assim — são chaves de LINHA, ficam fora do
+    # `config` e sobrevivem ao override. Repeti-las era o erro da versão
+    # anterior deste ficheiro. Se a sua instalação declarar chaves adicionais
+    # DENTRO do `config` desta linha, copie-as para aqui: cada chave de `config`
+    # ausente é uma chave apagada.
+
+# =============================================================================
+# [2/2] OPCIONAL — worker do bot numa distribuição PRÉ-COMPILADA
+# =============================================================================
+# DEIXE ISTO COMENTADO a menos que precise mesmo.
+#
+# QUANDO PRECISA: quando o pacote NÃO foi instalado por `dsh plugin add`, mas
+# largado à mão num diretório absoluto (o `pnpm` >= 10 bloqueia scripts
+# `prepare` de pacotes instalados por Git, pelo que a distribuição alternativa
+# é pré-compilada). Aí o plugin não consegue deduzir onde o seu `worker/` ficou
+# e o `cwd` tem de ser dito.
+#
+# QUANDO **NÃO** PRECISA: instalação normal por `dsh plugin add`. O plugin usa o
+# `worker/` empacotado, e o token vem de
+# `$XDG_STATE_HOME/dsh-guarded-bot/secrets.env` (gravado pelo onboarding
+# `/parear`) ou, em alternativa, de `TELEGRAM_BOT_TOKEN` no ambiente.
+#
+# >>> ARMADILHA: whole-config replace. <<<
+# Este override substitui o `config` INTEIRO da linha do plugin. Por isso o
+# bloco abaixo repete TODAS as chaves do bundle, não só as duas que mudam.
+# Apagar uma linha daqui apaga a chave — e apagar `trustedRemotes`, por
+# exemplo, deixa a lista vazia, o que significa NEGA TUDO e uma instalação
+# inoperante em que até o loopback leva 403.
+#
+# Ao copiar, confira o bloco contra o `config` do `cordis.patch.yml` do pacote
+# NA VERSÃO QUE TEM INSTALADA, e contra:
+#
+#     dsh --profile web --dump-default-config | grep -A30 'id: guarded-bot-orchestrator'
+#
+# - id: guarded-bot-orchestrator
+#   config:
+#     realm: 'Secure DSH Interface'
+#     allowedHosts:
+#       - '127.0.0.1'
+#       - '::1'
+#     trustedRemotes:
+#       - '127.0.0.1'
+#     guardedPrefixes:
+#       - '/api'
+#     deniedPermissions:
+#       - 'danger-full-access'
+#     worker:
+#       # O runtime é o Node que já corre o host. NÃO é `python3`: o worker é
+#       # Node (grammY), compilado de `worker/` para `dist/worker/`.
+#       command: !!js process.execPath
+#       # Argumentos EXTRA apenas. O entrypoint `dist/worker/telegram-bot.js` é
+#       # resolvido pelo plugin a partir de `import.meta.url` e anteposto — não
+#       # o escreva aqui.
+#       args: []
+#       # A chave que justifica este override.
+#       #
+#       # `cwd` ABSOLUTO de propósito: o cwd do processo `dsh` não é garantido.
+#       # TEM DE EXISTIR — o plugin valida no arranque que o caminho existe e é
+#       # um diretório. Um cwd inexistente faz o spawn falhar com ENOENT, e uma
+#       # falha de spawn NÃO emite 'exit' (emite 'error' e 'close'): seria
+#       # tratada, mas gastaria o orçamento de reinícios a repetir um erro que
+#       # nunca se resolve sozinho.
+#       #
+#       # Note `dist/worker`, e não `worker`: no artefacto distribuído o worker
+#       # está compilado. `<pacote>/worker/` é fonte e não viaja no tarball.
+#       cwd: '/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator/dist/worker'
+#       # NUNCA escreva o token literal aqui. Esta expressão apenas REFERENCIA
+#       # a variável de ambiente; nenhum segredo é materializado no ficheiro.
+#       # Ausência vira string vazia e o worker fica em baixo — "telegram: não
+#       # configurado" — sem impedir o arranque do `dsh`.
+#       token: !!js "process.env.TELEGRAM_BOT_TOKEN ?? ''"
+#       graceMs: 3000
+#       backoff:
+#         initialDelayMs: 500
+#         maxDelayMs: 10000
+#         maxAttempts: 10
+#         resetAfterMs: 60000
+
+# =============================================================================
+# NOTA OPERACIONAL — ESCRITA CONCORRENTE (Issue #441)
+# =============================================================================
+# O carregador reescreve os ficheiros de configuração com O_TRUNC, sem rename
+# atómico de ficheiro temporário. Durante micro-intervalos do arranque o YAML
+# fica com zero bytes. Invocações concorrentes do tipo
+#
+#     dsh --profile web "tarefa A" & dsh --profile web "tarefa B" &
+#
+# podem colidir nessa fenda e ler uma matriz truncada. Em ambientes com
+# concorrência real, serialize os arranques com `flock` sobre este ficheiro.
+# =============================================================================
