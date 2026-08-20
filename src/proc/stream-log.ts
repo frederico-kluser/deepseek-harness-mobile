@@ -24,8 +24,21 @@ export interface StreamLogOptions {
   /** Nome curto do processo, usado como prefixo das linhas. */
   readonly name: string
   readonly log: GuardLogger
-  /** Literais conhecidos a mascarar (token do bot, token do tunel). */
-  readonly secrets: readonly string[]
+  /**
+   * Literais conhecidos a mascarar (token do bot, token do named tunnel).
+   *
+   * >>> FORNECEDOR, avaliado a CADA linha -- nao uma lista capturada aqui. <<<
+   * E o mesmo padrao de `openAuditLog` (`src/audit/log.ts`) e pela mesma razao:
+   * o segredo pode mudar depois de os ouvintes estarem ligados. O token de um
+   * named tunnel vive num ficheiro `0600` que o dono pode rodar, e o hostname do
+   * tunel so existe depois de a descoberta correr -- uma lista capturada no
+   * `attach` ficava obsoleta exatamente no instante em que passava a importar.
+   *
+   * A camada de FORMAS (`SECRET_SHAPES`) nao substitui isto: ela cobre o que tem
+   * forma conhecida (`*.trycloudflare.com`), e o dominio de um named tunnel e o
+   * do PROPRIO DONO -- nenhuma regex o adivinha.
+   */
+  readonly secrets: () => readonly string[]
 }
 
 /**
@@ -44,11 +57,11 @@ export function attachStreamLogging(
   const { name, log, secrets } = options
 
   const onStdout = (chunk: Buffer): void => {
-    log.debug(`[${name} STDOUT]: ${redact(chunk.toString().trim(), secrets)}`)
+    log.debug(`[${name} STDOUT]: ${redact(chunk.toString().trim(), secrets())}`)
   }
 
   const onStderr = (chunk: Buffer): void => {
-    log.warn(`[${name} STDERR]: ${redact(chunk.toString().trim(), secrets)}`)
+    log.warn(`[${name} STDERR]: ${redact(chunk.toString().trim(), secrets())}`)
   }
 
   const absorbStreamError = (error: Error): void => {

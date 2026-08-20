@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 
-import { createAuditGate, maskAbsolutePaths, projectSnapshot } from '../../../src/panel/api.ts'
+import { createAuditGate, projectSnapshot } from '../../../src/panel/api.ts'
 import { CSRF_HEADER_NAME } from '../../../src/panel/csrf.ts'
 import { PANEL_PATH_LOGIN, PANEL_PATH_STATE, routeKeyOf } from '../../../src/panel/routes.ts'
 import { SESSION_ABSOLUTE_TIMEOUT_MS } from '../../../src/session/store.ts'
@@ -73,18 +73,15 @@ describe('projeccao do estado', () => {
     const mensagem = String((projetado['failure'] as Record<string, unknown>)['message'])
     assert.equal(mensagem.includes(URL_DO_TUNEL), false, 'a URL do tunel saiu no fio')
     assert.equal(mensagem.includes('trycloudflare'), false)
-    assert.equal(mensagem.includes('/home/dono'), false, 'o caminho no disco saiu no fio')
-    assert.equal(mensagem.includes('audit.log'), false)
+    assert.equal(mensagem.includes('/home/dono'), false, 'o `$HOME` do dono saiu no fio')
     // E o que RESTA continua a ser accionavel -- mascarar nao pode virar apagar.
     assert.ok(mensagem.includes('nao respondeu'))
-  })
-
-  it('`maskAbsolutePaths` nao come um caminho de ROTA, que e legitimo na mensagem', () => {
-    // Exige dois segmentos: `/api/state` e `/__guard` sao rotas e o dono precisa
-    // de as ler para agir.
-    assert.equal(maskAbsolutePaths('tente /__guard outra vez'), 'tente /__guard outra vez')
-    assert.equal(maskAbsolutePaths('a sonda /api/state falhou'), 'a sonda /api/state falhou')
-    assert.ok(!maskAbsolutePaths('em /home/dono/.dsh/guarded-bot').includes('/home/dono'))
+    // >>> A REGRA MUDOU NA COSTURA DA ONDA 3, E ISTO E O SEU LADO POSITIVO. <<<
+    // O remendo local `maskAbsolutePaths` comia o caminho INTEIRO e o dono
+    // ficava com "veja [REDACTED]", que nao diz onde procurar. A forma promovida
+    // (`SECRET_SHAPES`, `src/logging/redact.ts`) mascara o `$HOME` e so ele: o
+    // nome de conta sai, o ficheiro fica.
+    assert.ok(mensagem.includes('audit.log'), 'o ficheiro a consultar tem de sobreviver')
   })
 
   it('a falha e projetada com o codigo e a sonda, e a mensagem e mascarada', () => {
@@ -317,6 +314,128 @@ describe('POST /__guard/api/login', () => {
   })
 })
 
+/**
+ * =============================================================================
+ * EMENDA 1 DA COSTURA -- O RESOLUTOR DE ORIGEM E O DE T3.3, E A CONDICAO E O MODO
+ * =============================================================================
+ * O painel tinha um `defaultResolveOrigin` local cuja condicao era "host
+ * NAO-LOOPBACK => acredito no `X-Forwarded-Proto`". "Nao-loopback" nao e "atras
+ * da borda": uma instalacao em LAN satisfaz a primeira e nao a segunda.
+ *
+ * A condicao correcta (`createRequestOriginResolver`, `src/http/session-auth.ts`)
+ * e `exposure.mode === 'tunnel'` **E** o pedido ter chegado pelo nome publico do
+ * tunel. A medicao que a legitima e R10 de `docs/spikes/cloudflared.md:155`: a
+ * borda da Cloudflare SOBRESCREVE `X-Forwarded-Proto` (o cliente enviou `http`,
+ * a origem viu `https`) -- garantia da BORDA, e so dela.
+ *
+ * OS DOIS SENTIDOS ESTAO AQUI, e sao o teste da emenda:
+ *   - `mode: 'loopback'`: um `X-Forwarded-Proto: https` FORJADO nao muda nada;
+ *   - `mode: 'tunnel'` + o pedido pelo nome publicado: muda.
+ */
+describe('EMENDA 1 -- em `loopback` o `X-Forwarded-Proto` forjado nao decide nada', () => {
+  let bancada: Bancada
+  let port = 0
+
+  before(async () => {
+    // `exposure` AUSENTE => `LOOPBACK_ONLY_EXPOSURE`, a leitura mais fechada.
+    bancada = criarBancada({ comSegredo: true })
+    port = await bancada.servir()
+  })
+
+  after(async () => {
+    await bancada.fechar()
+  })
+
+  it('o esquema derivado continua `http`, e a sessao NAO e emitida', async () => {
+    bancada.logs.length = 0
+    const resposta = await pedir(port, PANEL_PATH_LOGIN, {
+      method: 'POST',
+      headers: {
+        [CSRF_HEADER_NAME]: bancada.csrf.issue(routeKeyOf('POST', PANEL_PATH_LOGIN)),
+        host: 'exemplo-de-teste.trycloudflare.com',
+        'x-forwarded-proto': 'https',
+      },
+      body: new URLSearchParams({ segredo: String(bancada.segredo) }).toString(),
+    })
+
+    // Com o resolutor ERRADO isto era 200 + cookie `Secure`: o cabecalho forjado
+    // por qualquer maquina do segmento decidia o esquema.
+    assert.equal(resposta.status, 500)
+    assert.equal(resposta.setCookie.length, 0)
+    assert.ok(bancada.logs.some((l) => l.includes('recusa emitir sessao')))
+  })
+})
+
+describe('EMENDA 1 -- em `tunnel`, e vindo da borda, o cabecalho decide', () => {
+  const HOST_DO_TUNEL = 'exemplo-de-teste.trycloudflare.com'
+  let bancada: Bancada
+  let port = 0
+
+  before(async () => {
+    bancada = criarBancada({
+      comSegredo: true,
+      config: { exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false } },
+      // O supervisor publicou a origem ao chegar a `READY` (emenda 2).
+      tunnelOrigin: `https://${HOST_DO_TUNEL}`,
+    })
+    port = await bancada.servir()
+  })
+
+  after(async () => {
+    await bancada.fechar()
+  })
+
+  it('`Host` do tunel + `X-Forwarded-Proto: https` -> sessao emitida com `Secure`', async () => {
+    const resposta = await pedir(port, PANEL_PATH_LOGIN, {
+      method: 'POST',
+      headers: {
+        [CSRF_HEADER_NAME]: bancada.csrf.issue(routeKeyOf('POST', PANEL_PATH_LOGIN)),
+        host: HOST_DO_TUNEL,
+        'x-forwarded-proto': 'https',
+      },
+      body: new URLSearchParams({ segredo: String(bancada.segredo) }).toString(),
+    })
+
+    assert.equal(resposta.status, 200)
+    assert.ok((resposta.setCookie[0] ?? '').includes('Secure'))
+  })
+
+  it('MESMO modo, host que NAO e o publicado: nao passou pela borda, nao conta', async () => {
+    bancada.logs.length = 0
+    const resposta = await pedir(port, PANEL_PATH_LOGIN, {
+      method: 'POST',
+      headers: {
+        [CSRF_HEADER_NAME]: bancada.csrf.issue(routeKeyOf('POST', PANEL_PATH_LOGIN)),
+        host: '192.168.122.1:3080',
+        'x-forwarded-proto': 'https',
+      },
+      body: new URLSearchParams({ segredo: String(bancada.segredo) }).toString(),
+    })
+
+    assert.equal(resposta.status, 500)
+    assert.equal(resposta.setCookie.length, 0)
+  })
+
+  it('o tunel CAIU (`publish(undefined)`): o mesmo pedido deixa de ser da borda', async () => {
+    bancada.tunnelOrigin.publish(undefined)
+    try {
+      const resposta = await pedir(port, PANEL_PATH_LOGIN, {
+        method: 'POST',
+        headers: {
+          [CSRF_HEADER_NAME]: bancada.csrf.issue(routeKeyOf('POST', PANEL_PATH_LOGIN)),
+          host: HOST_DO_TUNEL,
+          'x-forwarded-proto': 'https',
+        },
+        body: new URLSearchParams({ segredo: String(bancada.segredo) }).toString(),
+      })
+
+      assert.equal(resposta.status, 500)
+    } finally {
+      bancada.tunnelOrigin.publish(`https://${HOST_DO_TUNEL}`)
+    }
+  })
+})
+
 describe('a origem decide se ha sessao -- e falha ALTO quando nao pode haver', () => {
   let bancada: Bancada
   let port = 0
@@ -339,16 +458,6 @@ describe('a origem decide se ha sessao -- e falha ALTO quando nao pode haver', (
       },
       body: new URLSearchParams({ segredo: String(bancada.segredo) }).toString(),
     })
-
-  it('sob tunel (`Host` do tunel + `X-Forwarded-Proto: https`) a sessao e emitida', async () => {
-    const resposta = await entrar({
-      host: 'exemplo-de-teste.trycloudflare.com',
-      'x-forwarded-proto': 'https',
-    })
-
-    assert.equal(resposta.status, 200)
-    assert.ok((resposta.setCookie[0] ?? '').includes('Secure'))
-  })
 
   it('LAN em `http` sem TLS: recusa ALTA, e nao um ciclo de login infinito', async () => {
     bancada.logs.length = 0

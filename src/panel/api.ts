@@ -34,20 +34,31 @@
  * ------------------------------------------------------------------------
  * PORQUE `maskAuditText` E NAO `redact` (revisao adversarial, BAIXA)
  * ------------------------------------------------------------------------
- * `src/logging/redact.ts` DECLARA no proprio cabecalho o que nao cobre: o `mk`
- * do link magico e O URL DO TUNEL. A versao anterior deste ficheiro chamava-lhe
- * "o cinto por cima dos suspensorios" -- e era falso: um `failure.message` com o
- * URL do tunel saia INTACTO por `/__guard/api/state`.
+ * QUANDO ESTE FICHEIRO FOI ESCRITO, `src/logging/redact.ts` DECLARAVA no proprio
+ * cabecalho o que nao cobria: o `mk` do link magico e O URL DO TUNEL. A versao
+ * anterior deste ficheiro chamava a `redact()` "o cinto por cima dos
+ * suspensorios" -- e era falso: um `failure.message` com o URL do tunel saia
+ * INTACTO por `/__guard/api/state`.
  *
- * `maskAuditText` (`src/audit/format.ts`, T2.4) e `redact()` MAIS as formas que
- * faltavam: `*.trycloudflare.com`, `mk=`, e o segredo em base32. Chamar em vez
- * de copiar, porque uma primitiva de mascaramento duplicada e uma primitiva que
+ * A costura da Onda 3 fechou essa lacuna na RAIZ (as formas subiram para
+ * `SECRET_SHAPES`), mas a chamada continua a ser a `maskAuditText`, porque ela
+ * traz TRES formas a mais que so fazem sentido onde o custo de um falso negativo
+ * e o bot ou a credencial do dono -- e uma `failure.message` mostrada ao dono no
+ * painel e reenviada por Telegram e exatamente esse sitio. Chamar em vez de
+ * copiar, porque uma primitiva de mascaramento duplicada e uma primitiva que
  * diverge.
  *
- * O QUE NENHUMA DAS DUAS COBRE e o CAMINHO ABSOLUTO, que a revisao tambem
- * apanhou. A forma vive aqui, em {@link maskAbsolutePaths}, e e um remendo
- * LOCAL: a casa duravel dela e `SECRET_SHAPES`/`AUDIT_SHAPES`, e nenhum desses
- * dois ficheiros e desta sub-tarefa. Fica REPORTADO em vez de contornado.
+ * O CAMINHO ABSOLUTO, que a revisao tambem apanhou, chegou a viver aqui numa
+ * `maskAbsolutePaths` LOCAL, com a nota de que a casa duravel dela era
+ * `SECRET_SHAPES`. A costura da Onda 3 promoveu-a: a forma vive agora em
+ * `src/logging/redact.ts` -- ja nao ha remendo local, e `maskAuditText` sozinha
+ * cobre as tres coisas (URL do tunel, `mk`, `$HOME`).
+ *
+ * A REGRA DO CAMINHO MUDOU COM A PROMOCAO, e a mudanca e deliberada: o remendo
+ * local comia QUALQUER caminho absoluto com tres segmentos, incluindo
+ * `/opt/bin/cloudflared` e `/usr/lib/...`, que sao estrutura de sistema e nao
+ * identificam ninguem -- destruia a mensagem de erro para nao vazar nada. A
+ * forma promovida mascara o `$HOME` e so ele. O JSDoc dela explica porque.
  */
 
 import type { IncomingMessage } from 'node:http'
@@ -60,7 +71,7 @@ import type { RequestOrigin } from '../session/cookie.ts'
 import type { GuardSession, GuardSessionStore } from '../session/store.ts'
 import type { CsrfGuard } from './csrf.ts'
 import { maskAuditText } from '../audit/format.ts'
-import { REDACTED } from '../logging/redact.ts'
+import { NOT_FOUND_BODY, TEXT_REFUSAL_HEADERS } from '../http/responses.ts'
 import { runThrottledAttempt } from '../ratelimit/tracker.ts'
 import { assertTrustworthyOrigin, serializeSessionCookie } from '../session/cookie.ts'
 import { newNonce, panelHtmlHeaders, renderPanelPage } from './html.ts'
@@ -99,12 +110,16 @@ export interface PanelExchange {
 
 export type PanelHandler = (exchange: PanelExchange) => Promise<PanelResponse>
 
-const TEXT_HEADERS: Readonly<Record<string, string>> = Object.freeze({
-  'content-type': 'text/plain; charset=utf-8',
-  'cache-control': 'no-store',
-  'referrer-policy': 'no-referrer',
-  'x-content-type-options': 'nosniff',
-})
+/**
+ * IMPORTADO, e nao redeclarado. `src/http/responses.ts` e dono desta lista
+ * porque e o outro escritor do MESMO 404: o portao escreve-o direto no
+ * `ServerResponse` (`denyNotFound`) quando `/__guard/secret` e alcancado por um
+ * canal nao-local, e este ficheiro escreve-o num envelope quando o `ott` e
+ * invalido. Duas declaracoes concordavam hoje e divergiam na primeira melhoria
+ * de redaccao de uma delas -- foi exatamente o que aconteceu, e foi medido no
+ * fio antes de ser corrigido. Ver o JSDoc de `TEXT_REFUSAL_HEADERS`.
+ */
+const TEXT_HEADERS: Readonly<Record<string, string>> = TEXT_REFUSAL_HEADERS
 
 const JSON_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'content-type': 'application/json; charset=utf-8',
@@ -124,7 +139,8 @@ const JSON_HEADERS: Readonly<Record<string, string>> = Object.freeze({
 export const NOT_FOUND_RESPONSE: PanelResponse = Object.freeze({
   status: 404,
   headers: TEXT_HEADERS,
-  body: 'Not Found\n',
+  // O MESMO literal que `denyNotFound` escreve. Ver `TEXT_REFUSAL_HEADERS`.
+  body: NOT_FOUND_BODY,
 })
 
 /** CSRF em falta ou invalido. Nao e um oraculo de credencial: nao ha credencial. */
@@ -497,28 +513,6 @@ export interface StateDeps {
 }
 
 /**
- * Mascara caminhos absolutos de sistema de ficheiros.
- *
- * REMENDO LOCAL, e esta nota e parte da correcao. `redact()` nao cobre esta
- * forma e `maskAuditText` tambem nao; a casa duravel dela e `SECRET_SHAPES`
- * (`src/logging/redact.ts`) ou `AUDIT_SHAPES` (`src/audit/format.ts`), e
- * NENHUM desses ficheiros e desta sub-tarefa. Escrever aqui e a unica forma de
- * fechar o buraco sem tocar em ficheiro alheio; a promocao fica REPORTADA.
- *
- * PORQUE UM CAMINHO IMPORTA: `TunnelFailure.message` e mostrada ao dono no
- * painel E no Telegram. Um caminho absoluto numa mensagem que viaja para o
- * Telegram e divulgacao do layout do disco do utilizador para um terceiro -- o
- * proprio contrato do tunel ja o proibe, e isto e a fronteira que nao confia na
- * proibicao.
- *
- * Exige DOIS segmentos para casar, e nao um: `/api/state` ou `/__guard` sao
- * caminhos de ROTA e aparecem legitimamente numa mensagem accionavel.
- */
-export function maskAbsolutePaths(text: string): string {
-  return text.replace(/(?<![\w/])(?:~|\/[\w.-]+)(?:\/[\w.-]+){2,}\/?/gu, REDACTED)
-}
-
-/**
  * Projeta o snapshot para o fio.
  *
  * `info` e `expiresAt` SO SAEM EM `READY`, e a verificacao e feita aqui e nao
@@ -551,10 +545,10 @@ export function projectSnapshot(snapshot: TunnelSnapshot): Record<string, unknow
       // A ASSIMETRIA QUE A REVISAO APANHOU, e agora fechada: `info` era
       // filtrada por desconfianca do produtor e `message` era ACEITE dele. O
       // contrato proibe segredo, caminho e URL la dentro -- e isto e a
-      // fronteira, que nao confia na proibicao. `maskAuditText` cobre o URL do
-      // tunel, o `mk` e o segredo em base32; o caminho absoluto e o remendo
-      // local acima.
-      message: maskAbsolutePaths(maskAuditText(snapshot.failure.message)),
+      // fronteira, que nao confia na proibicao. UMA chamada chega: desde a
+      // costura da Onda 3, `maskAuditText` cobre o URL do tunel, o `mk`, o
+      // segredo em base32 E o `$HOME` (este ultimo via `SECRET_SHAPES`).
+      message: maskAuditText(snapshot.failure.message),
       retryable: snapshot.failure.retryable,
     }
     if (snapshot.failure.probe !== undefined) failure['probe'] = snapshot.failure.probe

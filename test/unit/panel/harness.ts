@@ -22,6 +22,7 @@ import { connect } from 'node:net'
 import type { AddressInfo } from 'node:net'
 
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
+import type { Config } from '../../../src/config/schema.ts'
 import type { PersistedState, StateStore } from '../../../src/contracts/state.ts'
 import type { TunnelSnapshot } from '../../../src/contracts/tunnel.ts'
 import type { GuardLogger } from '../../../src/logging/logger.ts'
@@ -35,7 +36,13 @@ import { createMagicStore, type MagicStore } from '../../../src/session/magic.ts
 import { createSessionStore, type GuardSessionStore } from '../../../src/session/store.ts'
 import { createCsrfGuard, type CsrfGuard } from '../../../src/panel/csrf.ts'
 import { createPanelRouter } from '../../../src/panel/routes.ts'
+import {
+  createRequestOriginResolver,
+  createTunnelOriginRegistry,
+  type TunnelOriginRegistry,
+} from '../../../src/http/session-auth.ts'
 import { FakeClock } from '../../support/clock.ts'
+import { makeConfig } from '../../support/fixtures.ts'
 
 /** `StateStore` em memoria. O disco nao e o que T3.4 esta a provar. */
 function createMemoryStateStore(): StateStore {
@@ -62,6 +69,10 @@ export const SNAPSHOT_ONLINE: TunnelSnapshot = {
 
 export interface Bancada {
   readonly clock: FakeClock
+  /** A `Config` que o resolutor de origem consulta (eixo `exposure`). */
+  readonly config: Config
+  /** O registo REAL de T3.3. `publish()` simula o tunel a subir e a cair. */
+  readonly tunnelOrigin: TunnelOriginRegistry
   readonly sessions: GuardSessionStore
   readonly magic: MagicStore
   readonly ott: OneTimeTokenStore
@@ -87,12 +98,19 @@ export interface OpcoesBancada {
   /** Provisiona um segredo e devolve a forma canonica em `bancada.segredo`. */
   readonly comSegredo?: boolean
   readonly estado?: TunnelSnapshot
+  /** Eixos da `Config` que o resolutor de origem le. Omitido: `exposure` ausente. */
+  readonly config?: Partial<Config>
+  /** Origem publica a publicar no registo do tunel, como o supervisor faria. */
+  readonly tunnelOrigin?: string
   /** Substitui pedacos de `PanelDeps` (por exemplo `resolveOrigin`). */
   readonly deps?: Partial<PanelDeps>
 }
 
 export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
   const clock = new FakeClock(1_700_000_000_000)
+  const config = makeConfig(opcoes.config)
+  const tunnelOrigin = createTunnelOriginRegistry()
+  if (opcoes.tunnelOrigin !== undefined) tunnelOrigin.publish(opcoes.tunnelOrigin)
   const sessions = createSessionStore({ clock })
   const magic = createMagicStore({ clock })
   const ott = createOneTimeTokenStore({ clock })
@@ -121,6 +139,8 @@ export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
 
   const bancada: Bancada = {
     clock,
+    config,
+    tunnelOrigin,
     sessions,
     magic,
     ott,
@@ -145,6 +165,17 @@ export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
       reveal: (): string | null => bancada.segredo,
       limiter,
       csrf,
+      /**
+       * O RESOLUTOR DE T3.3, INJETADO -- e nao o default local que o painel
+       * tinha.
+       *
+       * Este e o ponto de composicao do painel nesta arvore (o produto ainda nao
+       * monta `/__guard/*`; isso e T5.3). A condicao correcta e
+       * `exposure.mode === 'tunnel'` E o pedido ter chegado pelo nome publico do
+       * tunel -- por isso a bancada tem `config` e `tunnelOrigin`, que sao
+       * exatamente as duas coisas que o painel nao conhece.
+       */
+      resolveOrigin: createRequestOriginResolver({ config, tunnelOrigin }),
       wait: async (ms: number): Promise<void> => {
         esperas.push(ms)
       },

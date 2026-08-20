@@ -53,7 +53,7 @@ import type { AuditGate, PanelExchange, PanelHandler, PanelResponse } from './ap
 import { canonicalRequestPath, isGuardedPath } from '../http/path.ts'
 import { challengeBasicAuth } from '../http/responses.ts'
 import { maskAuditText } from '../audit/format.ts'
-import { isTrustworthyOrigin, readSessionCookie } from '../session/cookie.ts'
+import { readSessionCookie } from '../session/cookie.ts'
 import {
   createAuditGate,
   createLoginHandler,
@@ -206,8 +206,31 @@ export interface PanelDeps {
   readonly wait?: (ms: number) => Promise<void>
   /** Ver {@link defaultIdentify}. */
   readonly identify?: (req: IncomingMessage) => Identity
-  /** Ver {@link defaultResolveOrigin}. */
-  readonly resolveOrigin?: (req: IncomingMessage) => RequestOrigin
+  /**
+   * A ORIGEM EFETIVA DO PEDIDO (`{ scheme, host }`), que e o que
+   * `serializeSessionCookie` exige para decidir se pode sequer emitir a sessao.
+   *
+   * >>> OBRIGATORIA, E SEM VALOR POR OMISSAO. <<< Havia aqui um
+   * `defaultResolveOrigin` local que decidia "host nao-loopback => acredito no
+   * `X-Forwarded-Proto`". A condicao era LARGA DEMAIS e por isso errada: uma
+   * instalacao em LAN (`192.168.1.5:3080`, sem tunel nenhum) e nao-loopback e
+   * NAO tem borda a frente -- ali o cabecalho e escrito por qualquer maquina do
+   * segmento, e a medicao que o legitima (R10, `docs/spikes/cloudflared.md:155`:
+   * a borda da Cloudflare SOBRESCREVE `X-Forwarded-Proto`, o cliente enviou
+   * `http` e a origem viu `https`) e sobre a BORDA, nao sobre "vir de fora".
+   *
+   * A implementacao correcta e `createRequestOriginResolver`
+   * (`src/http/session-auth.ts`, reexportada por `src/index.ts`): a condicao
+   * dela e `exposure.mode === 'tunnel'` **E** o pedido ter chegado pelo nome
+   * publico do tunel. Ela precisa da `Config` e do registo da origem do tunel,
+   * que o painel nao tem por que conhecer -- dai a injeccao.
+   *
+   * PORQUE NAO FICA UM DEFAULT "SEGURO" NO LUGAR: um default aqui e uma decisao
+   * de seguranca tomada por quem NAO tem a informacao para a tomar, e o campo
+   * opcional garantia que um dia alguem compunha o painel sem reparar. Sendo
+   * obrigatoria, o `tsc` recusa a composicao que se esqueca dela.
+   */
+  readonly resolveOrigin: (req: IncomingMessage) => RequestOrigin
 }
 
 /**
@@ -238,57 +261,6 @@ function defaultWait(ms: number): Promise<void> {
  */
 function defaultIdentify(): Identity {
   return {}
-}
-
-/**
- * Origem efetiva do pedido, para decidir o cookie.
- *
- * DUAS REGRAS, e a segunda merece a explicacao:
- *
- * 1. HOST DE LOOPBACK -> `http`. O esquema do socket e o esquema efetivo, e
- *    nenhum cabecalho participa da decisao. Um processo local que forje o que
- *    quiser nao muda nada aqui. (S10 mediu que Firefox e Chromium ACEITAM
- *    `__Host-` + `Secure` emitido por `http://127.0.0.1`, por isso este caminho
- *    e trustworthy e o cookie fica com o nome unico de D5.)
- *
- * 2. HOST NAO-LOOPBACK -> `https` SE E SO SE `X-Forwarded-Proto` disser `https`.
- *
- *    `02-SEGURANCA.md` 5 escreveu "nunca a partir de `X-Forwarded-Proto`, que e
- *    forjavel". Essa frase foi escrita para proteger uma decisao que ja nao
- *    existe -- a de trocar o NOME do cookie conforme o esquema -- e S10 matou
- *    essa troca ao medir que o cookie completo e aceite em loopback. O que
- *    sobra e uma pergunta diferente: sob tunel, qual e o esquema que o
- *    NAVEGADOR usou? O socket nao sabe (a borda termina o TLS), e o unico
- *    sinal e este cabecalho.
- *
- *    E ele passa no MESMO teste que `exposure.trustEdgeHeaders` exige de
- *    qualquer cabecalho de borda: R10 do spike S12 mediu que o `cloudflared`
- *    SOBRESCREVE `X-Forwarded-Proto` (o cliente enviou `http`, a origem viu
- *    `https`) -- ao contrario de `X-Forwarded-For`, que ele ACRESCENTA e que
- *    por isso continua proibido como fonte de identidade.
- *
- *    E o pior caso de forja e benigno: um processo local que envie
- *    `Host: <tunel>` + `X-Forwarded-Proto: https` recebe um cookie `Secure` que
- *    ele proprio pediu, DEPOIS de apresentar credencial valida. Nao ha
- *    escalada; ha um cliente a enganar-se a si mesmo.
- *
- *    E quando o cabecalho NAO vem -- o telemovel na LAN em `http://192.168.x.x`,
- *    que e o modo de falha real que S10 documentou -- o esquema fica `http`,
- *    `assertTrustworthyOrigin` LANCA e o operador ve a mensagem accionavel no
- *    log em vez de um ciclo de login infinito sem uma linha de erro.
- *
- * Injetavel por `PanelDeps.resolveOrigin`: quem compoe o plugin (T3.3) tem a
- * `Config` e pode decidir melhor do que este default.
- */
-export function defaultResolveOrigin(req: IncomingMessage): RequestOrigin {
-  const raw = req.headers.host
-  const host = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : '127.0.0.1'
-
-  if (isTrustworthyOrigin({ scheme: 'http', host })) return { scheme: 'http', host }
-
-  const forwarded = req.headers['x-forwarded-proto']
-  const first = typeof forwarded === 'string' ? (forwarded.split(',', 1)[0] ?? '').trim().toLowerCase() : ''
-  return { scheme: first === 'https' ? 'https' : 'http', host }
 }
 
 /**
@@ -398,7 +370,7 @@ export function createPanelRouter(
   deps: PanelDeps,
   routes: PanelRouteFactory = panelRoutes,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const resolveOrigin = deps.resolveOrigin ?? defaultResolveOrigin
+  const resolveOrigin = deps.resolveOrigin
   const identify = deps.identify ?? defaultIdentify
   const audit = createAuditGate({ audit: deps.audit, log: deps.log, clock: deps.clock })
 

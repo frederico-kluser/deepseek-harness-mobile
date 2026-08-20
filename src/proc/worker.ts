@@ -52,7 +52,11 @@ export function createWorkerSupervisor(
       backoff: worker.backoff,
       // Q-4: o token entra no ambiente, nunca em `argv`. Passa-lo tambem aqui faz
       // com que qualquer eco dele em stdout/stderr saia do log mascarado.
-      secrets: [worker.token],
+      // FORNECEDOR (ver `SupervisedProcess.secrets`). O token do bot vem da
+      // configuracao e nao muda em runtime, mas a superficie e uma so para os
+      // dois supervisores -- duas assinaturas para o mesmo campo era a fenda por
+      // onde a generalizacao deixaria de ser real.
+      secrets: (): readonly string[] => [worker.token],
       buildSpec: (signal: AbortSignal): SubprocessSpawnSpec => ({
         /**
          * ARGV: `[command, entrypoint, ...args]` -- o entrypoint e ANTEPOSTO aqui

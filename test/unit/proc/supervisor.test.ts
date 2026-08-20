@@ -9,9 +9,11 @@
  */
 
 import assert from 'node:assert/strict'
+import { homedir } from 'node:os'
 import { describe, it } from 'node:test'
 
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../../src/config/schema.ts'
+import { redact } from '../../../src/logging/redact.ts'
 import { createWorkerSupervisor } from '../../../src/proc/supervisor.ts'
 import { FakeContext } from '../../support/ctx-double.ts'
 import { FakeScheduler, makeSupervisorDeps } from '../../support/child-double.ts'
@@ -255,7 +257,23 @@ describe('argv do spawn (entrypoint resolvido, nunca do manifesto)', () => {
     const supervisor = createWorkerSupervisor(ctx.asContext(), makeConfig(), deps)
     supervisor.start()
 
-    assert.equal(ctx.logger.has('info', PACKAGED_WORKER_ENTRYPOINT), true)
+    /*
+     * O CAMINHO VAI PARA O LOG MASCARADO NO `$HOME`, e a asercao acompanha a
+     * mudanca em vez de a contornar.
+     *
+     * A costura da Onda 3 promoveu a forma do `$HOME` para `SECRET_SHAPES`
+     * (`src/logging/redact.ts`), e este log passa por `redact()` -- como todo o
+     * `argv` desde sempre. O que a asercao continua a provar e o mesmo: que o
+     * que vai para o log e o `argv` EFETIVO e nao `command + args`, porque a
+     * cauda `worker/telegram-bot` so existe no argv efetivo.
+     */
+    assert.equal(ctx.logger.has('info', redact(PACKAGED_WORKER_ENTRYPOINT)), true)
+    assert.equal(ctx.logger.has('info', 'worker/telegram-bot'), true, 'a cauda distingue o argv')
+    assert.equal(
+      ctx.logger.entries.some((e) => e.message.includes(homedir())),
+      false,
+      'o `$HOME` do operador nao entra no log',
+    )
 
     supervisor.dispose()
   })

@@ -64,18 +64,27 @@ import {
 } from './http/session-auth.ts'
 
 /**
- * REEXPORTADO PARA T3.4 / PREP 4, e nao instanciado aqui de proposito.
+ * O RESOLUTOR DE ORIGEM DO PAINEL -- reexportado, e agora o UNICO que existe.
  *
- * `PanelDeps.resolveOrigin` (T3.4) precisa de decidir o ESQUEMA do pedido para
- * poder emitir o cookie `__Host-dsh_sid`, e a decisao correta depende de
- * `exposure.mode` -- que o painel nao conhece e esta raiz sim.
- * {@link createRequestOriginResolver} e a implementacao a injetar; o JSDoc dela
- * explica porque a condicao e o MODO e nao o HOST (uma instalacao em LAN e
- * nao-loopback e nao tem borda nenhuma a frente).
+ * `PanelDeps.resolveOrigin` precisa de decidir o ESQUEMA do pedido para poder
+ * emitir o cookie `__Host-dsh_sid`, e a decisao correcta depende de
+ * `exposure.mode` -- que o painel nao conhece e esta raiz sim. O JSDoc de
+ * {@link createRequestOriginResolver} explica porque a condicao e o MODO (mais
+ * "chegou pelo nome do tunel") e nao o HOST: uma instalacao em LAN e
+ * nao-loopback e nao tem borda nenhuma a frente, e a medicao R10 que legitima o
+ * `X-Forwarded-Proto` e sobre a BORDA da Cloudflare, nao sobre "vir de fora".
  *
- * A INJECAO em si nao esta feita porque `src/panel/routes.ts` ainda e o
- * esqueleto do COMMIT PREP 1 nesta arvore: instanciar o resolutor sem chamador
- * seria exatamente o codigo dormente que esta onda removeu do portao.
+ * O QUE MUDOU NA COSTURA DA ONDA 3: `src/panel/routes.ts` tinha um
+ * `defaultResolveOrigin` local, com a condicao larga e errada, e
+ * `PanelDeps.resolveOrigin` era OPCIONAL -- ou seja, o painel usava o resolutor
+ * errado por omissao. O default foi eliminado e o campo passou a OBRIGATORIO:
+ * quem compuser o painel (T5.3) nao consegue esquecer-se, porque o `tsc` recusa.
+ *
+ * A INSTANCIACAO nao acontece nesta raiz porque o painel ainda NAO E MONTADO em
+ * producao -- nenhuma rota `/__guard/*` esta servida nesta arvore; a montagem e
+ * de T5.3, na Onda 5. Instanciar aqui um resolutor sem chamador seria o mesmo
+ * codigo dormente que esta onda removeu do portao. O que a costura garante e que
+ * a montagem, quando vier, so pode usar este.
  */
 export { createRequestOriginResolver } from './http/session-auth.ts'
 import { readSessionCookie } from './session/cookie.ts'

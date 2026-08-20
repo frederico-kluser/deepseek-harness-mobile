@@ -15,6 +15,8 @@
  * fora de `READY`, nunca um `cloudflared` fora da contabilidade do disposer.
  */
 
+import { readFileSync } from 'node:fs'
+
 import type { Server } from 'node:http'
 
 import type { AuditSink } from '../contracts/auth.ts'
@@ -67,6 +69,28 @@ export interface TunnelSupervisorOptions {
   readonly discovery: TunnelDiscovery
   readonly readiness: TunnelReadiness
   readonly store: StateStore
+  /**
+   * A ALLOWLIST VIVA DE `Host` E DE `Origin` — o `TunnelOriginRegistry` de T3.3
+   * (`src/http/session-auth.ts`), visto so pelo lado que ESCREVE.
+   *
+   * >>> SEM ISTO O PRODUTO NAO FUNCIONA PELO TUNEL. <<< L2.5 (`Host`) e a
+   * allowlist de `Origin` do handshake de WebSocket sao construidas a partir de
+   * `tunnelOrigin.current()`. Ate a costura da Onda 3 o UNICO publicador era o
+   * consumo do `RestrictExposureIntent`, que RETIRA a origem: ninguem a punha,
+   * logo o nome publico do tunel nunca constava da allowlist e o gate recusava
+   * com 403 tudo o que vinha pela borda.
+   *
+   * >>> E A RETIRADA VALE TANTO COMO A ENTRADA. <<< Uma entrada morta nesta
+   * allowlist e um BYPASS: um nome `*.trycloudflare.com` derrubado volta a ser
+   * distribuido a outra pessoa, e um `Host` com o hostname antigo continuaria a
+   * passar L2.5 depois de o nome deixar de nos pertencer. E por isso que a
+   * publicacao nao esta escrita a mao em cada transicao mas DERIVADA do estado
+   * observado — ver `syncTunnelOrigin` em {@link createTunnelSupervisor}.
+   *
+   * Tipo ESTRUTURAL e nao importado, como `sessions` aqui ao lado: `src/tunnel`
+   * nao passa a depender de `src/http` por causa de um metodo.
+   */
+  readonly tunnelOrigin: { publish(origin: string | undefined): void }
   /** Ponto de enganche da invalidacao; a fiacao no gate e de T3.3. */
   readonly sessions: { revokeAll(): void }
   readonly audit: AuditSink
@@ -123,6 +147,25 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
     expiresAt: state === 'READY' ? ttl?.expiresAt : undefined,
   })
 
+  /**
+   * Poe a allowlist de `Host`/`Origin` a par do estado OBSERVADO.
+   *
+   * A REGRA E A MESMA DE `snapshot()`, e e literalmente a mesma expressao, de
+   * proposito: `READY` publica a URL, TUDO O RESTO retira-a. Escrever
+   * `publish(url)` num sitio e `publish(undefined)` nos outros seis (queda,
+   * `STOPPING`, `STOPPED`, `FAILED`, warmup falhado, expiracao de TTL) era
+   * garantir que a proxima transicao a nascer se esquecia de um deles — e o
+   * esquecimento que importa e sempre o mesmo, o de RETIRAR: uma entrada morta
+   * na allowlist e um bypass silencioso, enquanto uma entrada em falta e apenas
+   * um 403 visivel.
+   *
+   * Idempotente (o registo tambem o e), pelo que e chamada a CADA transicao sem
+   * ninguem ter de saber de que estado se vinha.
+   */
+  const syncTunnelOrigin = (): void => {
+    options.tunnelOrigin.publish(state === 'READY' ? info?.url : undefined)
+  }
+
   /** Apaga o registo sem deixar uma falha de disco derrubar um disposer. */
   const forgetProcessRecord = (): void => {
     try {
@@ -160,6 +203,9 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
     forgetProcessRecord()
     info = undefined
     state = 'STOPPED'
+    // `STOPPING` e `STOPPED` sao os dois estados desta funcao, e nenhum deles
+    // pode deixar o nome publico na allowlist.
+    syncTunnelOrigin()
   }
 
   const ttlEffects: TtlEffects = createTtlEffects({
@@ -182,6 +228,7 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
       retryable: true,
     }
     state = 'DEGRADED'
+    syncTunnelOrigin()
     // Reinicio POR INTENCAO pelo MESMO orcamento da queda espontanea: um processo
     // vivo e inutil consome tentativa, senao o `maxAttempts` nao conta este caso.
     warmupFailed = true
@@ -201,6 +248,34 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
 
     void (async (): Promise<void> => {
       try {
+        /**
+         * >>> QUEM DRENA O `stderr` NAO E ESTA CHAMADA. <<<
+         *
+         * `discover()` e LEITOR OPORTUNISTA por desenho (ver
+         * `createStderrScanner` em `./discover.ts`): acrescenta e remove so o
+         * listener dele, e o `dispose()` NAO faz `resume()` de proposito —
+         * faze-lo descartava em silencio o log de arranque que este supervisor
+         * quer registar.
+         *
+         * O consumidor DURAVEL — o logger com `redact()` de
+         * `../proc/stream-log.ts` — e ligado por `createProcessSupervisor` no
+         * `spawn`, ANTES de `onSpawned` (e portanto antes desta chamada), e so e
+         * desligado na terminacao do processo. A ordem esta escrita la, e ha
+         * teste que a falsifica nos dois lados.
+         *
+         * O MODO DE FALHA SE NINGUEM DRENAR, medido nesta arvore: um filho que
+         * escreve em `stderr` sem leitor para de progredir depois de 190 464
+         * bytes (o buffer do pipe do SO, 64 KiB por omissao no Linux, mais a
+         * fila interna do Node). Para o `cloudflared`, que escreve em Go direto
+         * no descritor, o tecto e o buffer do pipe — e o efeito e um tunel que
+         * CONGELA no `write`, sem erro, sem log e sem sinal nenhum.
+         *
+         * UMA `discover()` POR PROCESSO SPAWNADO, e nao por tunel: ela nao e
+         * reentrante, e um retry e processo NOVO com `stderr` NOVO. E o que este
+         * caminho garante — `beginWarmup` so e chamado de `onSpawned`, uma vez
+         * por `spawn`, com o `handle` desse `spawn`; o warmup anterior ja foi
+         * abortado por `cancelWarmup()` em `onTerminated`.
+         */
         const discovered = await options.discovery.discover({
           metricsPort,
           // `stderr`, nao `stdout`: medido, o `cloudflared` deixa `stdout` com
@@ -222,12 +297,92 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
         info = { url: discovered.url, startedAt: spawnedAt, mode: config.mode }
         failure = undefined
         state = 'READY'
+        // A ENTRADA NA ALLOWLIST, e o unico sitio que a faz. So depois de a URL
+        // existir E de a readiness ter passado: publicar em `STARTING` abria o
+        // nome publico antes de haver o que servir por ele.
+        syncTunnelOrigin()
         log.info(`Tunel pronto (URL obtida via ${discovered.via}).`)
       } catch (error) {
         if (controller.signal.aborted || disposed) return
         failWarmup(error instanceof Error ? error.message : String(error))
       }
     })()
+  }
+
+  /* -- Camada 1 do `redact()`: os literais que nenhuma FORMA adivinha ---- */
+  /**
+   * >>> O `cloudflared` CORRIA COM `secrets: []`. ESTA E A CORRECCAO. <<<
+   *
+   * `SECRET_SHAPES` (`../logging/redact.ts`) cobre `*.trycloudflare.com`, ou
+   * seja o modo `quick` — o unico cujo dominio se conhece a priori. Em
+   * `mode: 'named'` nao ha forma nenhuma a que agarrar:
+   *
+   *   - o HOSTNAME e o dominio do PROPRIO DONO. Nenhuma regex o adivinha, e ele
+   *     so passa a existir depois de a descoberta correr;
+   *   - o TOKEN e o pior caso. Nos entregamo-lo por `--token-file` precisamente
+   *     para ele nao viver em `argv` (TUN-014, legivel em `/proc/<pid>/cmdline`
+   *     e no `ps`) — e depois nao o davamos a camada literal do `redact()`.
+   *     Bastava o `cloudflared` ecoa-lo em `stderr`, por um erro de parsing ou
+   *     um aviso de expiracao, para ele ir INTEIRO para o log do operador.
+   *
+   * A URL DO QUICK TUNNEL NAO ENTRA AQUI, e a ausencia e deliberada:
+   * `02-SEGURANCA.md` 2.2 mediu que ela NAO e segredo (uma amostragem publica
+   * devolveu dezenas de hostnames vivos), e a forma em `SECRET_SHAPES` ja a
+   * corta no log. Duplica-la na camada literal so tirava legibilidade.
+   */
+  let namedTunnelToken: string | undefined
+
+  /**
+   * Rele o token do disco. Chamado de `buildSpec`, ou seja UMA VEZ POR
+   * TENTATIVA de spawn — e nao uma vez no arranque.
+   *
+   * PORQUE POR TENTATIVA, e nao por linha de log: o segredo que interessa
+   * redigir e o que o processo VIVO recebeu. Um token rodado no disco so passa a
+   * ser o token do `cloudflared` no spawn seguinte, e e exatamente ai que esta
+   * leitura acontece. Reler a cada chunk de `stderr` seria um `read(2)` por
+   * linha para nunca mudar de resposta dentro da vida do processo.
+   */
+  const refreshNamedTunnelToken = (): void => {
+    namedTunnelToken = undefined
+    if (config.mode !== 'named') return
+
+    const file = config.tokenFile?.trim()
+    if (file === undefined || file.length === 0) return
+
+    try {
+      const conteudo = readFileSync(file, 'utf8').trim()
+      if (conteudo.length > 0) namedTunnelToken = conteudo
+    } catch (error) {
+      // NAO se transforma isto em falha de arranque. `buildCloudflaredArgv` ja
+      // recusa `named` sem `tokenFile` com uma mensagem accionavel, e o spawn
+      // falha com o seu proprio diagnostico. Lancar daqui trocava uma falha
+      // legivel por uma excecao vinda de dentro do redator de logs — e o redator
+      // de logs e a ultima coisa que pode derrubar o supervisor.
+      log.debug(
+        `nao foi possivel ler o token do named tunnel para o redator de logs: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+  }
+
+  /** Ver {@link refreshNamedTunnelToken}. Avaliado a CADA linha encaminhada. */
+  const tunnelSecrets = (): readonly string[] => {
+    const literais: string[] = []
+    if (namedTunnelToken !== undefined) literais.push(namedTunnelToken)
+
+    // O hostname so existe depois de `READY`, e e por isso que isto e um
+    // fornecedor: uma lista capturada no `spawn` nunca o teria.
+    if (config.mode === 'named' && info !== undefined) {
+      literais.push(info.url)
+      // `URL.parse` e nao `new URL`: uma URL malformada vinda da descoberta
+      // devolve `null` em vez de LANCAR. Um `throw` daqui calava o log inteiro,
+      // e o redator de logs e a ultima coisa que pode derrubar o supervisor.
+      const host = URL.parse(info.url)?.host
+      if (host !== undefined && host.length > 0) literais.push(host)
+    }
+
+    return literais
   }
 
   /* -- O processo -------------------------------------------------------- */
@@ -241,14 +396,19 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
       {
         name: 'cloudflared',
         backoff: config.backoff ?? DEFAULT_TUNNEL_BACKOFF,
-        buildSpec: (signal: AbortSignal): SubprocessSpawnSpec =>
-          buildCloudflaredSpec({
+        secrets: tunnelSecrets,
+        buildSpec: (signal: AbortSignal): SubprocessSpawnSpec => {
+          // O token e relido AQUI, no instante do uso e a cada tentativa, pela
+          // mesma doutrina que ja governa a posse da origem duas linhas abaixo.
+          refreshNamedTunnelToken()
+          return buildCloudflaredSpec({
             config,
             metricsPort,
             // Posse da origem verificada NO INSTANTE DO USO, a cada tentativa.
             origin: options.resolveOrigin(),
             signal,
-          }),
+          })
+        },
         onSpawned: (handle: SubprocessHandle): void => {
           /**
            * >>> O `startedAt` NAO DESLIZA COM O REINICIO. <<<
@@ -271,6 +431,9 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
         onTerminated: (event): void => {
           cancelWarmup()
           info = undefined
+          // ANTES do `return` de `!willRetry`: o processo morreu, logo a URL
+          // deixou de valer — haja ou nao reinicio a seguir.
+          syncTunnelOrigin()
           if (!event.willRetry) return
           state = 'DEGRADED'
           // A causa PRECISA sobrevive a generica: quando o reinicio veio de um
@@ -288,6 +451,7 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
         },
         onFailed: (processFailure: ProcessFailure): void => {
           state = 'FAILED'
+          syncTunnelOrigin()
           failure = toTunnelFailure(processFailure)
           forgetProcessRecord()
           ttl?.dispose()
@@ -333,6 +497,7 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
         retryable: false,
       }
       state = 'FAILED'
+      syncTunnelOrigin()
       log.error(`Auditoria do probe falhou: ${error instanceof Error ? error.message : String(error)}`)
       options.notifyOwner(failure.message)
       return snapshot()
@@ -342,6 +507,7 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
       // `STOPPED -> FAILED`, SEM passar por `STARTING`: nunca houve processo.
       failure = result.failure
       state = 'FAILED'
+      syncTunnelOrigin()
       log.error(`Probe fail-closed reprovou; o tunel NAO sobe. ${failure?.message ?? ''}`)
       if (failure !== undefined) options.notifyOwner(failure.message)
       return snapshot()
@@ -356,6 +522,7 @@ export function createTunnelSupervisor(options: TunnelSupervisorOptions): Tunnel
 
     failure = undefined
     state = 'STARTING'
+    syncTunnelOrigin()
     // A JANELA abre AQUI, e uma so vez. E este instante que vai para o disco e
     // que arma o TTL; os spawns seguintes herdam-no em vez de o renovar.
     windowStartedAt = procDeps.now()

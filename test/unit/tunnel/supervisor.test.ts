@@ -8,7 +8,10 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
@@ -17,8 +20,13 @@ import type {
   ProbeId,
   TunnelConfig,
   TunnelDiscovery,
+  TunnelDiscoveryInput,
   TunnelReadiness,
 } from '../../../src/contracts/tunnel.ts'
+import {
+  createTunnelOriginRegistry,
+  type TunnelOriginRegistry,
+} from '../../../src/http/session-auth.ts'
 import { createStateStore } from '../../../src/state/store.ts'
 import { readTunnelProcess } from '../../../src/tunnel/pidfile.ts'
 import { decideOnResume, TunnelTtlError } from '../../../src/tunnel/ttl.ts'
@@ -53,6 +61,12 @@ async function ownOrigin(): Promise<Server> {
 
 interface Harness {
   supervisor: TunnelSupervisor
+  /** O registo REAL de T3.3 -- e ele que o gate consulta em L2.5. */
+  tunnelOrigin: TunnelOriginRegistry
+  /** Tudo o que foi publicado, por ordem. `undefined` = retirada da allowlist. */
+  publicadas: Array<string | undefined>
+  /** Uma entrada por chamada a `discover()`. Ver o teste de uma-por-spawn. */
+  descobertas: TunnelDiscoveryInput[]
   ctx: FakeContext
   scheduler: FakeScheduler
   clock: FakeClock
@@ -72,6 +86,8 @@ async function makeHarness(
     discoveryFails?: boolean
     /** Segura a descoberta ate o teste a soltar (para observar `STARTING`). */
     discoveryGate?: { release: () => void }
+    /** URL que a descoberta devolve. Por omissao, a do dublê `quick`. */
+    discoveredUrl?: string
   } = {},
 ): Promise<Harness> {
   const ctx = new FakeContext()
@@ -84,6 +100,9 @@ async function makeHarness(
   const notices: string[] = []
   const revocations: number[] = []
   const probeCalls: ProbeRequest[] = []
+  const tunnelOrigin = createTunnelOriginRegistry()
+  const publicadas: Array<string | undefined> = []
+  const descobertas: TunnelDiscoveryInput[] = []
   const origin = await ownOrigin()
 
   const transport: ProbeTransport = {
@@ -103,10 +122,11 @@ async function makeHarness(
   if (options.discoveryGate !== undefined) options.discoveryGate.release = () => releaseDiscovery()
 
   const discovery: TunnelDiscovery = {
-    discover: async (): Promise<{ url: string; via: 'metrics' | 'stderr' }> => {
+    discover: async (input: TunnelDiscoveryInput): Promise<{ url: string; via: 'metrics' | 'stderr' }> => {
+      descobertas.push(input)
       await gate
       if (options.discoveryFails === true) throw new Error('a URL nunca apareceu')
-      return { url: URL_DO_DUBLE, via: 'metrics' }
+      return { url: options.discoveredUrl ?? URL_DO_DUBLE, via: 'metrics' }
     },
   }
 
@@ -129,6 +149,14 @@ async function makeHarness(
     discovery,
     readiness,
     store,
+    // O registo REAL, embrulhado para o teste ver a ORDEM das publicacoes. O
+    // embrulho delega: o que o gate leria e o mesmo que o supervisor escreveu.
+    tunnelOrigin: {
+      publish: (url: string | undefined): void => {
+        publicadas.push(url)
+        tunnelOrigin.publish(url)
+      },
+    },
     sessions: {
       revokeAll: (): void => {
         revocations.push(clock.now())
@@ -146,7 +174,21 @@ async function makeHarness(
     proc: deps,
   })
 
-  return { supervisor, ctx, scheduler, clock, store, audited, notices, revocations, kills, probeCalls }
+  return {
+    supervisor,
+    tunnelOrigin,
+    publicadas,
+    descobertas,
+    ctx,
+    scheduler,
+    clock,
+    store,
+    audited,
+    notices,
+    revocations,
+    kills,
+    probeCalls,
+  }
 }
 
 function findTask(scheduler: FakeScheduler, delayMs: number): ScheduledTask {
@@ -608,5 +650,346 @@ describe('disposer', () => {
     // Chamar 3x = 1 kill.
     assert.deepEqual(h.kills, [[-5150, 'SIGKILL']])
     assert.equal(h.supervisor.snapshot().state, 'STOPPED')
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA 2 DA COSTURA -- A ORIGEM DO TUNEL E PUBLICADA, E RETIRADA            */
+/* ========================================================================== */
+
+/**
+ * A allowlist de `Host` (L2.5) e a de `Origin` do handshake de WebSocket sao
+ * construidas a partir de `tunnelOrigin.current()`. Ate esta costura o UNICO
+ * publicador era o consumo do `RestrictExposureIntent`, que RETIRA a origem --
+ * ninguem a punha. Consequencia medida no produto: com o tunel em `READY`, o
+ * gate recusava com 403 tudo o que chegava pela borda.
+ *
+ * OS DOIS SENTIDOS SAO IGUALMENTE OBRIGATORIOS. Uma entrada MORTA na allowlist
+ * e um BYPASS: um nome `*.trycloudflare.com` derrubado volta a ser distribuido
+ * a outra pessoa, e um `Host` com o hostname antigo continuaria a passar L2.5.
+ * O caso-controlo ponta-a-ponta (o perimetro do gate a aceitar e a recusar o
+ * MESMO pedido) esta em `test/integration/tunnel/origem-publicada.test.ts`.
+ */
+describe('EMENDA 2: `READY` publica a origem; sair de `READY` retira-a', () => {
+  it('publica a URL em READY e retira-a na paragem limpa', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+
+    assert.equal(h.supervisor.snapshot().state, 'READY')
+    assert.equal(h.tunnelOrigin.current(), URL_DO_DUBLE, 'READY tem de POR a origem na allowlist')
+
+    h.supervisor.stop()
+
+    assert.equal(h.tunnelOrigin.current(), undefined, 'entrada morta na allowlist e bypass')
+    h.supervisor.dispose()
+  })
+
+  it('a QUEDA do processo retira a origem, mesmo com reinicio a caminho', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    assert.equal(h.tunnelOrigin.current(), URL_DO_DUBLE)
+
+    h.ctx.subprocess.lastChild().settle({ exitCode: 1, signal: null })
+    await flush()
+
+    assert.equal(h.supervisor.snapshot().state, 'DEGRADED')
+    assert.equal(h.tunnelOrigin.current(), undefined, 'DEGRADED nao pode manter o nome publico vivo')
+    h.supervisor.dispose()
+  })
+
+  it('a EXPIRACAO DO TTL retira a origem -- e e o primeiro efeito a acontecer', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    assert.equal(h.tunnelOrigin.current(), URL_DO_DUBLE)
+
+    runTask(findTask(h.scheduler, 60 * 60 * 1_000))
+
+    assert.equal(h.supervisor.snapshot().state, 'STOPPED')
+    assert.equal(h.tunnelOrigin.current(), undefined)
+    h.supervisor.dispose()
+  })
+
+  it('o DISPOSER retira a origem: um plugin descarregado nao deixa allowlist para tras', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    assert.equal(h.tunnelOrigin.current(), URL_DO_DUBLE)
+
+    h.supervisor.dispose()
+
+    assert.equal(h.tunnelOrigin.current(), undefined)
+  })
+
+  it('o probe fail-closed que reprova NUNCA chega a publicar nada', async () => {
+    const h = await makeHarness({ probeResults: { 'spa-fallback': { kind: 'response', status: 200 } } })
+
+    await h.supervisor.start()
+
+    assert.equal(h.supervisor.snapshot().state, 'FAILED')
+    assert.equal(h.tunnelOrigin.current(), undefined)
+    // Nem sequer um `publish(url)` seguido de `publish(undefined)`: nao houve
+    // processo, nao houve URL, e a allowlist nunca viu o nome.
+    assert.equal(
+      h.publicadas.some((valor) => valor !== undefined),
+      false,
+    )
+    h.supervisor.dispose()
+  })
+
+  it('a ULTIMA publicacao de um ciclo completo e SEMPRE a retirada', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    h.supervisor.dispose()
+
+    assert.equal(h.publicadas.includes(URL_DO_DUBLE), true, 'a URL chegou a entrar')
+    assert.equal(h.publicadas.at(-1), undefined, 'e a ultima palavra e sempre a retirada')
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA 3 DA COSTURA -- QUEM DRENA O `stderr` DO `cloudflared`               */
+/* ========================================================================== */
+
+/**
+ * `discover()` (T3.2) e leitor OPORTUNISTA: poe e tira so o listener dele, e o
+ * `dispose()` NAO faz `resume()` de proposito -- faze-lo descartaria em silencio
+ * o log de arranque. O consumidor DURAVEL e o de `src/proc/stream-log.ts`
+ * (`redact()` + logger), ligado por `createProcessSupervisor` no `spawn`, ANTES
+ * de `onSpawned` e portanto antes de `discover()`.
+ *
+ * O MODO DE FALHA SE NINGUEM DRENAR, medido nesta arvore: um filho que escreve
+ * em `stderr` sem leitor para de progredir depois de 190 464 bytes (buffer do
+ * pipe do SO -- 64 KiB por omissao no Linux -- mais a fila interna do Node). Um
+ * `cloudflared` verboso enche isso e CONGELA no `write`: sem erro, sem log e sem
+ * sinal nenhum.
+ *
+ * ESTES CASOS SAO A CONFIRMACAO PEDIDA: o supervisor JA liga o consumidor, e
+ * estes testes falham se alguem o desligar.
+ */
+describe('EMENDA 3: o `stderr` e drenado antes, durante e depois de `discover()`', () => {
+  it('o log de ARRANQUE (antes de a URL aparecer) e registado, e nao descartado', async () => {
+    const porta = { release: (): void => {} }
+    const h = await makeHarness({ discoveryGate: porta })
+    await h.supervisor.start()
+
+    // A descoberta ainda esta a decorrer: e exatamente a janela em que o
+    // `cloudflared` real escreve o banner de arranque.
+    h.ctx.subprocess.lastChild().stderr.write('INF banner de arranque do cloudflared\n')
+    await flush()
+
+    assert.equal(h.ctx.logger.has('warn', 'banner de arranque do cloudflared'), true)
+    porta.release()
+    await flush()
+    h.supervisor.dispose()
+  })
+
+  it('DEPOIS de `discover()` largar o listener, o `stderr` continua a ser consumido', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    assert.equal(h.supervisor.snapshot().state, 'READY', 'a descoberta ja terminou e ja fez dispose')
+
+    const stderr = h.ctx.subprocess.lastChild().stderr
+    // >>> A ASERCAO DE MECANISMO. <<< O leitor oportunista ja se removeu; se o
+    // consumidor duravel nao existisse, este numero era ZERO e o pipe do SO
+    // enchia ate o `cloudflared` bloquear no `write`.
+    assert.ok(stderr.listenerCount('data') >= 1, 'ninguem esta a drenar o stderr')
+    assert.equal(stderr.isPaused(), false)
+
+    stderr.write('ERR o tunel escreveu isto depois da descoberta\n')
+    await flush()
+
+    assert.equal(h.ctx.logger.has('warn', 'depois da descoberta'), true)
+    h.supervisor.dispose()
+  })
+
+  it('o que e drenado passa por `redact()`: a URL do tunel nao chega ao log', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+
+    h.ctx.subprocess.lastChild().stderr.write(`INF |  ${URL_DO_DUBLE}  |\n`)
+    await flush()
+
+    const tudo = h.ctx.logger.entries.map((entrada) => entrada.message).join('\n')
+    assert.equal(tudo.includes(URL_DO_DUBLE), false, 'a URL do tunel e a capacidade, nao um endereco')
+    assert.equal(tudo.includes('trycloudflare'), false)
+    assert.equal(h.ctx.logger.has('warn', '[REDACTED]'), true, 'houve corte, e ele e visivel')
+    h.supervisor.dispose()
+  })
+
+  it('o consumidor sai de cena no FECHO do processo, nao antes', async () => {
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    const stderr = h.ctx.subprocess.lastChild().stderr
+    assert.ok(stderr.listenerCount('data') >= 1)
+
+    h.ctx.subprocess.lastChild().settle({ exitCode: 0, signal: null })
+    await flush()
+
+    assert.equal(stderr.listenerCount('data'), 0, 'fechado o processo, o listener e removido')
+    h.supervisor.dispose()
+  })
+
+  it('UMA `discover()` por processo SPAWNADO -- um retry e `stderr` NOVO', async () => {
+    // `discover()` nao e reentrante por desenho. Um reinicio e processo novo,
+    // com `stderr` novo, e portanto uma chamada nova -- nunca uma segunda
+    // chamada sobre o MESMO fluxo.
+    const h = await makeHarness({ discoveryFails: true })
+    await h.supervisor.start()
+    await flush()
+    await flush()
+
+    assert.equal(h.descobertas.length, 1)
+    assert.equal(h.ctx.subprocess.calls.length, 1)
+
+    // O reinicio POR INTENCAO do warmup falhado: um spawn novo.
+    h.scheduler.runLast()
+    await flush()
+    await flush()
+
+    assert.equal(h.ctx.subprocess.calls.length, 2, 'houve um segundo processo')
+    assert.equal(h.descobertas.length, 2, 'e exatamente uma descoberta por processo')
+    assert.notEqual(
+      h.descobertas[0]?.stderr,
+      h.descobertas[1]?.stderr,
+      'a segunda descoberta NAO pode receber o `stderr` do processo anterior',
+    )
+    assert.equal(h.descobertas[1]?.stderr, h.ctx.subprocess.children[1]?.stderr)
+
+    h.supervisor.dispose()
+  })
+})
+
+/* ========================================================================== */
+/* DEFEITO 1 -- O `cloudflared` CORRIA COM `secrets: []`                      */
+/* ========================================================================== */
+
+/**
+ * `SECRET_SHAPES` cobre `*.trycloudflare.com`, que e o modo `quick`. Em
+ * `mode: 'named'` NAO HA FORMA A QUE AGARRAR: o hostname e o dominio do proprio
+ * dono e o token e um segredo opaco. Os dois so podem ser cortados pela camada
+ * LITERAL do `redact()` -- e era precisamente essa que o supervisor do tunel nao
+ * alimentava.
+ *
+ * O TOKEN E O CASO GRAVE. Entregamo-lo por `--token-file` de proposito para ele
+ * nao viver em `argv` (TUN-014); depois nao o davamos ao redator. Bastava o
+ * `cloudflared` ecoa-lo em `stderr` -- um erro de parsing, um aviso de expiracao
+ * -- para ele ir inteiro para o log do operador.
+ */
+describe('DEFEITO 1: os literais do named tunnel chegam ao `redact()`', () => {
+  const TOKEN = 'eyJhIjoiZmFrZS1uYW1lZC10dW5uZWwtdG9rZW4tcXVlLW5hby1wb2RlLXZhemFyIn0'
+  const URL_DO_DONO = 'https://tunel.dominio-do-proprio-dono.pt'
+
+  /** Ficheiro `0600` com o token, como o contrato manda. */
+  function tokenFileCom(conteudo: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-guard-token-'))
+    const ficheiro = join(dir, 'named.token')
+    writeFileSync(ficheiro, `${conteudo}\n`, { mode: 0o600 })
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    return ficheiro
+  }
+
+  const configNamed = (tokenFile: string): Partial<TunnelConfig> => ({
+    mode: 'named',
+    tokenFile,
+  })
+
+  it('o TOKEN ecoado em `stderr` nao chega ao log', async () => {
+    const h = await makeHarness({
+      config: configNamed(tokenFileCom(TOKEN)),
+      discoveredUrl: URL_DO_DONO,
+    })
+    await h.supervisor.start()
+    await flush()
+    await flush()
+
+    h.ctx.subprocess.lastChild().stderr.write(`ERR failed to parse token ${TOKEN}\n`)
+    await flush()
+
+    const tudo = h.ctx.logger.entries.map((entrada) => entrada.message).join('\n')
+    assert.equal(tudo.includes(TOKEN), false, 'o token do named tunnel foi para o log')
+    assert.equal(h.ctx.logger.has('warn', '[REDACTED]'), true, 'houve corte, e ele e visivel')
+    // Mascarar nao pode virar apagar: o operador tem de saber O QUE falhou.
+    assert.equal(h.ctx.logger.has('warn', 'failed to parse token'), true)
+    h.supervisor.dispose()
+  })
+
+  it('o HOSTNAME do dono nao chega ao log -- nenhuma FORMA o adivinha', async () => {
+    const h = await makeHarness({
+      config: configNamed(tokenFileCom(TOKEN)),
+      discoveredUrl: URL_DO_DONO,
+    })
+    await h.supervisor.start()
+    await flush()
+    await flush()
+    assert.equal(h.supervisor.snapshot().state, 'READY')
+
+    h.ctx.subprocess.lastChild().stderr.write(`INF route ${URL_DO_DONO}/api ready\n`)
+    await flush()
+
+    const tudo = h.ctx.logger.entries.map((entrada) => entrada.message).join('\n')
+    assert.equal(tudo.includes('dominio-do-proprio-dono'), false, 'o dominio do dono saiu no log')
+    h.supervisor.dispose()
+  })
+
+  it('FORNECEDOR e nao captura: um token RODADO no disco e o que passa a ser cortado', async () => {
+    // A prova de que a lista nao e capturada no arranque. O token roda no disco,
+    // o processo reinicia, e o redator tem de cortar o NOVO -- que e o que o
+    // `cloudflared` vivo recebeu.
+    const ficheiro = tokenFileCom(TOKEN)
+    const h = await makeHarness({ config: configNamed(ficheiro), discoveredUrl: URL_DO_DONO })
+    await h.supervisor.start()
+    await flush()
+    await flush()
+
+    const TOKEN_NOVO = 'eyJhIjoidG9rZW4tcm9kYWRvLWRlcG9pcy1kby1hcnJhbnF1ZS1kby1wbHVnaW4ifQ'
+    writeFileSync(ficheiro, `${TOKEN_NOVO}\n`, { mode: 0o600 })
+
+    // Queda + reinicio: processo novo, leitura nova.
+    h.ctx.subprocess.lastChild().settle({ exitCode: 1, signal: null })
+    await flush()
+    h.scheduler.runLast()
+    await flush()
+    await flush()
+
+    assert.equal(h.ctx.subprocess.calls.length, 2, 'houve um segundo processo')
+    h.ctx.subprocess.lastChild().stderr.write(`ERR token rejected: ${TOKEN_NOVO}\n`)
+    await flush()
+
+    const tudo = h.ctx.logger.entries.map((entrada) => entrada.message).join('\n')
+    assert.equal(tudo.includes(TOKEN_NOVO), false, 'o token NOVO nao foi cortado')
+    h.supervisor.dispose()
+  })
+
+  it('em `quick` a URL NAO entra na camada literal -- ela nao e segredo (02-SEGURANCA 2.2)', async () => {
+    // A forma em `SECRET_SHAPES` ja a corta no log; duplica-la no literal so
+    // tirava legibilidade. O que se prova aqui e a AUSENCIA da duplicacao: o
+    // ficheiro do token nem sequer e lido em `quick`.
+    const h = await makeHarness()
+    await h.supervisor.start()
+    await flush()
+    await flush()
+
+    assert.equal(h.supervisor.snapshot().state, 'READY')
+    // E a URL continua a nao chegar ao log -- pela FORMA, que e a camada certa.
+    h.ctx.subprocess.lastChild().stderr.write(`INF ${URL_DO_DUBLE}\n`)
+    await flush()
+    const tudo = h.ctx.logger.entries.map((entrada) => entrada.message).join('\n')
+    assert.equal(tudo.includes('trycloudflare'), false)
+    h.supervisor.dispose()
   })
 })

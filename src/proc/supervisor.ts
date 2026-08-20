@@ -102,8 +102,13 @@ export interface SupervisedProcess extends SupervisedProcessHooks {
    * estado terminal `INVALID_SPEC` e NAO faz `spawn` nenhum.
    */
   buildSpec(signal: AbortSignal): SubprocessSpawnSpec
-  /** Segredos a redigir das linhas de stdout/stderr encaminhadas para o log. */
-  readonly secrets?: readonly string[] | undefined
+  /**
+   * Segredos a redigir das linhas de stdout/stderr encaminhadas para o log.
+   *
+   * FORNECEDOR e nao lista, pela mesma razao que `openAuditLog` o e: o conjunto
+   * muda DEPOIS do arranque. Ver {@link StreamLogOptions.secrets}.
+   */
+  readonly secrets?: (() => readonly string[]) | undefined
 }
 
 /* ========================================================================== */
@@ -145,7 +150,7 @@ export function createProcessSupervisor(
 ): ProcessSupervisor {
   const { name } = target
   const log: GuardLogger = createGuardLogger(ctx)
-  const secrets: readonly string[] = target.secrets ?? []
+  const secrets = (): readonly string[] => target.secrets?.() ?? []
 
   /**
    * Um unico AbortController para todo o ciclo de vida: o assento reage-lhe
@@ -223,14 +228,14 @@ export function createProcessSupervisor(
       // orcamento: tentar de novo com a mesma configuracao da o mesmo resultado.
       // `conclude` trata isto como nao-retryable e entra em estado terminal.
       const detail = error instanceof Error ? error.message : String(error)
-      log.error(`Nao foi possivel montar o arranque de ${name}: ${redact(detail, secrets)}`)
+      log.error(`Nao foi possivel montar o arranque de ${name}: ${redact(detail, secrets())}`)
       budget.conclude(`Arranque de ${name} recusado na montagem do spec.`, coerceSpecError(error), 0)
       return
     }
 
     // Regista o argv EFETIVO, e nao `command + args`: era a diferenca entre os
     // dois que escondia a ausencia do entrypoint no supervisor do worker.
-    log.info(`Alocando subprocesso isolado de longa duracao: ${redact(spec.argv.join(' '), secrets)}`)
+    log.info(`Alocando subprocesso isolado de longa duracao: ${redact(spec.argv.join(' '), secrets())}`)
 
     const spawned = ctx.subprocess.spawn(spec)
     handle = spawned
@@ -276,6 +281,27 @@ export function createProcessSupervisor(
       budget.conclude(description, cause, deps.now() - startedAt)
     }
 
+    /**
+     * O CONSUMIDOR DURAVEL DOS STREAMS, e a ordem em que ele aparece e contrato.
+     *
+     * Ele e ligado AQUI -- antes de `onSpawned`, portanto antes de qualquer
+     * leitor oportunista que o gancho instale -- e so e desligado em
+     * `handleTermination` (fecho do processo) ou em `releaseCurrentHandle()`
+     * (substituicao/disposer). Nunca ha, entre o `spawn` e o fecho, um instante
+     * em que ninguem esteja a drenar.
+     *
+     * PORQUE ISSO E UM REQUISITO E NAO UMA CONVENIENCIA: `TunnelDiscovery`
+     * (`../tunnel/discover.ts`) le `stderr` como leitor OPORTUNISTA -- poe e
+     * tira so o listener dele, e nao faz `resume()` ao sair, para nao descartar
+     * em silencio o log de arranque que ESTE consumidor tem de registar. Se o
+     * unico leitor fosse o dele, o `stderr` ficava sem quem o drenasse assim que
+     * a URL aparecesse.
+     *
+     * MEDIDO nesta arvore: um filho que escreve em `stderr` sem leitor para de
+     * progredir depois de 190 464 bytes (buffer do pipe do SO, 64 KiB por
+     * omissao no Linux, mais a fila interna do Node). Um `cloudflared` verboso
+     * enche isso e CONGELA no `write` -- sem erro, sem log e sem sinal.
+     */
     detachStreamListeners = attachStreamLogging(spawned, { name, log, secrets })
 
     // O gancho corre DEPOIS de os ouvintes estarem ligados e ANTES de qualquer
@@ -290,7 +316,7 @@ export function createProcessSupervisor(
         )
       },
       (error: unknown): void => {
-        const message = redact(error instanceof Error ? error.message : String(error), secrets)
+        const message = redact(error instanceof Error ? error.message : String(error), secrets())
 
         // Anulacao intencional: registar isto como `logger.error` produzia um
         // erro FALSO em cada desligamento limpo do plugin -- ruido que treina o

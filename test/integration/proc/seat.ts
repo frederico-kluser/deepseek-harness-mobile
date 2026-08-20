@@ -44,6 +44,10 @@ import type {
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
 import type { StateStore } from '../../../src/contracts/state.ts'
 import { createStateStore } from '../../../src/state/store.ts'
+import {
+  createTunnelOriginRegistry,
+  type TunnelOriginRegistry,
+} from '../../../src/http/session-auth.ts'
 import { createTunnelSupervisor, type TunnelSupervisor } from '../../../src/tunnel/supervisor.ts'
 import { FakeScheduler, makeSupervisorDeps } from '../../support/child-double.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -299,6 +303,8 @@ export async function reserveEphemeralPort(): Promise<number> {
 
 export interface TunnelHarness {
   supervisor: TunnelSupervisor
+  /** O registo REAL de T3.3, o mesmo que o gate consulta em L2.5. */
+  tunnelOrigin: TunnelOriginRegistry
   subprocess: RealSubprocessService
   scheduler: FakeScheduler
   clock: FakeClock
@@ -352,6 +358,7 @@ export async function makeTunnelHarness(options: TunnelHarnessOptions = {}): Pro
   const audited: AuditEvent[] = []
   const notices: string[] = []
   const revocations: number[] = []
+  const tunnelOrigin = createTunnelOriginRegistry()
 
   const supervisor = createTunnelSupervisor({
     ctx,
@@ -391,6 +398,7 @@ export async function makeTunnelHarness(options: TunnelHarnessOptions = {}): Pro
       waitUntilUsable: () => Promise.resolve({ usable: true, status: 401 }),
     },
     store: storeHandle.store,
+    tunnelOrigin,
     sessions: { revokeAll: () => revocations.push(clock.now()) },
     audit: { append: (event: AuditEvent) => audited.push(event) },
     notifyOwner: (message: string) => notices.push(message),
@@ -400,6 +408,7 @@ export async function makeTunnelHarness(options: TunnelHarnessOptions = {}): Pro
 
   return {
     supervisor,
+    tunnelOrigin,
     subprocess,
     scheduler,
     clock,

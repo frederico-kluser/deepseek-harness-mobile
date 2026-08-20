@@ -219,11 +219,17 @@ describe('PANEL-010 · a superficie isenta nao enumera nada', () => {
   let bancada: Bancada
   let port = 0
   /**
-   * `doPainel` separa o que ESTE ficheiro escreve do desafio 401, que vem de
-   * `src/http/responses.ts` (dono: T3.3) e e reutilizado de proposito para que
-   * o 401 do painel seja byte a byte o 401 do gate. Ele nao leva
-   * `Referrer-Policy`, e mudar isso seria mexer num ficheiro que nao e desta
-   * sub-tarefa -- fica REPORTADO em vez de contornado.
+   * `doPainel` distingue o que ESTE ficheiro escreve do desafio 401, que vem de
+   * `src/http/responses.ts` e e reutilizado de proposito para que o 401 do
+   * painel seja byte a byte o 401 do gate.
+   *
+   * ELE JA NAO E UMA ISENCAO. A versao anterior desta suite excluia o 401 da
+   * asercao de `Referrer-Policy` porque a funcao partilhada nao o emitia, e
+   * acrescenta-lo do lado do painel teria QUEBRADO a igualdade byte a byte --
+   * que e uma propriedade de seguranca, nao arrumacao. A costura da Onda 3
+   * acrescentou o cabecalho na propria `challengeBasicAuth`, ou seja nos DOIS
+   * lados ao mesmo tempo, e a exclusao caiu. O campo fica porque a distincao
+   * "quem escreveu esta resposta" continua a ser util a leitura.
    */
   const respostas: Array<{ readonly nome: string; readonly bruta: string; readonly doPainel: boolean }> = []
 
@@ -273,14 +279,24 @@ describe('PANEL-010 · a superficie isenta nao enumera nada', () => {
     }
   })
 
-  it('toda resposta ESCRITA PELO PAINEL e `Referrer-Policy: no-referrer`', () => {
+  it('TODA resposta -- incluindo o 401 partilhado -- e `Referrer-Policy: no-referrer`', () => {
     // Sem isto, um clique a partir da pagina do segredo ou do link magico
     // levava a URL do quick tunnel -- o endereco publico da maquina do dono --
-    // para dentro do log do servidor de destino.
-    for (const { nome, bruta, doPainel } of respostas) {
-      if (!doPainel) continue
+    // para dentro do log do servidor de destino. O 401 conta duplamente: ele e
+    // servido a TODA a superficie interceptada, incluindo o fallback da SPA do
+    // DSH, que nao e nosso e nao tem a CSP `default-src 'none'` do painel.
+    for (const { nome, bruta } of respostas) {
       assert.match(bruta, /^referrer-policy: no-referrer\r$/imu, nome)
     }
+  })
+
+  it('e o 401 do painel continua a NAO ter nada que o distinga do 401 do gate', () => {
+    // A igualdade byte a byte propriamente dita esta em
+    // `test/security/desafio-401.test.ts`, com os DOIS servidores. Aqui fica o
+    // fio de alarme local: os dois 401 desta suite tem de ser iguais entre si.
+    const desafios = respostas.filter(({ doPainel }) => !doPainel).map(({ bruta }) => bruta)
+    assert.equal(desafios.length, 2)
+    assert.equal(desafios[0], desafios[1], 'dois 401 do mesmo painel ja divergiram')
   })
 })
 

@@ -38,13 +38,24 @@
  * PORQUE `redact()` E CHAMADO E NAO COPIADO (`../logging/redact.ts`, T1.1): uma
  * primitiva de mascaramento duplicada e uma primitiva que diverge -- a copia
  * ganha um padrao que o original nao tem, e o autor do original corrige um bug
- * que a copia continua a ter. `redact()` e a camada 1 (literais conhecidos) e a
- * camada 2 (token de bot, `Authorization`, `Cookie`). O que esta AQUI e o que o
- * proprio `redact.ts` declara em falta, por escrito, no seu cabecalho: o `mk` do
- * link magico e o URL do tunel -- formas que na Onda 1 ainda nao existiam. Mais
- * duas que sao desta sub-tarefa: a forma do segredo do plugin, e um apanhado
- * para o token de bot CURTO que a forma de `redact.ts` deixa passar por desenho
- * (ela exige >= 20 caracteres depois dos dois pontos). Ver {@link AUDIT_SHAPES}.
+ * que a copia continua a ter.
+ *
+ * O QUE MUDOU NA COSTURA DA ONDA 3, e porque este paragrafo encolheu. Duas das
+ * formas que viviam aqui -- o URL do quick tunnel e o `mk` do link magico --
+ * eram, por escrito, o que `redact.ts` declarava em falta no proprio cabecalho
+ * "ate os donos as fixarem". Foram fixadas, e SUBIRAM para `SECRET_SHAPES`.
+ * Enquanto estiveram so aqui, quem chamava `redact()` diretamente (todo o
+ * encaminhamento de stdout/stderr de subprocesso) nao tinha nenhuma das duas --
+ * a duplicacao nao era redundancia, era um buraco com aparencia de cinto.
+ *
+ * O QUE FICOU, E PORQUE `maskAuditText` NAO E `redact` COM OUTRO NOME: as tres
+ * formas de {@link AUDIT_SHAPES} sao especificas de um log de AUDITORIA, onde um
+ * falso positivo custa uma linha ilegivel e um falso negativo custa o bot ou a
+ * credencial permanente do dono. Num log de OPERADOR o calculo inverte-se, e por
+ * isso elas nao subiram: o token de bot CURTO (a forma de `redact.ts` exige >= 20
+ * caracteres depois dos dois pontos, de proposito), a cauda de um segredo
+ * engolido pela camada 1, e o segredo do plugin em base32 -- que e a unica que
+ * nem sequer pode depender do literal, porque T2.1 o descarta da memoria.
  */
 
 import { createHash } from 'node:crypto'
@@ -108,7 +119,12 @@ const IPV4_WITH_PORT = /^(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}$/u
 const MAX_EPOCH_MS = 8.64e15
 
 /**
- * As formas que `redact()` NAO cobre, e a razao de cada uma.
+ * As formas que `redact()` NAO cobre -- e que, DE PROPOSITO, nao deve cobrir.
+ *
+ * As tres que aqui ficam sao mais agressivas do que faz sentido num log de
+ * operador; ver o cabecalho do ficheiro. As que faziam sentido nos dois sitios
+ * (URL do tunel, `mk`, `$HOME`) subiram para `SECRET_SHAPES` e chegam aqui pela
+ * chamada a `redact()`, nao por copia.
  *
  * Cada entrada mascara SO o grupo `$2` e preserva `$1` -- a mesma convencao de
  * `redact.ts`, para que quem leia os dois ficheiros nao tenha de trocar de
@@ -161,38 +177,6 @@ const AUDIT_SHAPES: ReadonlyArray<{ pattern: RegExp; keep: string }> = [
      * fio de alarme para o dia em que alguem mudar o marcador.
      */
     pattern: /(\[REDACTED\]:)([\w-]{16,})/gu,
-    keep: '$1',
-  },
-  {
-    /*
-     * URL do tunel efemero do `cloudflared`. O URL NAO e um endereco publico
-     * qualquer: e a propria capacidade -- quem o tem, alcanca a barreira. Por
-     * isso ele nunca e persistido (03-ONDAS.md 7) e nunca e registado.
-     *
-     * Cobre a forma `quick` (`*.trycloudflare.com`), que e a unica cujo dominio
-     * e conhecido a priori. Um tunel `named` usa o dominio do proprio dono, que
-     * nenhuma forma consegue adivinhar: esse depende da camada 1 (o URL entra em
-     * `knownSecrets`), e e por isso que `openAuditLog` recebe um FORNECEDOR de
-     * segredos e nao uma lista fixa -- o URL muda a cada arranque.
-     */
-    // SEM ancora de fronteira. Tinha um `(\b)` a abrir, que capturava a string
-    // vazia e nao servia para nada exceto FALHAR: em `url1https://x.trycloudflare.com`
-    // nao ha fronteira de palavra entre `1` e `h`, e o URL sobrevivia inteiro.
-    // Um `https://` ja e auto-delimitado -- nao precisa de ancora nenhuma.
-    pattern: /https?:\/\/[a-z0-9][a-z0-9-]*\.trycloudflare\.com[^\s"']*/giu,
-    keep: '',
-  },
-  {
-    /*
-     * `mk` do link magico: 128 bits, TTL 120 s, uso unico (T2.2). Curto e
-     * descartavel, mas dentro da janela e uma sessao autenticada inteira -- e um
-     * log e exatamente o sitio onde um valor de 120 segundos sobrevive anos.
-     *
-     * O lookbehind evita casar o sufixo de outra chave (`webhook_mk=`). Cobre
-     * `?mk=`, `&mk=` e `#mk=` (o link magico pode levar o segredo no FRAGMENTO,
-     * que e a variante que nem chega ao servidor).
-     */
-    pattern: /((?<![\w-])mk=)([^&\s"']+)/giu,
     keep: '$1',
   },
   {
