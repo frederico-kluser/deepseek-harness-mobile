@@ -9,8 +9,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
-import { apply, inject, name } from '../../src/index.ts'
+import { apply, inject, name, type Config } from '../../src/index.ts'
 import { FakeContext } from '../support/ctx-double.ts'
 import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
 
@@ -48,14 +52,15 @@ describe('manifesto do plugin', () => {
 })
 
 describe('ciclo de vida sob ctx.effect', () => {
-  it('regista quatro efeitos, etiquetados, e todos devolvem disposers SINCRONOS', () => {
+  it('regista cinco efeitos, etiquetados, e todos devolvem disposers SINCRONOS', () => {
     const { ctx } = install()
 
-    assert.equal(ctx.effects.length, 4, 'veto + auth-check + barreira + worker')
+    assert.equal(ctx.effects.length, 5, 'veto + auth-check + barreira + controlador + worker')
     assert.deepEqual(ctx.effectLabels, [
       'dsh-guard.veto-de-permissao',
       'dsh-guard.auth-check',
       'dsh-guard.barreira',
+      'dsh-guard.controlador',
       'dsh-guard.worker',
     ])
 
@@ -70,11 +75,26 @@ describe('ciclo de vida sob ctx.effect', () => {
     }
   })
 
-  it('a ordem dos efeitos poe o worker DEPOIS da barreira (LIFO ao descarregar)', () => {
-    // Os disposers correm em ordem inversa: o worker morre primeiro, e so depois
-    // a barreira e levantada. Ao contrario, haveria uma janela em que o plano de
-    // controlo responde sem credencial com o worker ainda vivo.
-    assert.equal(EFFECT.barreira < EFFECT.worker, true)
+  it('a ordem dos efeitos poe o worker DEPOIS do controlador e da barreira (LIFO ao descarregar)', () => {
+    // Os disposers correm em ordem inversa: o worker morre primeiro, depois o
+    // controlador (que derruba o tunel), e so depois a barreira e levantada.
+    // Ao contrario, haveria uma janela em que o plano de controlo responde sem
+    // credencial com o worker ainda vivo.
+    assert.equal(EFFECT.barreira < EFFECT.controlador, true)
+    assert.equal(EFFECT.controlador < EFFECT.worker, true)
+  })
+
+  it('em modo loopback o efeito do controlador e um disposer sincrono e inerte', () => {
+    // A configuracao de fabrica nao declara `tunnel` (exposure.mode: 'loopback'):
+    // nao ha supervisor, nao ha controlador — a superficie IPC recusa com
+    // EXPOSURE_DISABLED. O efeito existe para a contabilidade LIFO.
+    const { ctx } = install()
+
+    const disposer = ctx.effects[EFFECT.controlador]
+    assert.equal(typeof disposer, 'function')
+    const result: unknown = disposer?.()
+    assert.equal(result, undefined)
+    assert.equal(ctx.logger.has('info', 'controlador sem supervisor'), true)
   })
 
   it('arranca o worker imediatamente no apply', () => {
@@ -87,6 +107,32 @@ describe('ciclo de vida sob ctx.effect', () => {
       process.execPath,
       PACKAGED_WORKER_ENTRYPOINT,
     ])
+  })
+
+  it('em modo tunnel o controlador nasce com o supervisor e morre sem deixar handles', async () => {
+    // A configuracao de tunel e o que faz o efeito do controlador criar o
+    // supervisor (T3.1), o controlador (T5.1) e o alocador de porta de
+    // metricas. Nada e spawnado no apply; o worker continua a ser o unico
+    // subprocesso. O disposer fecha o servidor de reserva do alocador.
+    const { ctx } = install({
+      exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false },
+      tunnel: { mode: 'quick', ttlMinutes: 60 },
+    })
+
+    assert.equal(ctx.subprocess.calls.length, 1, 'so o worker e spawnado no apply')
+    assert.equal(ctx.effects.length, 5)
+
+    // O listen da reserva e assincrono: o servidor nasce num tick posterior.
+    await flush()
+    const antes = process.getActiveResourcesInfo().filter((r) => r === 'TCPServerWrap').length
+    ctx.effects[EFFECT.controlador]?.()
+    // Um listen em voo fecha-se sozinho quando o callback da reserva corre
+    // (a guarda `fechado` do alocador); espera-se o tick para o contar.
+    await flush()
+    const depois = process.getActiveResourcesInfo().filter((r) => r === 'TCPServerWrap').length
+    assert.equal(depois < antes, true, 'o servidor de reserva da porta de metricas tem de fechar no disposer')
+
+    ctx.effects[EFFECT.worker]?.()
   })
 
   it('nao deixa temporizadores reais pendurados apos o dispose do efeito', async () => {
@@ -167,6 +213,127 @@ describe('avisos de arranque', () => {
       false,
       'a exigencia foi refutada por medicao: manter o aviso seria mentir ao operador',
     )
+  })
+})
+
+/** Espera ATIVA e curta por uma condicao: o probe do boot e I/O real contra
+ * a porta do duble, e uma unica microtask nao o deixa concluir. */
+async function esperarAte(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+  }
+  assert.equal(predicate(), true, 'a condicao nunca foi atingida dentro do prazo')
+}
+
+describe('boot: a intencao persistida decide o arranque (CTL-033/034)', () => {
+  /**
+   * Escreve um `state.json` numa casa DSH temporaria e devolve a limpeza.
+   * O `apply()` resolve `$DSH_HOME` do ambiente (src/state/paths.ts).
+   */
+  function comEstado(desejado: 'READY' | 'STOPPED', restrito: boolean): () => void {
+    const casa = join(tmpdir(), `dsh-guard-boot-${process.pid}`)
+    const dir = join(casa, 'guarded-bot')
+    mkdirSync(dir, { recursive: true })
+    // O diretorio de estado exige 0700 (o estado recusa-se a ler de um
+    // diretorio aberto a grupo/outros). O `mode` do mkdir e mascarado pelo
+    // umask; o chmod nao — a mesma ordem que `src/state/paths.ts` usa.
+    chmodSync(dir, 0o700)
+    // O secretDigest e o de um estado REAL apos o onboarding (T2.1):
+    // hex minusculo de 64 chars, o formato que o schema valida. Sem ele o
+    // start de boot seria recusado por SEM_SEGREDO_FORTE (CTL-009) antes de
+    // o probe correr — e o que este bloco quer observar e o probe a correr.
+    const estado = restrito
+      ? {
+          version: 1,
+          desiredState: desejado,
+          secretDigest: 'ab'.repeat(32),
+          restricted: { since: 1, reason: 'brute-force-ceiling' },
+        }
+      : { version: 1, desiredState: desejado, secretDigest: 'ab'.repeat(32) }
+    writeFileSync(join(dir, 'state.json'), JSON.stringify(estado), { mode: 0o600 })
+    process.env.DSH_HOME = casa
+    return (): void => {
+      delete process.env.DSH_HOME
+      rmSync(casa, { recursive: true, force: true })
+    }
+  }
+
+  function configTunel(autoStart: boolean): Partial<Config> {
+    return {
+      exposure: { mode: 'tunnel', autoStart, trustEdgeHeaders: false },
+      tunnel: { mode: 'quick', ttlMinutes: 60 },
+    }
+  }
+
+  it('CTL-033: autoStart desligado + intencao READY -> nenhum tunel sobe no boot', () => {
+    const limpar = comEstado('READY', false)
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunel(false)).ctx
+      assert.equal(ctx.logger.has('info', 'boot em STOPPED: exposure.autoStart esta desligado'), true)
+      assert.equal(ctx.subprocess.calls.length, 1, 'so o worker e spawnado')
+    } finally {
+      // O disposer fecha o servidor de reserva do alocador de metricas.
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+
+  it('intencao STOPPED + autoStart ligado -> nenhum tunel sobe no boot', () => {
+    const limpar = comEstado('STOPPED', false)
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunel(true)).ctx
+      assert.equal(ctx.logger.has('info', 'boot em STOPPED: a intencao persistida e STOPPED'), true)
+      assert.equal(ctx.subprocess.calls.length, 1)
+    } finally {
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+
+  it('modo restrito ativo no state.json -> o boot NAO sobe o tunel (reinicar nao e o bypass)', () => {
+    const limpar = comEstado('READY', true)
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunel(true)).ctx
+      assert.equal(ctx.logger.has('info', 'boot em STOPPED: o modo restrito esta ativo no state.json'), true)
+      assert.equal(ctx.subprocess.calls.length, 1)
+    } finally {
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+
+  it('intencao READY + autoStart ligado -> o boot despacha o start SEM nonce e o probe CORRE (CTL-034)', async () => {
+    const limpar = comEstado('READY', false)
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunel(true)).ctx
+      // Snapshot const para o closure: o TS perde o estreitamento de `let`
+      // dentro de funcao anonima.
+      const ativo = ctx
+      assert.equal(
+        ativo.logger.has('info', 'boot: intencao persistida e READY com autoStart ativo; a subir o tunel.'),
+        true,
+      )
+      // A PROVA comportamental (a antiga so afirmava a linha de log e um
+      // comentario a descrever um probe que nao corria): o start de boot —
+      // SEM nonce, com requireConfirmation: true no default — chega ao
+      // supervisor e o probe fail-closed CORRE contra a porta do duble,
+      // reprova, e e o supervisor quem o grita. Se o controlador exigisse
+      // nonce da origem boot (CTL-023), a intent seria recusada ANTES do
+      // probe e esta linha nao existiria; se a chamada que honra o
+      // desiredState fosse removida, o despacho nem aconteceria. As duas
+      // mutacoes morrem neste teste.
+      await esperarAte(() => ativo.logger.has('error', 'Probe fail-closed reprovou'))
+      assert.equal(ctx.subprocess.calls.length, 1, 'o probe reprovado nao spawna: so o worker')
+    } finally {
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
   })
 })
 

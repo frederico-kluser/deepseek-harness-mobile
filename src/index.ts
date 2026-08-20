@@ -48,10 +48,21 @@
  * =============================================================================
  */
 
+import { randomBytes } from 'node:crypto'
+import { createServer as createNetServer, type Server as TcpServer } from 'node:net'
+
+import type { AuditSink } from './contracts/auth.ts'
+import { registerSessaoNovaObserver } from './audit/events.ts'
 import { resolveAuditLogPath } from './audit/log.ts'
+import { criarObservadorSessaoNova } from './audit/notify.ts'
 import { assertValidConfig } from './config/assert.ts'
 import { assertSecureBind } from './config/bind.ts'
-import { resolveExposure, type Config } from './config/schema.ts'
+import { resolveControl, resolveExposure, shouldAutoStartTunnel, type Config } from './config/schema.ts'
+import type { StateStore } from './contracts/state.ts'
+import { IPC_PROTOCOL_VERSION, type IpcIntentMessage } from './contracts/ipc.ts'
+import { createConfirmService } from './control/confirm.ts'
+import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelController } from './control/controller.ts'
+import { criarRespondedorIpc } from './control/surface-ipc.ts'
 import { resolveWebServerHttpServer, type Context, type Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
 import { createGuardedHandler, createGuardedUpgradeHandler, type GateDeps } from './http/gate.ts'
@@ -88,10 +99,27 @@ import {
  */
 export { createRequestOriginResolver } from './http/session-auth.ts'
 import { readSessionCookie } from './session/cookie.ts'
-import { createGuardLogger } from './logging/logger.ts'
+import { createGuardLogger, type GuardLogger } from './logging/logger.ts'
 import { requestsDeniedPermission } from './permissions/deny.ts'
-import { createWorkerSupervisor } from './proc/supervisor.ts'
+import {
+  createWorkerSupervisor,
+  defaultSupervisorDeps,
+  type WorkerSupervisor,
+} from './proc/supervisor.ts'
+import { createStateStore } from './state/store.ts'
 import { resolveStatePaths } from './state/paths.ts'
+import { createTunnelDiscovery } from './tunnel/discover.ts'
+import {
+  defaultOrphanSweepDeps,
+  EVENTO_ORFAO,
+  ownerOrphanMessage,
+  recoverTunnelAtBoot,
+  sweepOrphanTunnel,
+} from './tunnel/pidfile.ts'
+import { createHttpProbeTransport } from './tunnel/probe.ts'
+import { createTunnelReadiness } from './tunnel/readiness.ts'
+import { createTunnelSupervisor } from './tunnel/supervisor.ts'
+import { createTtlEffects, type TtlEffects } from './tunnel/ttl.ts'
 
 export { PLUGIN_NAME } from './errors.ts'
 export type { Config, BackoffConfig, ControlConfig } from './config/schema.ts'
@@ -160,6 +188,130 @@ export const UNAUTHENTICATED_PANEL_PREFIXES: readonly string[] = [
  * partia o produto.
  */
 export const LOOPBACK_ONLY_PREFIXES: readonly string[] = ['/__guard/secret']
+
+/* ========================================================================= */
+/* O alocador de porta de metricas e a recuperacao de boot                   */
+/* ========================================================================= */
+
+/** Timeout de cada sonda do probe fail-closed (porta local, gate do DSH). */
+const PROBE_TIMEOUT_MS = 2000
+
+/**
+ * Aloca a porta do servidor de metricas do `cloudflared`, UMA por janela de
+ * tunel.
+ *
+ * `allocateMetricsPort` (T3.1) e SINCRONA — e chamada dentro do spawn — e nao
+ * existe bind sincrono em Node. A solucao: uma reserva assincrona que MANTEM a
+ * porta aberta ate ao instante da entrega (a porta entregue esta livre por
+ * construcao) e volta a reservar imediatamente para a janela seguinte. O
+ * servidor de reserva morre com o disposer; um `alocar` sem reserva pronta e
+ * uma falha de arranque (a reserva comeca no apply) e LANCA — o despacho do
+ * start captura-a e o estado vai a FAILED.
+ */
+function criarAlocadorDeMetricas(log: GuardLogger): { alocar(): number; dispose(): void } {
+  let reserva: TcpServer | undefined
+  let fechado = false
+
+  const reservar = (): void => {
+    const servidor = createNetServer()
+    servidor.once('error', (error) => {
+      log.error(
+        `nao foi possivel reservar a porta de metricas: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
+    servidor.listen(0, '127.0.0.1', () => {
+      if (fechado) {
+        servidor.close()
+        return
+      }
+      reserva = servidor
+    })
+  }
+
+  reservar()
+
+  return {
+    alocar(): number {
+      const servidor = reserva
+      if (servidor === undefined) {
+        throw new Error('porta de metricas ainda nao reservada (a reserva comeca no apply)')
+      }
+      const endereco = servidor.address()
+      if (endereco === null || typeof endereco === 'string') {
+        throw new Error('porta de metricas sem endereco de reserva')
+      }
+      servidor.close()
+      reserva = undefined
+      reservar()
+      return endereco.port
+    },
+    dispose(): void {
+      fechado = true
+      reserva?.close()
+      reserva = undefined
+    },
+  }
+}
+
+/**
+ * O PRIMEIRO passo do arranque (02-SEGURANCA 9): varredura de orfao + veredito
+ * do TTL persistido, ANTES de qualquer outra inicializacao. Devolve o que o
+ * boot precisa de saber do `state.json`: a INTENCAO persistida
+ * (`desiredState`) e se o modo restrito esta ativo.
+ *
+ * NAO usa a pilha de autenticacao (que e lazy): usa um `StateStore` transiente
+ * sobre os MESMOS caminhos. Em boot limpo (sem registo de tunel) nada toca o
+ * disco; com um orfao ou um prazo vencido, a pilha nasce por necessidade — os
+ * efeitos abaixo sao vistas lazy dela.
+ *
+ * Sem config de tunel (modo loopback) nao ha `ttlMinutes` para o veredito do
+ * prazo; a varredura de orfao continua OBRIGATORIA — um orfao e uma URL publica
+ * sem portao por tras — e o ramo repete a politica do ramo "derrubado dentro
+ * do prazo" de `recoverTunnelAtBoot` (T3.1): sessoes invalidadas, auditoria,
+ * aviso.
+ */
+function recuperarBoot(
+  config: Config,
+  log: GuardLogger,
+  store: StateStore,
+  efeitos: {
+    readonly revogarSessoes: () => void
+    readonly auditSink: Pick<AuditSink, 'append'>
+    readonly notificarDono: (texto: string) => void
+  },
+): { readonly intencao: 'READY' | 'STOPPED'; readonly restrito: boolean } {
+  const persistido = store.read()
+  const intencao = persistido.desiredState
+  const restrito = persistido.restricted !== undefined
+
+  if (config.tunnel === undefined) {
+    const resultado = sweepOrphanTunnel(defaultOrphanSweepDeps(store, log))
+    if (resultado.outcome === 'killed') {
+      efeitos.revogarSessoes()
+      efeitos.auditSink.append({ evento: EVENTO_ORFAO, resultado: 'permitido' })
+      efeitos.notificarDono(ownerOrphanMessage())
+    }
+    return { intencao, restrito }
+  }
+
+  const effects: TtlEffects = createTtlEffects({
+    // A varredura ja derrubou; o stopTunnel do boot e um no-op por desenho.
+    stopTunnel: (): void => {},
+    sessions: { revokeAll: () => efeitos.revogarSessoes() },
+    audit: efeitos.auditSink,
+    notifyOwner: (message: string) => efeitos.notificarDono(message),
+  })
+
+  recoverTunnelAtBoot({
+    sweep: defaultOrphanSweepDeps(store, log, config.tunnel.binaryPath),
+    ttlMinutes: config.tunnel.ttlMinutes,
+    now: defaultSupervisorDeps.now,
+    effects,
+    log,
+  })
+
+  return { intencao, restrito }
+}
 
 /** Nome do PLUGIN (identidade do modulo perante o motor Cordis). */
 export const name = PLUGIN_NAME
@@ -515,7 +667,208 @@ export function apply(ctx: Context, config: Config): void {
     }
   }, 'dsh-guard.barreira')
 
-  /* --- 5. Worker de long-polling sob ciclo de vida atomico ------------- */
+  /* --- 5. O controlador unico do tunel --------------------------------- */
+  /**
+   * O UNICO dono do estado do tunel (`docs/control-machine.md`): Telegram,
+   * painel e UI nativa sao SUPERFICIES e nenhuma chama o supervisor de tunel
+   * directamente. Este efeito cria o supervisor (T3.1), o controlador (T5.1) e
+   * o servico de nonce, e o disposer SINCRONO derruba o supervisor e desarma o
+   * repasse de reconciliacao. LIFO: o worker morre antes, a barreira depois.
+   */
+  let controladorAtual: TunnelController | undefined
+  let workerSupervisor: WorkerSupervisor | undefined
+
+  /**
+   * A difusao de estado host -> worker, com `seq` monotonico (CTL-010). A URL e
+   * o prazo so saem em `READY` (invariante do contrato IPC); o `send` nunca
+   * lanca e devolve `false` quando o worker esta em baixo — perde-se uma
+   * difusao, a proxima traz `seq` novo (CTL-027).
+   */
+  const difundir = (difusao: DifusaoEstado): void => {
+    workerSupervisor?.send({
+      v: IPC_PROTOCOL_VERSION,
+      type: 'state',
+      state: difusao.estado,
+      seq: difusao.seq,
+      ...(difusao.estado === 'READY' && difusao.url !== undefined && difusao.expiresAt !== undefined
+        ? { url: difusao.url, expiresAt: difusao.expiresAt }
+        : {}),
+    })
+  }
+
+  /** `/status` e reconexoes: reenvia o estado COMPLETO com o `seq` corrente. */
+  const reemitirEstado = (): void => {
+    const atual = controladorAtual?.snapshot()
+    if (atual === undefined) return
+    difundir({
+      estado: atual.state,
+      seq: atual.seq,
+      ...(atual.info === undefined || atual.expiresAt === undefined
+        ? {}
+        : { url: atual.info.url, expiresAt: atual.expiresAt }),
+    })
+  }
+
+  /** Aviso proativo ao dono (best-effort; o worker pode estar em baixo). */
+  const difundirNotificacao = (message: string): void => {
+    workerSupervisor?.send({ v: IPC_PROTOCOL_VERSION, type: 'notify', texto: message })
+  }
+
+  /**
+   * S6 (`src/contracts/ipc.ts`): o host RE-VERIFICA a identidade contra o
+   * pareamento persistido — a verificacao no processo que fala com a internet
+   * e a primeira a cair se ele for comprometido. A pilha nasce no primeiro
+   * pedido que precisa de decidir; a falha de leitura fecha (CTL-029).
+   */
+  const pareado = (from: number, chat: number): boolean => {
+    try {
+      const pareamento = authStack().state.read().pairing
+      return pareamento !== undefined && pareamento.ownerUserId === from && pareamento.ownerChatId === chat
+    } catch (error) {
+      log.error(
+        'nao foi possivel ler o pareamento persistido; intencao recusada: ' +
+          `${error instanceof Error ? error.message : String(error)}`,
+      )
+      return false
+    }
+  }
+
+  /**
+   * `/emergencia` (kill switch, 02-SEGURANCA L8): DEPOIS de o tunel cair (o
+   * despacho `stop` resolve — "tunel primeiro, sempre"), invalida TODAS as
+   * sessoes emitidas (SESS-009) e audita com a origem. Nao derruba o processo
+   * do DSH: so a EXPOSICAO.
+   */
+  const aposEmergencia = (intent: IpcIntentMessage): void => {
+    try {
+      authStack().sessions.revokeAll()
+    } catch (error) {
+      log.error(`falha ao invalidar as sessoes do /emergencia: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      authStack().audit.append({ evento: `tunel_emergencia:telegram:${String(intent.from)}`, resultado: 'permitido' })
+    } catch (error) {
+      log.error(`falha ao auditar o /emergencia: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  ctx.effect((): Disposable => {
+    /* 1. RECUPERACAO DE BOOT (02-SEGURANCA 9): varredura de orfao + veredito
+          do TTL persistido, ANTES de qualquer outra inicializacao. T3.1 entrega
+          o mecanismo; a fiacao e desta sub-tarefa. */
+    const storeBoot = createStateStore({ paths: statePaths })
+    const boot = recuperarBoot(config, log, storeBoot.store, {
+      revogarSessoes: () => authStack().sessions.revokeAll(),
+      auditSink: { append: (evento) => authStack().audit.append(evento) },
+      notificarDono: difundirNotificacao,
+    })
+    storeBoot.dispose()
+
+    if (config.tunnel === undefined) {
+      // Modo loopback: sem supervisor, sem controlador — nenhum tunel pode
+      // subir e a superficie IPC recusa com EXPOSURE_DISABLED.
+      log.info(
+        'controlador sem supervisor: nao ha configuracao de tunel (exposure.mode nao e tunnel); ' +
+          'nenhum tunel pode subir.',
+      )
+      return (): void => {}
+    }
+
+    /* 2. O supervisor do tunel (T3.1) e o controlador (T5.1). */
+    const alocador = criarAlocadorDeMetricas(log)
+    const supervisor = createTunnelSupervisor({
+      ctx,
+      config: config.tunnel,
+      // A ORIGEM e o servidor do DSH, provado no instante do uso (T3.1).
+      resolveOrigin: () => resolveWebServerHttpServer(ctx.webServer),
+      allocateMetricsPort: alocador.alocar,
+      probe: {
+        transport: createHttpProbeTransport({
+          host: '127.0.0.1',
+          port: ctx.webServer.port,
+          timeoutMs: PROBE_TIMEOUT_MS,
+        }),
+        newCanaryToken: (): string => randomBytes(12).toString('hex'),
+      },
+      discovery: createTunnelDiscovery(),
+      readiness: createTunnelReadiness(),
+      // Vistas LAZY da pilha de autenticacao: a pilha nasce no primeiro pedido
+      // que precisa de decidir — nunca no apply() (ver o cabecalho deste
+      // ficheiro). O writer subjacente e um so: o da pilha.
+      store: {
+        read: () => authStack().state.read(),
+        update: (fn) => authStack().state.update(fn),
+      },
+      tunnelOrigin,
+      sessions: { revokeAll: () => authStack().sessions.revokeAll() },
+      audit: { append: (evento) => authStack().audit.append(evento) },
+      notifyOwner: difundirNotificacao,
+    })
+
+    const controlador = createTunnelController({
+      log,
+      supervisor,
+      confirm: createConfirmService({ now: defaultSupervisorDeps.now }),
+      agora: defaultSupervisorDeps.now,
+      scheduler: defaultSupervisorDeps.scheduler,
+      restritoAtivo: (): boolean => {
+        try {
+          return authStack().restricted.isActive()
+        } catch (error) {
+          log.error(`modo restrito ilegivel; start recusado (fail-closed): ${error instanceof Error ? error.message : String(error)}`)
+          return true
+        }
+      },
+      segredoForte: (): boolean => {
+        try {
+          return authStack().state.read().secretDigest !== undefined
+        } catch (error) {
+          log.error(`segredo ilegivel; start recusado (fail-closed): ${error instanceof Error ? error.message : String(error)}`)
+          return false
+        }
+      },
+      requerConfirmacao: resolveControl(config).requireConfirmation,
+      audit: { append: (evento) => authStack().audit.append(evento) },
+      broadcast: difundir,
+      persistirIntencao: (alvo) => {
+        try {
+          authStack().state.update((estado) => ({ ...estado, desiredState: alvo }))
+        } catch (error) {
+          log.error(`nao foi possivel persistir a intencao do tunel (${alvo}): ${error instanceof Error ? error.message : String(error)}`)
+        }
+      },
+    })
+    controladorAtual = controlador
+
+    /* 3. AUTOSTART: a INTENCAO persistida decide o arranque (TENSAO-003,
+          CTL-033/034). Reiniciar o DSH nao e o bypass do modo restrito. */
+    if (boot.intencao === 'READY' && shouldAutoStartTunnel(config, boot.restrito)) {
+      log.info('boot: intencao persistida e READY com autoStart ativo; a subir o tunel.')
+      void controlador.despachar({
+        action: 'start',
+        // ORIGEM_BOOT: a intencao persistida ja foi confirmada pelo humano
+        // que a gravou — o start de boot NAO carrega nonce (CTL-033/034) e o
+        // controlador dispensa a etapa de confirmacao para esta origem.
+        requestedBy: ORIGEM_BOOT,
+        requestId: `boot-${defaultSupervisorDeps.now().toString(36)}-${randomBytes(4).toString('hex')}`,
+        at: defaultSupervisorDeps.now(),
+      })
+    } else {
+      const motivo = boot.restrito
+        ? 'o modo restrito esta ativo no state.json'
+        : boot.intencao !== 'READY'
+          ? 'a intencao persistida e STOPPED'
+          : 'exposure.autoStart esta desligado'
+      log.info(`boot em STOPPED: ${motivo}.`)
+    }
+
+    return (): void => {
+      controlador.dispose()
+      alocador.dispose()
+    }
+  }, 'dsh-guard.controlador')
+
+  /* --- 6. Worker de long-polling sob ciclo de vida atomico ------------- */
   /**
    * Toda a instanciacao do processo do bot vive dentro de `ctx.effect()`.
    *
@@ -540,13 +893,31 @@ export function apply(ctx: Context, config: Config): void {
    * nem o `abort`, nem o tree-kill do grupo. O que corre e o nucleo, que fecha o
    * descritor; o worker ve EOF no `stdin` e termina-se a si proprio.
    *
-   * NAO SE PASSA `onIntent`: a maquina de controlo e da Onda 5. Ate la o canal
-   * responde `INTERNAL` a qualquer intencao -- fail-closed, com log, e nunca
-   * silencio.
+   * O `onIntent` e o RESPONDEDOR de T5.1 (`src/control/surface-ipc.ts`): a
+   * maquina de controlo decide no proprio tick — o canal so transporta a
+   * resposta. E aqui que o observador de sessao nova se regista, com a
+   * assinatura congelada do PREP 5 (`criarObservadorSessaoNova(canal)` — o
+   * corpo real e de T5.4, que mergeia antes; o canal e o proprio supervisor,
+   * cujo `send` e a superficie `Pick<HostIpcChannel, 'send'>`).
    */
   ctx.effect((): Disposable => {
-    const supervisor = createWorkerSupervisor(ctx, config)
+    const responder = criarRespondedorIpc({
+      controller: controladorAtual,
+      modoTunel: config.tunnel !== undefined,
+      pareado,
+      audit: { append: (evento) => authStack().audit.append(evento) },
+      log,
+      agora: defaultSupervisorDeps.now,
+      reemitirEstado,
+      aposEmergencia,
+    })
+    const supervisor = createWorkerSupervisor(ctx, config, defaultSupervisorDeps, { onIntent: responder })
+    workerSupervisor = supervisor
     supervisor.start()
-    return supervisor.dispose
+    const desregistrarObservador = registerSessaoNovaObserver(criarObservadorSessaoNova(supervisor))
+    return (): void => {
+      desregistrarObservador()
+      supervisor.dispose()
+    }
   }, 'dsh-guard.worker')
 }

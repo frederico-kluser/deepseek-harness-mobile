@@ -79,7 +79,8 @@ export function install(
 /**
  * Indices dos efeitos registados por `apply()`, na ordem de instalacao.
  *
- * A ordem e contrato: os disposers correm em LIFO, logo o worker morre antes de
- * a barreira ser levantada.
+ * A ordem e contrato: os disposers correm em LIFO, logo o worker morre antes,
+ * depois o controlador (que derruba o tunel), e so depois a barreira e
+ * levantada. O `controlador` entrou na Onda 5 (T5.1, `src/index.ts`).
  */
-export const EFFECT = { veto: 0, authCheck: 1, barreira: 2, worker: 3 } as const
+export const EFFECT = { veto: 0, authCheck: 1, barreira: 2, controlador: 3, worker: 4 } as const
