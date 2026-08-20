@@ -49,15 +49,20 @@ import type { Readable, Writable } from 'node:stream'
 
 import {
   IPC_PROTOCOL_VERSION,
+  type ControlAction,
   type IpcAckMessage,
   type IpcErrorCode,
   type IpcErrorMessage,
   type IpcIntentMessage,
   type IpcIntentName,
   type IpcMessage,
+  type IpcMessageFromWorker,
   type IpcMessageToWorker,
+  type IpcNonceIssuedMessage,
+  type IpcNonceRequestMessage,
   type IpcNotifyMessage,
   type IpcPairingChallengeMessage,
+  type IpcPairingOwnerMessage,
   type IpcParseResult,
   type IpcStateMessage,
 } from '../src/contracts/ipc.ts'
@@ -150,12 +155,22 @@ const INTENTS: readonly IpcIntentName[] = [
 ]
 
 /**
+ * As acoes de controlo (EMENDA-COSTURA-5): vocabulario do campo `acao` de
+ * `nonce.request`/`nonce.issued`. Espelha `ControlAction` de
+ * `src/contracts/control.ts` (frozen no PREP 5).
+ */
+const ACTIONS: readonly ControlAction[] = ['start', 'stop', 'reset']
+
+/**
  * Que tipos sao legais em CADA SENTIDO. Sao chaves de {@link HANDLERS} e nada
  * mais: acrescentar um tipo e acrescenta-lo aqui, ao sentido em que ele viaja.
+ *
+ * EMENDA-COSTURA-5: `nonce.request` viaja worker -> host; `nonce.issued`
+ * host -> worker.
  */
 const LEGAL_TYPES: Readonly<Record<IpcDirection, readonly string[]>> = {
-  'to-host': ['intent'],
-  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge'],
+  'to-host': ['intent', 'nonce.request'],
+  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge', 'nonce.issued', 'pairing.owner'],
 }
 
 /** Sentido em que a linha viaja. O worker LE `to-worker` e ESCREVE `to-host`. */
@@ -281,6 +296,9 @@ const HANDLERS: Readonly<Record<string, IpcTypeHandler>> = {
   error: buildError,
   notify: buildNotify,
   'pairing.challenge': buildPairingChallenge,
+  'nonce.request': buildNonceRequest,
+  'nonce.issued': buildNonceIssued,
+  'pairing.owner': buildPairingOwner,
 }
 
 /**
@@ -427,6 +445,66 @@ function buildPairingChallenge(bag: Record<string, unknown>): IpcParseResult {
   return { ok: true, message }
 }
 
+/**
+ * `nonce.request` (EMENDA-COSTURA-5, worker -> host): o pedido de nonce ao
+ * host. O `acao` tem de ser uma `ControlAction` real (PREP 5).
+ */
+function buildNonceRequest(bag: Record<string, unknown>): IpcParseResult {
+  const { acao, requestId } = bag
+  if (!isMember(ACTIONS, acao)) return fail('forma-invalida')
+  if (!isCleanText(requestId, MAX_ID_CHARS)) return fail('forma-invalida')
+
+  const message: IpcNonceRequestMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'nonce.request',
+    acao,
+    requestId,
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `nonce.issued` (EMENDA-COSTURA-5, host -> worker): o nonce OPACO emitido
+ * pelo host. O worker NAO o le nem valida (S5); transporta-o. O teto de
+ * transporte e o mesmo do campo `nonce` do intent.
+ */
+function buildNonceIssued(bag: Record<string, unknown>): IpcParseResult {
+  const { acao, requestId, nonce, expiresAt } = bag
+  if (!isMember(ACTIONS, acao)) return fail('forma-invalida')
+  if (!isCleanText(requestId, MAX_ID_CHARS)) return fail('forma-invalida')
+  if (!isCleanText(nonce, MAX_NONCE_CHARS)) return fail('forma-invalida')
+  if (!isFiniteNumber(expiresAt)) return fail('forma-invalida')
+
+  const message: IpcNonceIssuedMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'nonce.issued',
+    acao,
+    requestId,
+    nonce,
+    expiresAt,
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `pairing.owner` (EMENDA-COSTURA-5, host -> worker): o dono persistido no
+ * boot. Os DOIS EIXOS sao inteiros e `pairedAt` e um epoch finito.
+ */
+function buildPairingOwner(bag: Record<string, unknown>): IpcParseResult {
+  const { from, chat, pairedAt } = bag
+  if (!isId(from) || !isId(chat)) return fail('forma-invalida')
+  if (!isFiniteNumber(pairedAt)) return fail('forma-invalida')
+
+  const message: IpcPairingOwnerMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'pairing.owner',
+    from,
+    chat,
+    pairedAt,
+  }
+  return { ok: true, message }
+}
+
 /* ========================================================================== */
 /* CODEC                                                                      */
 /* ========================================================================== */
@@ -551,13 +629,14 @@ export interface WorkerIpcOptions {
 
 export interface WorkerIpc {
   /**
-   * Envia worker -> host.
+   * Envia worker -> host. EMENDA-COSTURA-5: para alem do `intent`, o canal
+   * tambem emite `nonce.request` (o pedido de nonce ao host).
    *
    * `false` = NAO SAIU: canal fechado, mensagem invalida, ou o host parou de ler
    * e a fila local ja passou o teto. Quem chama TEM de tratar o `false` -- e a
    * unica forma de o dono saber que o comando dele nao chegou a lado nenhum.
    */
-  send(intent: IpcIntentMessage): boolean
+  send(message: IpcMessageFromWorker): boolean
   /** Log HUMANO. Vai sempre para `stderr`, nunca para `stdout` (S2). */
   log(message: string): void
   /** Desarme SINCRONO e IDEMPOTENTE. */
@@ -685,14 +764,14 @@ export function createWorkerIpc(options: WorkerIpcOptions): WorkerIpc {
 
   return {
     log,
-    send: (intent: IpcIntentMessage): boolean => {
+    send: (message: IpcMessageFromWorker): boolean => {
       if (disposed || disconnected || !output.writable) return false
       let line: string
       try {
-        line = serializeWorkerIpcMessage(intent, 'to-host')
+        line = serializeWorkerIpcMessage(message, 'to-host')
         // Registada, nao engolida.
       } catch (error) {
-        log(`intencao recusada antes de sair: ${describe(error)}`)
+        log(`mensagem recusada antes de sair: ${describe(error)}`)
         return false
       }
       /**

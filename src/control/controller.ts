@@ -78,6 +78,7 @@
  * controlador ja esta em `STOPPED` — o reset humano vence.
  */
 
+import { comporEventoReset, comporEventoToggle } from '../audit/events.ts'
 import type { AuditSink } from '../contracts/auth.ts'
 import type { ControlAction, ControlIntent, ControlRecusa, ControlResultado, Nonce } from '../contracts/control.ts'
 import type { TunnelSnapshot, TunnelState } from '../contracts/tunnel.ts'
@@ -221,8 +222,26 @@ export function createTunnelController(deps: ControladorDeps): TunnelController 
   /* ------------------------------------------------------------------ */
 
   const auditar = (action: ControlAction, requestedBy: string, resultado: 'permitido' | 'negado'): void => {
+    // O VOCABULARIO de T5.4 compoe o NOME e RECUSA origem vazia (A5): um
+    // `tunel_ligar:` nao designa ninguem e nao entra no log — o defeito de
+    // fiacao falha alto em vez de virar linha de auditoria e texto de
+    // notificacao. A composicao e a fonte unica da forma (paridade presa por
+    // teste em test/unit/audit/events.test.ts).
+    let nome: string
     try {
-      deps.audit.append({ evento: `${eventoDe(action)}:${requestedBy}`, resultado })
+      nome =
+        action === 'reset'
+          ? comporEventoReset(requestedBy)
+          : comporEventoToggle(action === 'start' ? 'ligar' : 'desligar', requestedBy)
+    } catch (error) {
+      log.error(
+        `auditoria de ${eventoDe(action)} RECUSADA (origem vazia): ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      )
+      return
+    }
+    try {
+      deps.audit.append({ evento: nome, resultado })
     } catch (error) {
       // BEST-EFFORT, ver o cabecalho: a falha do sink nao pode travar o toggle.
       log.error(

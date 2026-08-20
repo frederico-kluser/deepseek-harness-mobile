@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { PassThrough, Writable } from 'node:stream'
 import { describe, it } from 'node:test'
 
-import type { IpcIntentMessage, IpcMessageToWorker } from '../../../src/contracts/ipc.ts'
+import type { IpcIntentMessage, IpcMessage, IpcMessageToWorker } from '../../../src/contracts/ipc.ts'
 import { WORKER_IPC_ENV_MARK } from '../../../src/proc/env.ts'
 import {
   parseIpcLine as parseHost,
@@ -122,6 +122,9 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     '{"v":1,"type":"notify","texto":"o tunel expira em 5 minutos"}',
     '{"v":1,"type":"notify","texto":"linha 1\nlinha 2"}',
     '{"v":1,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expiresAt":1}',
+    // EMENDA-COSTURA-5: nonce.request (worker -> host) e nonce.issued (host -> worker).
+    '{"v":1,"type":"nonce.request","acao":"start","requestId":"req-nonce-1"}',
+    '{"v":1,"type":"nonce.issued","acao":"reset","requestId":"req-nonce-2","nonce":"0123456789abcdef","expiresAt":1}',
     // Recusadas.
     '',
     '   ',
@@ -160,6 +163,16 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     '{"v":1,"type":"error","code":"NAO_EXISTE","message":"x"}',
     '{"v":1,"type":"error","code":"INTERNAL"}',
     '{"v":1,"type":"error","code":"INTERNAL","message":""}',
+    // EMENDA-COSTURA-5: formas malformadas do transporte de nonce.
+    '{"v":1,"type":"nonce.request","acao":"talvez","requestId":"r"}',
+    '{"v":1,"type":"nonce.request","requestId":"r"}',
+    '{"v":1,"type":"nonce.request","acao":"start"}',
+    '{"v":1,"type":"nonce.request","acao":"start","requestId":""}',
+    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"","expiresAt":1}',
+    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":"amanha"}',
+    '{"v":1,"type":"nonce.issued","requestId":"r","nonce":"x","expiresAt":1}',
+    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x"}',
+    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":1,"extra":true}',
   ]
 
   const SENTIDOS: readonly IpcDirection[] = ['to-host', 'to-worker']
@@ -193,12 +206,15 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
   }
 
   it('as duas serializacoes produzem BYTE A BYTE a mesma linha', () => {
-    const amostras: ReadonlyArray<[IpcMessageToWorker | IpcIntentMessage, IpcDirection]> = [
+    const amostras: ReadonlyArray<[IpcMessage, IpcDirection]> = [
       [INTENCAO, 'to-host'],
       [{ ...INTENCAO, nonce: 'opaco' }, 'to-host'],
       [{ v: 1, type: 'state', state: 'READY', seq: 3, url: 'https://x.trycloudflare.com', expiresAt: 7 }, 'to-worker'],
       [{ v: 1, type: 'ack', requestId: 'r', result: 'rejected', state: 'STOPPING', code: 'RESTRICTED_MODE' }, 'to-worker'],
       [{ v: 1, type: 'error', code: 'INTERNAL', message: 'a\nb' }, 'to-worker'],
+      // EMENDA-COSTURA-5: as duas mensagens novas serializam igual nos dois lados.
+      [{ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req' }, 'to-host'],
+      [{ v: 1, type: 'nonce.issued', acao: 'reset', requestId: 'req', nonce: 'opaco', expiresAt: 7 }, 'to-worker'],
     ]
     for (const [message, direction] of amostras) {
       assert.equal(

@@ -111,7 +111,7 @@ describe('TG-086: /rotacionar — 2 etapas com nonce, senha nova nunca pelo chat
   })
 
   it('sem nonce do host, /rotacionar falha fechado — nenhum intent', async () => {
-    const bancada = montarBancada({ emitirNonce: () => undefined })
+    const bancada = montarBancada({ emitirNonce: async () => undefined })
     await bancada.tratar(pairCommand(OWNER, '123456'))
 
     await bancada.tratar(dmMessage(OWNER, '/rotacionar'))

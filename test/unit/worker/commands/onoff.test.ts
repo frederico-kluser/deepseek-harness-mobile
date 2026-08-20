@@ -76,7 +76,7 @@ describe('TG-082: /ligar — confirmacao de 2 etapas com nonce emitido pelo host
 
   it('CTL-023 (face worker): sem nonce do host, falha FECHADO — nenhum intent', async () => {
     const bancada = montarBancada({
-      emitirNonce: () => undefined,
+      emitirNonce: async () => undefined,
     })
     await bancada.tratar(pairCommand(OWNER, '123456'))
 

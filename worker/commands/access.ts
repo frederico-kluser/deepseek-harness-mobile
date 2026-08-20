@@ -66,8 +66,9 @@ export function criarAccess(ctx: ContextoDoComando): ComandosAccess {
 
     async rotacionar(identidade): Promise<void> {
       // 1a etapa: o nonce do host, opaco (S5) — 2 etapas porque AUMENTA
-      // exposicao (CTL-023). Sem nonce, falha fechado.
-      const nonce = ctx.emitirNonce('secret.rotate')
+      // exposicao (CTL-023). A resposta chega pelo canal (EMENDA-COSTURA-5),
+      // por isso o `await`; sem nonce, falha fechado.
+      const nonce = await ctx.emitirNonce('secret.rotate')
       if (nonce === undefined) {
         await ctx.enviar(
           identidade.chat,

@@ -43,6 +43,7 @@ import type { Readable, Writable } from 'node:stream'
 
 import {
   IPC_PROTOCOL_VERSION,
+  type ControlAction,
   type IpcAckMessage,
   type IpcErrorCode,
   type IpcErrorMessage,
@@ -50,8 +51,11 @@ import {
   type IpcIntentName,
   type IpcMessage,
   type IpcMessageToWorker,
+  type IpcNonceIssuedMessage,
+  type IpcNonceRequestMessage,
   type IpcNotifyMessage,
   type IpcPairingChallengeMessage,
+  type IpcPairingOwnerMessage,
   type IpcParseResult,
   type IpcStateMessage,
 } from '../contracts/ipc.ts'
@@ -181,13 +185,23 @@ const INTENTS: readonly IpcIntentName[] = [
 ]
 
 /**
+ * As acoes de controlo (EMENDA-COSTURA-5): vocabulario do campo `acao` de
+ * `nonce.request`/`nonce.issued`. Espelha `ControlAction` de
+ * `src/contracts/control.ts` (frozen no PREP 5).
+ */
+const ACTIONS: readonly ControlAction[] = ['start', 'stop', 'reset']
+
+/**
  * Que tipos sao legais em CADA SENTIDO. Sao chaves de {@link HANDLERS} e nada
  * mais: acrescentar um tipo e acrescenta-lo aqui, ao sentido em que ele viaja.
  * Um `state` a chegar ao HOST e violacao de protocolo, nao mensagem futura.
+ *
+ * EMENDA-COSTURA-5: `nonce.request` viaja worker -> host; `nonce.issued`
+ * host -> worker.
  */
 const LEGAL_TYPES: Readonly<Record<IpcDirection, readonly string[]>> = {
-  'to-host': ['intent'],
-  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge'],
+  'to-host': ['intent', 'nonce.request'],
+  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge', 'nonce.issued', 'pairing.owner'],
 }
 
 /** Sentido em que a linha viaja. `to-host` = o que o worker pode enviar. */
@@ -316,6 +330,9 @@ const HANDLERS: Readonly<Record<string, IpcTypeHandler>> = {
   error: buildError,
   notify: buildNotify,
   'pairing.challenge': buildPairingChallenge,
+  'nonce.request': buildNonceRequest,
+  'nonce.issued': buildNonceIssued,
+  'pairing.owner': buildPairingOwner,
 }
 
 /**
@@ -485,6 +502,69 @@ function buildPairingChallenge(bag: Record<string, unknown>): IpcParseResult {
   return { ok: true, message }
 }
 
+/**
+ * `nonce.request` (EMENDA-COSTURA-5, worker -> host): o worker pede um nonce
+ * para a acao de controlo. O `acao` tem de ser uma `ControlAction` real — um
+ * valor inventado nao designa nenhuma acao do contrato (PREP 5).
+ */
+function buildNonceRequest(bag: Record<string, unknown>): IpcParseResult {
+  const { acao, requestId } = bag
+  if (!isMember(ACTIONS, acao)) return fail('forma-invalida')
+  if (!isCleanText(requestId, MAX_ID_CHARS)) return fail('forma-invalida')
+
+  const message: IpcNonceRequestMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'nonce.request',
+    acao,
+    requestId,
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `nonce.issued` (EMENDA-COSTURA-5, host -> worker): o nonce emitido pelo
+ * `ConfirmService` do host. O `nonce` e OPACO (S5) e o worker so o
+ * transporta; o teto de transporte e o mesmo do campo `nonce` do intent.
+ * `expiresAt` tem de ser um numero finito (o prazo do nonce).
+ */
+function buildNonceIssued(bag: Record<string, unknown>): IpcParseResult {
+  const { acao, requestId, nonce, expiresAt } = bag
+  if (!isMember(ACTIONS, acao)) return fail('forma-invalida')
+  if (!isCleanText(requestId, MAX_ID_CHARS)) return fail('forma-invalida')
+  if (!isCleanText(nonce, MAX_NONCE_CHARS)) return fail('forma-invalida')
+  if (!isFiniteNumber(expiresAt)) return fail('forma-invalida')
+
+  const message: IpcNonceIssuedMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'nonce.issued',
+    acao,
+    requestId,
+    nonce,
+    expiresAt,
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `pairing.owner` (EMENDA-COSTURA-5, host -> worker): o dono persistido no
+ * boot. Os DOIS EIXOS sao inteiros (a mesma regra do `from`/`chat` do intent)
+ * e `pairedAt` e um epoch finito.
+ */
+function buildPairingOwner(bag: Record<string, unknown>): IpcParseResult {
+  const { from, chat, pairedAt } = bag
+  if (!isId(from) || !isId(chat)) return fail('forma-invalida')
+  if (!isFiniteNumber(pairedAt)) return fail('forma-invalida')
+
+  const message: IpcPairingOwnerMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'pairing.owner',
+    from,
+    chat,
+    pairedAt,
+  }
+  return { ok: true, message }
+}
+
 /* ========================================================================== */
 /* CODEC                                                                      */
 /* ========================================================================== */
@@ -639,6 +719,15 @@ export interface HostIpcChannelOptions {
    */
   readonly onIntent: (intent: IpcIntentMessage) => IpcMessageToWorker
   /**
+   * Decide UM pedido de nonce (EMENDA-COSTURA-5) e devolve a resposta.
+   *
+   * AUSENTE, o canal responde `error INTERNAL` ao pedido — fail-closed: um
+   * nonce que nao chega ao worker nao autoriza nada (CTL-023). Em producao a
+   * fiacao (`src/index.ts`) liga-o ao `ConfirmService` de T5.1 via
+   * `criarRespondedorDeNonce`; o nonce NUNCA e logado (S3).
+   */
+  readonly onNonceRequest?: ((request: IpcNonceRequestMessage) => IpcMessageToWorker) | undefined
+  /**
    * Segredos a mascarar em TUDO o que este canal escreve no log.
    *
    * >>> FORNECEDOR, avaliado a cada linha -- nao uma lista capturada aqui. <<<
@@ -661,6 +750,22 @@ export interface HostIpcChannelOptions {
   readonly maxPendingBytes?: number | undefined
   /** Teto DURO. Ver {@link IPC_OVERWHELMED_BYTES}. */
   readonly overwhelmedBytes?: number | undefined
+}
+
+/**
+ * Resposta do canal quando NENHUM tratador de nonce esta montado (EMENDA-
+ * COSTURA-5). Fail-closed e visivel: um `error INTERNAL` a pedido de nonce —
+ * sem nonce nao ha confirmacao, e sem confirmacao nao ha intent que aumente
+ * exposicao (CTL-023). O `requestId` e o do pedido, para o worker correlacionar.
+ */
+function responderSemNonce(pedido: IpcNonceRequestMessage): IpcMessageToWorker {
+  return {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'error',
+    requestId: pedido.requestId,
+    code: 'INTERNAL',
+    message: 'Nao foi possivel processar o pedido. Tente novamente.',
+  }
 }
 
 export interface HostIpcChannel {
@@ -724,7 +829,7 @@ export interface IpcChannelStats {
  *      forma que `./retry.ts` usa para o orcamento esgotado.
  */
 export function createHostIpcChannel(options: HostIpcChannelOptions): HostIpcChannel {
-  const { input, output, log, onIntent, secrets } = options
+  const { input, output, log, onIntent, onNonceRequest, secrets } = options
   const maxPendingBytes = options.maxPendingBytes ?? IPC_MAX_PENDING_BYTES
   const overwhelmedBytes = options.overwhelmedBytes ?? IPC_OVERWHELMED_BYTES
   const decoder = createIpcLineDecoder({
@@ -880,22 +985,32 @@ export function createHostIpcChannel(options: HostIpcChannelOptions): HostIpcCha
         continue
       }
       received += 1
-      const intent = verdict.message as IpcIntentMessage
+      const message = verdict.message
+      const intent = message.type === 'intent' ? message : undefined
 
       let reply: IpcMessageToWorker
       try {
-        reply = onIntent(intent)
+        if (intent !== undefined) {
+          reply = onIntent(intent)
+        } else {
+          // EMENDA-COSTURA-5: `nonce.request` (a unica outra mensagem legal
+          // neste sentido) e respondido pelo `ConfirmService` do host. Sem
+          // tratador, fail-closed: um `error INTERNAL` — um nonce que nao
+          // chega nao autoriza nada (CTL-023).
+          const pedido = message as IpcNonceRequestMessage
+          reply = (onNonceRequest ?? responderSemNonce)(pedido)
+        }
         // Um defeito no decisor nao pode deixar a intencao sem resposta: o
         // contrato diz `ack` SEMPRE. Regista-se o defeito (mascarado -- este e o
         // caminho por onde um `ECONNRESET em .../bot<token>/getUpdates` entrava
         // em claro no log do plano de controlo) e responde-se `INTERNAL`, que e
         // o codigo cuja `message` nao denuncia topologia.
       } catch (error) {
-        log.error(`O decisor de intencoes lancou em '${intent.intent}': ${descrever(error)}`)
+        log.error(`O decisor de intencoes lancou em '${intent?.intent ?? 'nonce.request'}': ${descrever(error)}`)
         reply = {
           v: IPC_PROTOCOL_VERSION,
           type: 'error',
-          requestId: intent.requestId,
+          requestId: intent?.requestId ?? (message as IpcNonceRequestMessage).requestId,
           code: 'INTERNAL',
           message: 'Nao foi possivel processar o pedido. Tente novamente.',
         }

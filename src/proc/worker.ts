@@ -32,6 +32,7 @@ import type { IpcIntentMessage, IpcMessageToWorker } from '../contracts/ipc.ts'
 import type { Context, SubprocessHandle, SubprocessSpawnSpec } from '../dsh/adapter.ts'
 import { createGuardLogger, type GuardLogger } from '../logging/logger.ts'
 import { createHostIpcChannel, type HostIpcChannel } from '../telegram/ipc.ts'
+import type { IpcNonceRequestMessage } from '../contracts/ipc.ts'
 import { buildWorkerEnv } from './env.ts'
 import {
   createProcessSupervisor,
@@ -74,6 +75,14 @@ export interface WorkerSupervisorOptions {
    * caminho em que uma intencao seja ignorada em silencio.
    */
   readonly onIntent?: ((intent: IpcIntentMessage) => IpcMessageToWorker) | undefined
+  /**
+   * Decide UM pedido de nonce (EMENDA-COSTURA-5) e devolve a resposta.
+   *
+   * AUSENTE, o canal responde `error INTERNAL` ao pedido (fail-closed: um
+   * nonce que nao chega nao autoriza nada — CTL-023). Em producao a fiacao
+   * liga-o ao `ConfirmService` de T5.1 via `criarRespondedorDeNonce`.
+   */
+  readonly onNonceRequest?: ((request: IpcNonceRequestMessage) => IpcMessageToWorker) | undefined
 }
 
 /**
@@ -92,6 +101,24 @@ function rejeitarSemControlador(log: GuardLogger, intent: IpcIntentMessage): Ipc
     v: 1,
     type: 'error',
     requestId: intent.requestId,
+    code: 'INTERNAL',
+    message: 'Este comando ainda nao esta disponivel nesta instalacao.',
+  }
+}
+
+/**
+ * Resposta do canal quando NENHUM tratador de nonce esta montado (EMENDA-
+ * COSTURA-5). Fail-closed: sem nonce nao ha confirmacao, e sem confirmacao
+ * nao ha intent que aumente exposicao (CTL-023).
+ */
+function rejeitarSemNonce(log: GuardLogger, request: IpcNonceRequestMessage): IpcMessageToWorker {
+  log.warn(
+    `Pedido de nonce (${request.acao}) recebido sem tratador montado; respondido com INTERNAL.`,
+  )
+  return {
+    v: 1,
+    type: 'error',
+    requestId: request.requestId,
     code: 'INTERNAL',
     message: 'Este comando ainda nao esta disponivel nesta instalacao.',
   }
@@ -205,6 +232,8 @@ export function createWorkerSupervisor(
           secrets,
           onIntent: (intent: IpcIntentMessage): IpcMessageToWorker =>
             options.onIntent?.(intent) ?? rejeitarSemControlador(log, intent),
+          onNonceRequest: (request: IpcNonceRequestMessage): IpcMessageToWorker =>
+            options.onNonceRequest?.(request) ?? rejeitarSemNonce(log, request),
         })
         channel = corrente
 

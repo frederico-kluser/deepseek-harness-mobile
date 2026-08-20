@@ -63,13 +63,10 @@ export function exigeNonce(action: ControlAction): boolean {
  * contrato; o rotulo PT e texto de UI (D7) e vive na superficie — o bot tem o
  * dele em `worker/`, o painel tera o dele em `src/panel/**`.
  *
- * `TERMINAL_SEM_RESET` esta DELIBERADAMENTE AUSENTE deste mapa: em `FAILED` os
- * dois botoes da superficie desativam (nao ha rota de reset aqui — o reset nas
- * tres superficies e da COSTURA pos-onda, que acrescenta
- * `POST /__guard-ui/api/reset`). A recusa nunca chega por este caminho de UI;
- * um rotulo para ela seria codigo morto a mentir. Se chegar por um POST
- * forjado, a resposta traz `recusa` sem `motivo` e o cliente mostra a mensagem
- * generica — honesta, em vez de prometer uma rota que nao existe.
+ * A COSTURA da Onda 5 (W3) acrescentou a rota de reset (`POST
+ * /__guard-ui/api/reset` + confirm): FAILED so sai por reset humano (CTL-012)
+ * e o rotulo de `TERMINAL_SEM_RESET` deixa de ser codigo morto — chega a UI
+ * quando um reset forjado (sem o fluxo de 2 etapas) e recusado.
  */
 export const RECUSA_MOTIVO: Readonly<Partial<Record<ControlRecusa, string>>> = Object.freeze({
   SHUTDOWN_IN_PROGRESS: 'O túnel já está a desligar. Espere e tente de novo.',
@@ -78,6 +75,7 @@ export const RECUSA_MOTIVO: Readonly<Partial<Record<ControlRecusa, string>>> = O
   NONCE_AUSENTE: 'Confirmação em falta; toque em Ligar de novo.',
   NONCE_INVALIDO: 'Confirmação inválida; toque em Ligar de novo.',
   NONCE_EXPIRADO: 'A confirmação expirou; toque em Ligar de novo.',
+  TERMINAL_SEM_RESET: 'O túnel está em estado de falha; reponha o estado para poder ligar.',
 })
 
 export function motivoDaRecusa(recusa: ControlRecusa | undefined): string | undefined {
@@ -85,11 +83,11 @@ export function motivoDaRecusa(recusa: ControlRecusa | undefined): string | unde
 }
 
 /**
- * A UNICA recusa sem rotulo: `TERMINAL_SEM_RESET` nao tem caminho de UI nesta
- * superficie enquanto a rota de reset nao existir (ver o JSDoc de
- * {@link RECUSA_MOTIVO}). O teste que remove o rotulo aponta para aqui.
+ * Nenhuma recusa fica sem rotulo desde que a costura (W3) acrescentou a rota
+ * de reset. A lista vazia e a garantia literal: se um dia entrar um motivo
+ * novo AQUI sem rotulo, o teste de `RECUSA_MOTIVO` fica vermelho.
  */
-export const RECUSA_SEM_ROTULO: readonly ControlRecusa[] = ['TERMINAL_SEM_RESET']
+export const RECUSA_SEM_ROTULO: readonly ControlRecusa[] = []
 
 /** A resposta que a UI le. `url` so sai em READY — ver {@link projectResultado}. */
 export interface ResultadoProjetado {

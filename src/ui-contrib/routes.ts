@@ -8,7 +8,11 @@
  * casa `p` e `p/<algo>` (medido no spike S4), logo nao colide — e a barreira
  * de autenticacao (L3) guarda-o por omissao, sem isencao nenhuma.
  *
- * PORQUE SAO EXATAMENTE CINCO:
+ * SETE rotas — a COSTURA da Onda 5 acrescentou o RESET (W3: FAILED so sai por
+ * reset humano, CTL-012) com o MESMO padrao de 2 etapas com nonce do LIGAR:
+ * `POST /__guard-ui/api/reset` (passo 1, emite o nonce) e
+ * `POST /__guard-ui/api/reset/confirm` (passo 2, emite o intent reset).
+ * As cinco originais:
  *
  *   GET  /__guard-ui/api/state         — a PROJECCAO: seq + estado + URL (so
  *                                        READY) + expiracao + falha + nota de
@@ -43,6 +47,8 @@ export const UI_PATH_STATE = `${UI_PREFIX}/api/state`
 export const UI_PATH_START = `${UI_PREFIX}/api/start`
 export const UI_PATH_CONFIRM = `${UI_PREFIX}/api/start/confirm`
 export const UI_PATH_STOP = `${UI_PREFIX}/api/stop`
+export const UI_PATH_RESET = `${UI_PREFIX}/api/reset`
+export const UI_PATH_RESET_CONFIRM = `${UI_PREFIX}/api/reset/confirm`
 export const UI_PATH_CLIENT = `${UI_PREFIX}/client.js`
 
 /** O vinculo do token anti-CSRF: a superficie inteira. */
@@ -338,6 +344,64 @@ export function createStopHandler(core: UiContribCore): UiContribRequestHandler 
   }
 }
 
+
+/* ========================================================================== */
+/* RESET — CTL-012/036: a UNICA saida do FAILED, com nonce (CTL-023)          */
+/* ========================================================================== */
+
+/**
+ * Passo 1 do RESET: emite o nonce para a acao 'reset' no HOST e devolve-o
+ * opaco (S5) — o mesmo padrao do LIGAR. A rota so faz sentido em FAILED; em
+ * qualquer outro estado o controlador responde noop no passo 2.
+ */
+export function createResetHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    if (!exigeMetodo(req, res, 'POST')) return
+    const corpo = await lerCorpo(req)
+    if (!corpo.ok) {
+      json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' })
+      return
+    }
+    if (!csrfValido(core, req, corpo.corpo)) {
+      recusarCsrf(res)
+      return
+    }
+    // W3 (revisao T5.5): FAILED so sai por reset humano (CTL-012), e o reset
+    // AUMENTA o risco de reabrir a exposicao — exige confirmacao (CTL-023).
+    const nonce = core.issueNonce('reset')
+    json(res, 200, { passo: 'confirmar', nonce: nonce.valor, expiraEm: nonce.expiresAt })
+  }
+}
+
+/**
+ * Passo 2 do RESET: emite o `ControlIntent` reset com o nonce transportado
+ * opaco. Quem valida e o HOST (S5); em FAILED com nonce valido, o controlador
+ * transita FAILED -> STOPPED e difunde (CTL-036).
+ */
+export function createResetConfirmHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    if (!exigeMetodo(req, res, 'POST')) return
+    const corpo = await lerCorpo(req)
+    if (!corpo.ok) {
+      json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' })
+      return
+    }
+    if (!csrfValido(core, req, corpo.corpo)) {
+      recusarCsrf(res)
+      return
+    }
+    const bruto = corpo.corpo.nonce
+    const nonce = typeof bruto === 'string' ? bruto : undefined
+    const intent = buildControlIntent({
+      action: 'reset',
+      requestedBy: core.requestedBy,
+      requestId: core.requestId(),
+      ...(nonce === undefined ? {} : { nonce }),
+      at: core.now(),
+    })
+    await responderIntento(res, core, intent)
+  }
+}
 /* ========================================================================== */
 /* O script da superficie (GET /__guard-ui/client.js)                         */
 /* ========================================================================== */

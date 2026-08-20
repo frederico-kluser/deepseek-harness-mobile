@@ -26,15 +26,16 @@
  * o worker o volta a aprender — reportado no handoff (T5.1 fia o host).
  *
  * ===========================================================================
- * O PORTE `emitirNonce` EM PRODUCAO — BLOQUEIO REPORTADO (ver handoff)
+ * O PORTE `emitirNonce` EM PRODUCAO — FECHADO PELA COSTURA (EMENDA-COSTURA-5)
  * ===========================================================================
- * O contrato congelado do canal IPC nao define transporte host -> worker para
- * o nonce de confirmacao. A ligacao de producao devolve `undefined` e falha
- * FECHADO: sem nonce nao ha confirmacao possivel, e sem confirmacao nao ha
- * intent que aumente exposicao (CTL-023). T5.1 fecha o transporte na fiacao
- * do host; a porta fica exposta exatamente para isso. O que esta ligacao NAO
- * faz, por desenho: inventar um nonce (S5) ou deixar a acao passar sem
- * confirmacao.
+ * O contrato do canal IPC NAO definia transporte host -> worker para o nonce
+ * de confirmacao (BLOQUEIO T5.2 reportado no handoff). A COSTURA da Onda 5
+ * fecha-o com a emenda `nonce.request`/`nonce.issued` (`src/contracts/ipc.ts`,
+ * a RATIFICAR no COMMIT PREP 6): o worker pede o nonce ao HOST pelo pipe e
+ * aguarda a resposta com TIMEOUT fail-closed — sem nonce a tempo, a
+ * confirmacao fica indisponivel e nenhum intent que aumente exposicao sai
+ * (CTL-023). O que esta ponte NAO faz, por desenho: inventar um nonce (S5),
+ * valida-lo, ou loga-lo (S3 — o valor viaja so pelo pipe).
  *
  * ===========================================================================
  * O DESPACHO DO CANAL E UMA TABELA (tipo -> tratador), NAO UM SWITCH
@@ -51,10 +52,13 @@ import { systemTime, type TimeSource } from '../lib/clock.ts'
 import { createWorkerLogger, type WorkerLogger } from '../lib/log.ts'
 import { readBotToken } from '../lib/token.ts'
 import type { Bot, Context } from 'grammy'
-import type { IpcMessageToWorker } from '../../src/contracts/ipc.ts'
+import type { ControlAction } from '../../src/contracts/control.ts'
+import type { IpcIntentName, IpcMessageToWorker, IpcPairingOwnerMessage } from '../../src/contracts/ipc.ts'
+import type { PairedOwner } from '../auth/pairing.ts'
 
 import {
   criarRoteador,
+  gerarRequestId,
   registarComandosPublicados,
   type ApiDoBot,
   type EmitirNonce,
@@ -88,17 +92,103 @@ export function desafioMorto(): ReturnType<typeof createPairingChallenge> {
 }
 
 /**
- * O porte `emitirNonce` DE PRODUCAO sem ponte do host (BLOQUEIO T5.2 — ver o
- * cabecalho e o handoff): devolve `undefined` — a confirmacao falha FECHADO e
- * nenhum intent que aumente exposicao sai (CTL-023) — e AVISA o operador, para
- * o botao nao morrer em silencio. Nomeada e exportada para o teste a exercitar
- * de verdade (A3-b da revisao).
+ * Teto de espera por `nonce.issued` (EMENDA-COSTURA-5). Fail-closed: passado
+ * este prazo sem resposta do host, o pedido resolve `undefined` e a acao que
+ * aumentaria exposicao NAO sai (CTL-023). Curto de proposito — o teclado de
+ * confirmacao do /ligar nao pode deixar o dono a olhar para um botao morto.
  */
-export function emitirNonceDeProducao(log: WorkerLogger): EmitirNonce {
-  return (acao) => {
-    log.warn('emitirNonce sem ponte do host: confirmacao indisponivel (BLOQUEIO T5.2)', { acao })
-    return undefined
+export const NONCE_REQUEST_TIMEOUT_MS = 5_000
+
+/**
+ * O intent do Telegram -> a `ControlAction` do contrato para a qual o nonce e
+ * emitido. So as acoes que AUMENTAM exposicao pedem nonce (CTL-023/024); as
+ * demais nunca chegam aqui. `secret.rotate` cai na familia do `reset`: e a
+ * acao destrutiva que regenera o segredo e invalida as sessoes.
+ */
+const ACAO_PARA_NONCE: Readonly<Partial<Record<IpcIntentName, ControlAction>>> = {
+  'tunnel.up': 'start',
+  'secret.rotate': 'reset',
+}
+
+export interface PonteDeNonce {
+  /** Pede um nonce ao host e aguarda `nonce.issued` (timeout fail-closed). */
+  readonly emitir: EmitirNonce
+  /**
+   * Consome as mensagens do canal que dizem respeito a pedidos de nonce.
+   * `true` = consumida (nao deve chegar ao roteador); `false` = nao e do
+   * nonce (segue o despacho normal).
+   */
+  readonly onMessage: (msg: IpcMessageToWorker) => boolean
+}
+
+/**
+ * A ponte de producao do nonce: `nonce.request` pelo canal e `nonce.issued` de
+ * volta, com TIMEOUT fail-closed (EMENDA-COSTURA-5; ver o cabecalho). O valor
+ * do nonce NUNCA e logado (S3) e NUNCA e interpretado aqui (S5) — so o prazo
+ * e a acao podem ir ao log.
+ */
+export function criarPonteDeNonce(deps: {
+  readonly log: WorkerLogger
+  readonly time: TimeSource
+  readonly ipc: WorkerIpc
+}): PonteDeNonce {
+  const { log } = deps
+  const pendentes = new Map<string, (nonce: string | undefined) => void>()
+
+  const emitir: EmitirNonce = async (acao) => {
+    const controlo = ACAO_PARA_NONCE[acao]
+    if (controlo === undefined) {
+      // A acao nao exige nonce (CTL-024) ou e desconhecida: nao ha o que pedir.
+      log.warn(`emitirNonce chamado para acao sem nonce: ${acao}`, { acao })
+      return undefined
+    }
+    const requestId = gerarRequestId(deps.time.now())
+    const enviado = deps.ipc.send({ v: 1, type: 'nonce.request', acao: controlo, requestId })
+    if (!enviado) {
+      // Canal indisponivel: falha FECHADO ja, sem esperar o timeout.
+      log.warn('emitirNonce sem canal para o host: confirmacao indisponivel (fail-closed, CTL-023)', { acao })
+      return undefined
+    }
+    return new Promise<string | undefined>((resolve) => {
+      pendentes.set(requestId, resolve)
+      void deps.time.sleep(NONCE_REQUEST_TIMEOUT_MS).then(() => {
+        const pendente = pendentes.get(requestId)
+        if (pendente !== undefined) {
+          pendentes.delete(requestId)
+          log.warn(`nonce nao chegou a tempo (${String(NONCE_REQUEST_TIMEOUT_MS)} ms); confirmacao indisponivel`, { acao })
+          pendente(undefined)
+        }
+      })
+    })
   }
+
+  const onMessage = (msg: IpcMessageToWorker): boolean => {
+    if (msg.type === 'nonce.issued') {
+      const pendente = pendentes.get(msg.requestId)
+      if (pendente === undefined) {
+        // Resposta tardia de um pedido ja resolvido (timeout ou repetido):
+        // nao ha ninguem a espera — descarta-se, sem log do nonce.
+        return true
+      }
+      pendentes.delete(msg.requestId)
+      pendente(msg.nonce)
+      return true
+    }
+    if (msg.type === 'error' && msg.requestId !== undefined) {
+      const pendente = pendentes.get(msg.requestId)
+      if (pendente !== undefined) {
+        // O host recusou emitir (ex.: modo loopback): falha fechado JA, em vez
+        // de esperar o timeout — e o erro NAO vai ao roteador (nao ha intent
+        // pendente para ele; mostrar ao dono seria duplicar a mensagem).
+        pendentes.delete(msg.requestId)
+        pendente(undefined)
+        return true
+      }
+    }
+    return false
+  }
+
+  return { emitir, onMessage }
 }
 
 export interface SuperficieMontada {
@@ -114,6 +204,12 @@ export interface MontarSuperficieDeps {
   readonly ipc: WorkerIpc
   readonly parar: () => Promise<void>
   readonly emitirNonce?: EmitirNonce
+  /**
+   * Dono persistido reaprendido no boot (EMENDA-COSTURA-5, `pairing.owner`):
+   * o receptor nasce FECHADO com o dono e `/parear` e recusado a partida —
+   * sem nova parelha (8c).
+   */
+  readonly donoInicial?: PairedOwner | undefined
 }
 
 /** Monta o guard, o receptor e o roteador — a superficie inteira. */
@@ -121,6 +217,7 @@ export function montarSuperficie(deps: MontarSuperficieDeps): SuperficieMontada 
   const pairing = createPairingReceiver({
     challenge: desafioMorto(),
     clock: deps.time,
+    ...(deps.donoInicial === undefined ? {} : { owner: deps.donoInicial }),
   })
   const guard = createIdentityGuard({
     allowlist: criarAllowlistDinamica(pairing),
@@ -132,7 +229,10 @@ export function montarSuperficie(deps: MontarSuperficieDeps): SuperficieMontada 
     pairing,
     ipc: deps.ipc,
     api: deps.api,
-    emitirNonce: deps.emitirNonce ?? emitirNonceDeProducao(deps.log),
+    // EMENDA-COSTURA-5: sem porte injetado, o default de producao pede o
+    // nonce ao HOST pelo canal (`nonce.request`/`nonce.issued`), com timeout
+    // fail-closed — nunca inventa um nonce (S5).
+    emitirNonce: deps.emitirNonce ?? criarPonteDeNonce({ log: deps.log, time: deps.time, ipc: deps.ipc }).emitir,
     parar: deps.parar,
   })
   return { guard, pairing, roteador }
@@ -141,16 +241,34 @@ export function montarSuperficie(deps: MontarSuperficieDeps): SuperficieMontada 
 /**
  * A TABELA tipo -> tratador do canal. Uma entrada por tipo; o desconhecido
  * nunca chega aqui (o parser de T4.3 ja o descartou por S4).
+ *
+ * EMENDA-COSTURA-5: a ponte de nonce consome ANTES do roteador —
+ * `nonce.issued` e um pedido de nonce respondido pelo host, nao uma mensagem
+ * que o roteador saiba renderizar, e um `error` de um pedido de nonce
+ * pendente nao tem intent por tras (mostra-lo ao dono seria duplicar a
+ * mensagem de confirmacao indisponivel).
  */
-export function criarDespachoDoCanal(roteador: Roteador): Readonly<
-  { [K in IpcMessageToWorker['type']]: (msg: Extract<IpcMessageToWorker, { type: K }>) => void }
+export function criarDespachoDoCanal(roteador: Roteador, ponte?: PonteDeNonce): Readonly<
+  {
+    [K in Exclude<IpcMessageToWorker['type'], 'pairing.owner'>]: (
+      msg: Extract<IpcMessageToWorker, { type: K }>,
+    ) => void
+  }
 > {
+  const consumidoPelaPonte = (msg: IpcMessageToWorker): boolean => ponte?.onMessage(msg) ?? false
   return {
     state: (msg) => roteador.onState(msg),
     ack: (msg) => roteador.onAck(msg),
-    error: (msg) => roteador.onError(msg),
+    error: (msg) => {
+      if (consumidoPelaPonte(msg)) return
+      roteador.onError(msg)
+    },
     notify: (msg) => roteador.onNotify(msg),
     'pairing.challenge': (msg) => roteador.onPairingChallenge(msg),
+    'nonce.issued': (msg) => {
+      // A resposta de um pedido de nonce pendente; orfa, descarta-se na ponte.
+      consumidoPelaPonte(msg)
+    },
   }
 }
 
@@ -189,27 +307,62 @@ export function configure(
   // O despacho resolve-se por tabela quando a mensagem chega; a superficie
   // nasce a seguir (o bind e sincrono — nenhuma mensagem chega antes).
   let superficie: SuperficieMontada | undefined
+  // EMENDA-COSTURA-5: a ponte de nonce nasce ANTES da superficie (o roteador
+  // usa o `emitir` dela) e consome `nonce.issued`/`error` de pedidos de nonce
+  // ANTES do despacho normal — ver `criarDespachoDoCanal`.
+  let ponte: PonteDeNonce | undefined
+  // 8(c): `pairing.owner` no boot. O host entrega o dono PERSISTIDO e a
+  // superficie e RE-MONTADA com ele — o receptor nasce fechado, a allowlist
+  // aceita o dono e `/parear` e recusado, sem nova parelha. A re-montagem e
+  // atomica entre eventos (o bind e sincrono e os updates chegam depois).
+  const remontarComDono = (msg: IpcPairingOwnerMessage): void => {
+    superficie = montarSuperficie({
+      log,
+      time: systemTime,
+      api: bot.api as unknown as ApiDoBot,
+      ipc,
+      // `exactOptionalPropertyTypes`: quando a ponte ainda nao existe (nunca,
+      // na pratica — a re-montagem corre dentro de onMessage, depois do bind),
+      // o campo e OMITIDO e o default interno cria a ponte.
+      ...(ponte === undefined ? {} : { emitirNonce: ponte.emitir }),
+      donoInicial: { from: msg.from, chat: msg.chat, pairedAt: msg.pairedAt },
+      parar: async () => {
+        await bot.stop()
+      },
+    })
+  }
   const ipc = bindWorkerIpcToProcess(proc, {
     onMessage: (msg: IpcMessageToWorker) => {
+      // `pairing.owner` nao e renderizavel pelo roteador: consome-se AQUI,
+      // re-montando a superficie com o dono reaprendido (8c).
+      if (msg.type === 'pairing.owner') {
+        remontarComDono(msg)
+        return
+      }
       const roteador = superficie?.roteador
       if (roteador === undefined) return
-      criarDespachoDoCanal(roteador)[msg.type](msg as never)
+      criarDespachoDoCanal(roteador, ponte)[msg.type](msg as never)
     },
   })
 
+  ponte = criarPonteDeNonce({ log, time: systemTime, ipc })
   superficie = montarSuperficie({
     log,
     time: systemTime,
     api: bot.api as unknown as ApiDoBot,
     ipc,
+    emitirNonce: ponte.emitir,
     parar: async () => {
       await bot.stop()
     },
   })
 
-  // O funil do Telegram: todo update passa pelo roteador.
+  // O funil do Telegram: todo update passa pelo roteador CORRENTE — lido no
+  // instante do update, para a re-montagem por `pairing.owner` (8c) valer aqui
+  // tambem. `undefined` (impossivel depois do bind) descarta o update em vez de
+  // rebentar.
   bot.on(['message', 'callback_query'], async (ctx) => {
-    await superficie.roteador.tratarUpdate(ctx.update)
+    await superficie?.roteador.tratarUpdate(ctx.update)
   })
 
   // TG-080: publica a lista canonica. Uma falha de publicacao e logada e nao

@@ -43,12 +43,16 @@ import { createIndexTap } from './html.ts'
 import {
   createClientHandler,
   createConfirmHandler,
+  createResetConfirmHandler,
+  createResetHandler,
   createStartHandler,
   createStateHandler,
   createStopHandler,
   UI_CSRF_BINDING,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
+  UI_PATH_RESET,
+  UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
   UI_PATH_STATE,
   UI_PATH_STOP,
@@ -137,6 +141,10 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     { kind: 'exact', path: UI_PATH_START, handler: createStartHandler(core) },
     { kind: 'exact', path: UI_PATH_CONFIRM, handler: createConfirmHandler(core) },
     { kind: 'exact', path: UI_PATH_STOP, handler: createStopHandler(core) },
+    // W3 (revisao T5.5): FAILED so sai por reset humano (CTL-012) — a
+    // terceira superficie ganha o MESMO padrao de 2 etapas com nonce.
+    { kind: 'exact', path: UI_PATH_RESET, handler: createResetHandler(core) },
+    { kind: 'exact', path: UI_PATH_RESET_CONFIRM, handler: createResetConfirmHandler(core) },
     { kind: 'exact', path: UI_PATH_CLIENT, handler: createClientHandler(core) },
   ]
 

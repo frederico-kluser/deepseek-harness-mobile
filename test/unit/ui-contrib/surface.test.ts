@@ -40,6 +40,8 @@ import {
 import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
+  UI_PATH_RESET,
+  UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
   UI_PATH_STATE,
   UI_PATH_STOP,
@@ -242,12 +244,20 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 /* ========================================================================== */
 
 describe('registo da contribuicao', () => {
-  it('regista um tap, cinco rotas e a assinatura do broadcast', () => {
+  it('regista um tap, SETE rotas (W3: reset) e a assinatura do broadcast', () => {
     const bancada = criarBancada()
     assert.equal(bancada.taps.length, 1)
     assert.deepEqual(
       [...bancada.rotas.keys()].toSorted(),
-      [UI_PATH_STATE, UI_PATH_START, UI_PATH_CONFIRM, UI_PATH_STOP, UI_PATH_CLIENT].toSorted(),
+      [
+        UI_PATH_STATE,
+        UI_PATH_START,
+        UI_PATH_CONFIRM,
+        UI_PATH_STOP,
+        UI_PATH_RESET,
+        UI_PATH_RESET_CONFIRM,
+        UI_PATH_CLIENT,
+      ].toSorted(),
     )
     for (const rota of bancada.rotas.values()) {
       assert.equal(rota.kind, 'exact')
@@ -258,7 +268,7 @@ describe('registo da contribuicao', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-    assert.equal(bancada.rotaDesmontadas, 5)
+    assert.equal(bancada.rotaDesmontadas, 7, 'as sete rotas (incluindo o reset/W3) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
@@ -523,6 +533,54 @@ describe('desligar', () => {
     assert.ok(intent?.requestId !== undefined)
     assert.match(intent.requestId, FORMA_ULID)
     assert.equal(bancada.noncesPedidos.length, 0, 'nenhum nonce foi pedido ao host')
+  })
+})
+/* ========================================================================== */
+/* RESET — W3 (revisao T5.5): FAILED so sai por reset humano (CTL-012)        */
+/* ========================================================================== */
+
+describe('reset (2 etapas com nonce — W3/CTL-023)', () => {
+  it('passo 1: o clique pede o nonce de RESET ao HOST e devolve-o opaco', async () => {
+    const bancada = criarBancada()
+    const token = bancada.tokenDoUltimoTap()
+    const resposta = await bancada.enviar(UI_PATH_RESET, { metodo: 'POST', token, corpo: {} })
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.corpo.passo, 'confirmar')
+    assert.equal(resposta.corpo.nonce, 'nonce-opaco-1')
+    assert.deepEqual(bancada.noncesPedidos, ['reset'], 'o nonce e da acao reset')
+  })
+
+  it('passo 2: emite ControlIntent reset com o nonce opaco e requestedBy ui:native', async () => {
+    const bancada = criarBancada()
+    bancada.resultadoEmit = { estado: 'STOPPED', idempotente: false }
+    const token = bancada.tokenDoUltimoTap()
+    const primeiro = await bancada.enviar(UI_PATH_RESET, { metodo: 'POST', token, corpo: {} })
+    assert.equal(primeiro.status, 200)
+    const nonce = primeiro.corpo.nonce
+    assert.equal(typeof nonce, 'string')
+    const resposta = await bancada.enviar(UI_PATH_RESET_CONFIRM, {
+      metodo: 'POST',
+      token,
+      corpo: { nonce },
+    })
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.corpo.estado, 'STOPPED')
+    assert.equal(bancada.emitidos.length, 1)
+    const intent = bancada.emitidos[0]
+    assert.equal(intent?.action, 'reset')
+    assert.equal(intent?.nonce, nonce, 'o nonce viaja opaco ate o host (S5)')
+    assert.equal(intent?.requestedBy, 'ui:native')
+    assert.match(intent?.requestId ?? '', FORMA_ULID)
+  })
+
+  it('a recusa do reset (ex.: nonce invalido) chega a UI com codigo e motivo', async () => {
+    const bancada = criarBancada()
+    bancada.resultadoEmit = { estado: 'FAILED', idempotente: false, recusa: 'NONCE_INVALIDO' }
+    const token = bancada.tokenDoUltimoTap()
+    const resposta = await bancada.enviar(UI_PATH_RESET_CONFIRM, { metodo: 'POST', token, corpo: { nonce: 'forjado' } })
+    assert.equal(resposta.status, 409)
+    assert.equal(resposta.corpo.recusa, 'NONCE_INVALIDO')
+    assert.ok(typeof resposta.corpo.motivo === 'string')
   })
 })
 

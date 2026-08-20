@@ -26,14 +26,25 @@
  *   tunel PRIMEIRO (despacho `stop`) e so depois invalida as sessoes
  *   (`aposEmergencia`): "ordem tunel primeiro, sempre" (02-SEGURANCA L8).
  *
- * O que este ficheiro NAO faz: `session.issue` e `secret.rotate` ainda nao
- * tem dono nesta onda (a magia de T2.2/T3.4 e a rotacao de T2.1 entram pela
- * costura pos-onda); aqui respondem `INTERNAL` — fail-closed, com log.
+ * A COSTURA (item 5) fia `session.issue` e `secret.rotate`: o /acessar emite o
+ * link magico REAL (MagicStore de T2.2 + rota de T3.4) e notifica por `notify`
+ * (TG-085); o /rotacionar consome o nonce no HOST, regenera o segredo
+ * (SECRET-008: sessoes invalidadas) e notifica SEM enviar a senha pelo chat.
+ * Sem a magia/rotacao fiadas, os dois respondem `INTERNAL` — fail-closed.
  */
 
-import type { AuditSink } from '../contracts/auth.ts'
+import type { AuditSink, SecretStore } from '../contracts/auth.ts'
 import type { ControlAction, ControlIntent, ControlRecusa, ControlResultado } from '../contracts/control.ts'
-import type { IpcAckMessage, IpcErrorMessage, IpcIntentMessage, IpcMessageToWorker } from '../contracts/ipc.ts'
+import { comporTextoLinkMagico } from '../audit/notify.ts'
+import type { ConfirmServiceComVeredito } from './confirm.ts'
+import type { MagicStore } from '../session/magic.ts'
+import type {
+  IpcAckMessage,
+  IpcErrorMessage,
+  IpcIntentMessage,
+  IpcMessageToWorker,
+  IpcNonceRequestMessage,
+} from '../contracts/ipc.ts'
 import { IPC_PROTOCOL_VERSION } from '../contracts/ipc.ts'
 import type { TunnelState } from '../contracts/tunnel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
@@ -71,6 +82,21 @@ export interface RespondedorIpcDeps {
    * sessoes e auditar. Recebe a intent para a origem da linha.
    */
   readonly aposEmergencia: (intent: IpcIntentMessage) => void
+  /**
+   * O ConfirmService do HOST (T5.1, partilhado com o controlador). Usado pelo
+   * `secret.rotate` para consumir o nonce com a acao 'reset' (o worker pediu-o
+   * pela ponte EMENDA-COSTURA-5). AUSENTE: `secret.rotate` responde INTERNAL.
+   */
+  readonly confirm?: Pick<ConfirmServiceComVeredito, 'consumirComVeredito'> | undefined
+  /**
+   * O MagicStore (T2.2) do link magico. Usado pelo `session.issue` (/acessar).
+   * AUSENTE: `session.issue` responde INTERNAL (o estado de antes da costura).
+   */
+  readonly magic?: MagicStore | undefined
+  /** `SecretStore.rotate` — o /rotacionar regenera o segredo e invalida sessoes. */
+  readonly secretos?: Pick<SecretStore, 'rotate'> | undefined
+  /** Envia um `notify` ao dono (o link magico / a instrucao local da rotacao). */
+  readonly notificarDono?: ((texto: string) => void) | undefined
 }
 
 /** O tratador que a fiacao entrega a `createWorkerSupervisor({ onIntent })`. */
@@ -221,13 +247,99 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
         deps.reemitirEstado()
         return ack(intent, 'noop', estadoAtual())
       }
-      case 'session.issue':
-      case 'secret.rotate':
-        log.warn(
-          `intencao '${intent.intent}' ainda sem tratamento nesta onda; respondida INTERNAL. ` +
-            'A magia de T2.2/T3.4 e a rotacao de T2.1 entram pela costura pos-onda.',
+      case 'session.issue': {
+        // Item 5 (costura): /acessar emite o link magico REAL e notifica o
+        // dono (TG-085). O `mk` viaja no FRAGMENTO da URL composta pelo host;
+        // a senha NUNCA sai por aqui. A resposta `accepted` e INVISIVEL no
+        // worker de proposito — o link chega por notify (A2/TG-085).
+        if (deps.magic === undefined || deps.notificarDono === undefined) {
+          log.warn(`intencao 'session.issue' sem magia fiada; respondida INTERNAL (fail-closed).`)
+          return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        }
+        const snap = deps.controller?.snapshot()
+        const url = snap?.state === 'READY' ? snap.info?.url : undefined
+        if (url === undefined) {
+          // Sem tunel online nao ha painel para onde apontar o link.
+          return erro(intent, 'INTERNAL', 'O tunel nao esta online; ligue-o antes de pedir o acesso.')
+        }
+        const token = deps.magic.issue()
+        deps.notificarDono(comporTextoLinkMagico(deps.agora(), url, token.mk, token.expiraEm))
+        return ack(intent, 'accepted', estadoAtual())
+      }
+      case 'secret.rotate': {
+        // Item 5 (costura): /rotacionar regenera o segredo e invalida as
+        // sessoes vivas (SECRET-008 — o SecretStore revoga ANTES de publicar).
+        // O nonce e exigido (AUMENTA o risco de bloqueio do atacante) e e
+        // consumido AQUI, no HOST (S5); a ponte do worker pediu-o como 'reset'
+        // (EMENDA-COSTURA-5). A senha nova NUNCA sai pelo chat: so a
+        // instrucao do caminho local/terminal.
+        if (deps.secretos === undefined || deps.confirm === undefined || deps.notificarDono === undefined) {
+          log.warn(`intencao 'secret.rotate' sem rotacao fiada; respondida INTERNAL (fail-closed).`)
+          return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        }
+        const veredito = deps.confirm.consumirComVeredito(intent.nonce ?? '', 'reset')
+        if (veredito !== 'ok') {
+          // CTL-021/022: nonce desconhecido/consumido ou expirado.
+          return { ...ack(intent, 'rejected', estadoAtual()), code: 'NONCE_INVALID' }
+        }
+        // O retorno carrega o display (que contem a senha) — ignorado aqui de
+        // proposito: nunca logado, nunca enviado (S3/Q-4).
+        void deps.secretos.rotate()
+        deps.notificarDono(
+          'Senha nova gerada: aparece apenas no terminal da maquina (ou em ' +
+            '/__guard/secret com o ott). As sessoes atuais foram invalidadas.',
         )
-        return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        return ack(intent, 'accepted', estadoAtual())
+      }
+    }
+  }
+}
+
+/* ========================================================================== */
+/* O RESPONDEDOR DE NONCE — EMENDA-COSTURA-5 (transporte IPC do nonce)        */
+/* ========================================================================== */
+
+/**
+ * O lado HOST do transporte do nonce (EMENDA-COSTURA-5, `src/contracts/ipc.ts`):
+ * responde a `nonce.request` do worker com `nonce.issued` emitido pelo
+ * `ConfirmService` de T5.1 (via controlador). O nonce viaja SÓ pelo pipe
+ * host <-> worker; NUNCA e logado (S3) — so o prazo e a acao podem ir ao log.
+ *
+ * SEM CONTROLADOR (modo loopback), responde `EXPOSURE_DISABLED` — fail-closed:
+ * um nonce que nao chega ao worker nao autoriza nada (CTL-023).
+ */
+export interface RespondedorNonceDeps {
+  /** O controlador (fonte do `ConfirmService`). `undefined` em modo loopback. */
+  readonly controller: TunnelController | undefined
+  readonly log: GuardLogger
+}
+
+export type RespondedorNonce = (request: IpcNonceRequestMessage) => IpcMessageToWorker
+
+export function criarRespondedorDeNonce(deps: RespondedorNonceDeps): RespondedorNonce {
+  const { log } = deps
+  return (request: IpcNonceRequestMessage): IpcMessageToWorker => {
+    if (deps.controller === undefined) {
+      log.warn(`pedido de nonce sem controlador (modo loopback); respondido EXPOSURE_DISABLED (acao ${request.acao}).`);
+      return {
+        v: IPC_PROTOCOL_VERSION,
+        type: 'error',
+        requestId: request.requestId,
+        code: 'EXPOSURE_DISABLED',
+        message: 'A exposicao esta desativada nesta instalacao. Defina exposure.mode como tunnel para ligar o tunel.',
+      }
+    }
+    const emitido = deps.controller.emitirNonce(request.acao)
+    // S3: o VALOR do nonce nunca vai ao log nem ao texto — so o prazo, que e
+    // o que o worker precisa para expirar o teclado de confirmacao.
+    log.debug(`nonce emitido para ${request.acao} (expira em ${String(emitido.expiresAt)}).`)
+    return {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'nonce.issued',
+      acao: request.acao,
+      requestId: request.requestId,
+      nonce: emitido.valor,
+      expiresAt: emitido.expiresAt,
     }
   }
 }

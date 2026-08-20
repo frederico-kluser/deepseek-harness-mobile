@@ -63,7 +63,8 @@ export function renderChrome(input: { readonly csrfToken: string; readonly scrip
     '<p style="margin: 0 0 8px; color: #b3261e;" id="dsh-guard-ui-falha" hidden></p>' +
     '<p style="margin: 0 0 8px;">' +
     '<button type="button" id="dsh-guard-ui-ligar" disabled>Ligar túnel</button> ' +
-    '<button type="button" id="dsh-guard-ui-desligar" disabled>Desligar túnel</button>' +
+    '<button type="button" id="dsh-guard-ui-desligar" disabled>Desligar túnel</button> ' +
+    '<button type="button" id="dsh-guard-ui-repor" disabled>Repor (após falha)</button>' +
     '</p>' +
     '<div id="dsh-guard-ui-barra" hidden style="margin: 0 0 8px;">' +
     '<p style="margin: 0 0 4px;" id="dsh-guard-ui-texto"></p>' +
@@ -132,6 +133,7 @@ export function createClientScript(): string {
     seq: 'dsh-guard-ui-seq',
     ligar: 'dsh-guard-ui-ligar',
     desligar: 'dsh-guard-ui-desligar',
+    repor: 'dsh-guard-ui-repor',
     barra: 'dsh-guard-ui-barra',
     texto: 'dsh-guard-ui-texto',
     confirmar: 'dsh-guard-ui-confirmar',
@@ -188,8 +190,11 @@ export function createClientScript(): string {
     }
     const ligar = el('ligar');
     const desligar = el('desligar');
+    const repor = el('repor');
     if (ligar) ligar.disabled = s.estado !== 'STOPPED';
     if (desligar) desligar.disabled = !(s.estado === 'STARTING' || s.estado === 'READY' || s.estado === 'DEGRADED');
+    // W3: FAILED so sai por reset humano (CTL-012) — o botao so acorda nesse estado.
+    if (repor) repor.disabled = s.estado !== 'FAILED';
   }
 
   function abrirConfirmacao(mensagem, acao) {
@@ -229,7 +234,7 @@ export function createClientScript(): string {
     try { pintarEstado(await resposta.json()); } catch (ignorado) { texto('seq', 'estado ilegível'); }
   }
 
-  if (!el('ligar') || !el('desligar') || !el('confirmar') || !el('cancelar')) return;
+  if (!el('ligar') || !el('desligar') || !el('repor') || !el('confirmar') || !el('cancelar')) return;
 
   el('ligar').addEventListener('click', async () => {
     const r = await pedir('/start', {});
@@ -237,6 +242,19 @@ export function createClientScript(): string {
     passo = r.dados.nonce; // opaco: so o host valida
     abrirConfirmacao('Ligar o túnel abre esta máquina à internet. Confirmar?', async () => {
       const c = await pedir('/start/confirm', { nonce: passo });
+      passo = null;
+      tratarResultado(c);
+    });
+  });
+
+  // W3 (revisao T5.5): reset em FAILED — o mesmo fluxo de 2 etapas com
+  // nonce opaco do LIGAR (CTL-012/023).
+  el('repor').addEventListener('click', async () => {
+    const r = await pedir('/reset', {});
+    if (r.status !== 200 || r.dados.passo !== 'confirmar') { tratarResultado(r); return; }
+    passo = r.dados.nonce;
+    abrirConfirmacao('Repor o estado de falha e voltar a desligado? (o túnel permanece desligado)', async () => {
+      const c = await pedir('/reset/confirm', { nonce: passo });
       passo = null;
       tratarResultado(c);
     });

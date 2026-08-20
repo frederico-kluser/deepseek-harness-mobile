@@ -13,9 +13,10 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { TunnelSnapshot } from '../../src/contracts/tunnel.ts'
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
-import { apply, inject, name, type Config } from '../../src/index.ts'
-import { FakeContext } from '../support/ctx-double.ts'
+import { apply, criarFanoutDeEstado, inject, name, type Config } from '../../src/index.ts'
+import { createFakeLogger, FakeContext } from '../support/ctx-double.ts'
 import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
 
 describe('manifesto do plugin', () => {
@@ -401,5 +402,145 @@ describe('veto de danger-full-access', () => {
 
     assert.equal(result, true)
     assert.equal(nextCalled, true, 'sem o ouvinte, a cascata chega ao next terminal')
+  })
+})
+describe('W2 (revisao T5.5): o replay imediato do fan-out de estado e CONTRATO', () => {
+  it('assinar entrega o estado corrente JA, depois cada difusao; desassinar e idempotente', () => {
+    // O fan-out e o que a fiacao usa para `subscribe` da UI nativa: a
+    // assinatura SEM difusao nenhuma ja recebeu o estado corrente — e o
+    // que torna a rota de estado respondivel imediatamente apos o apply.
+    let corrente: { seq: number; snapshot: TunnelSnapshot } = {
+      seq: 0,
+      snapshot: { state: 'STOPPED', attempts: 0 },
+    }
+    const log = createFakeLogger()('fanout')
+    const fanout = criarFanoutDeEstado(() => corrente, log)
+    const vistos: number[] = []
+    const desassinar = fanout.assinar((b) => void vistos.push(b.seq))
+
+    assert.deepEqual(vistos, [0], 'o replay imediato entregou o estado corrente sem difusao')
+
+    corrente = { seq: 1, snapshot: { state: 'STARTING', attempts: 0 } }
+    fanout.emitir()
+    assert.deepEqual(vistos, [0, 1], 'cada difusao chega a seguir')
+
+    desassinar()
+    desassinar()
+    corrente = { seq: 2, snapshot: { state: 'READY', attempts: 0 } }
+    fanout.emitir()
+    assert.deepEqual(vistos, [0, 1], 'desassinado nao recebe mais nada')
+  })
+
+  it('um observador que LANCA nao derruba o fan-out (best-effort registado)', () => {
+    let corrente: { seq: number; snapshot: TunnelSnapshot } = {
+      seq: 0,
+      snapshot: { state: 'STOPPED', attempts: 0 },
+    }
+    const servico = createFakeLogger()
+    const fanout = criarFanoutDeEstado(() => corrente, servico('fanout'))
+    const ordem: string[] = []
+    // O replay imediato de CADA assinatura ja chama o observador: a
+    // sequencia tem os DOIS pares (replay de 'a' e 'b', depois a difusao).
+    fanout.assinar(() => {
+      ordem.push('a')
+      throw new Error('observador avariado')
+    })
+    fanout.assinar(() => void ordem.push('b'))
+    corrente = { seq: 1, snapshot: { state: 'STARTING', attempts: 0 } }
+    fanout.emitir()
+    assert.deepEqual(ordem, ['a', 'b', 'a', 'b'], 'o observador seguinte correu sempre (replay e difusao)')
+    assert.equal(servico.has('warn', 'observador de estado falhou'), true)
+  })
+})
+describe('8(b): o /emergencia NAO reinicia o worker — o supervisor e disposto', () => {
+  it('o intent emergency mata o worker e o processo que morre nao volta a spawnar', async () => {
+    // O pareamento persistido no state.json: o HOST revalida a identidade
+    // (S6) antes de aceitar o intent de emergencia.
+    const casa = join(tmpdir(), `dsh-guard-8b-${process.pid}`)
+    const dir = join(casa, 'guarded-bot')
+    mkdirSync(dir, { recursive: true })
+    chmodSync(dir, 0o700)
+    writeFileSync(
+      join(dir, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        desiredState: 'STOPPED',
+        pairing: { ownerUserId: 123, ownerChatId: 456, pairedAt: 1_000 },
+      }),
+      { mode: 0o600 },
+    )
+    process.env.DSH_HOME = casa
+    try {
+      const { ctx } = install({
+        exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false },
+        tunnel: { mode: 'quick', ttlMinutes: 60 },
+      })
+      const filho = ctx.subprocess.lastChild()
+
+      // O dono manda /emergencia: o intent atravessa o canal host <- worker.
+      filho.stdout.write(
+        JSON.stringify({ v: 1, type: 'intent', intent: 'emergency', requestId: 'emerg-1', from: 123, chat: 456 }) + '\n',
+      )
+      await flush()
+      await flush()
+
+      // O worker morre (bot.stop): o supervisor foi DISPOSTO pelo aposEmergencia
+      // — a terminacao e tratada como intencional, SEM reinicio.
+      filho.settle({ exitCode: 0, signal: null })
+      await flush()
+      await flush()
+
+      assert.equal(
+        ctx.subprocess.children.length,
+        1,
+        'nenhum segundo spawn: o emergency mata o worker e o supervisor NAO o reinicia (8b)',
+      )
+
+      // Desmonta os efeitos (o relatorio usa o agendador REAL — sem o disposer,
+      // o timer de 30 min seguraria o event loop do processo de teste).
+      for (const disposer of ctx.effects) disposer()
+    } finally {
+      delete process.env.DSH_HOME
+      rmSync(casa, { recursive: true, force: true })
+    }
+  })
+})
+describe('8(c): no boot com dono persistido, o HOST envia pairing.owner ao worker', () => {
+  it('state.json com pairing -> a primeira mensagem do canal e o dono reaprendido', async () => {
+    const casa = join(tmpdir(), `dsh-guard-8c-${process.pid}`)
+    const dir = join(casa, 'guarded-bot')
+    mkdirSync(dir, { recursive: true })
+    chmodSync(dir, 0o700)
+    writeFileSync(
+      join(dir, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        desiredState: 'STOPPED',
+        pairing: { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 },
+      }),
+      { mode: 0o600 },
+    )
+    process.env.DSH_HOME = casa
+    try {
+      const { ctx } = install({
+        exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false },
+        tunnel: { mode: 'quick', ttlMinutes: 60 },
+      })
+      const filho = ctx.subprocess.lastChild()
+      await flush()
+
+      const dono = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>).find(
+        (mensagem) => mensagem['type'] === 'pairing.owner',
+      )
+      assert.ok(dono !== undefined, 'o pairing.owner saiu no boot')
+      assert.equal(dono['from'], 42)
+      assert.equal(dono['chat'], -1001234567890, 'o chat de GRUPO viaja como eixo (8d)')
+      assert.equal(dono['pairedAt'], 2_000)
+
+      for (const disposer of ctx.effects) disposer()
+    } finally {
+      delete process.env.DSH_HOME
+      rmSync(casa, { recursive: true, force: true })
+    }
   })
 })

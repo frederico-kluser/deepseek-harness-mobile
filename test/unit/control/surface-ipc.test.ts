@@ -16,7 +16,7 @@ import type { IpcIntentMessage } from '../../../src/contracts/ipc.ts'
 import type { TunnelSnapshot } from '../../../src/contracts/tunnel.ts'
 import { createConfirmService } from '../../../src/control/confirm.ts'
 import { createTunnelController } from '../../../src/control/controller.ts'
-import { criarRespondedorIpc, resultadoDoAck } from '../../../src/control/surface-ipc.ts'
+import { criarRespondedorDeNonce, criarRespondedorIpc, resultadoDoAck } from '../../../src/control/surface-ipc.ts'
 import type { TunnelSupervisor } from '../../../src/tunnel/supervisor.ts'
 import { FakeScheduler } from '../../support/child-double.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -365,5 +365,123 @@ describe('resultadoDoAck: a derivacao accepted/noop/rejected', () => {
     assert.equal(resultadoDoAck('start', { estado: 'STOPPED', idempotente: false, recusa: 'TERMINAL_SEM_RESET' }).code, 'TUNNEL_FAILED')
     assert.equal(resultadoDoAck('start', { estado: 'STOPPED', idempotente: false, recusa: 'NONCE_AUSENTE' }).code, 'NONCE_INVALID')
     assert.equal(resultadoDoAck('start', { estado: 'STOPPED', idempotente: false, recusa: 'SEM_SEGREDO_FORTE' }).code, 'INTERNAL')
+  })
+})
+/* ========================================================================= */
+/* O RESPONDEDOR DE NONCE — EMENDA-COSTURA-5 (transporte do nonce)          */
+/* ========================================================================= */
+
+describe('criarRespondedorDeNonce — o host atende nonce.request', () => {
+  it('emite pelo ConfirmService de T5.1 e responde nonce.issued com o requestId do pedido', () => {
+    const clock = new FakeClock(1_000)
+    const controlador = createTunnelController({
+      log: createFakeLogger()('ctl'),
+      supervisor: new SupervisorDuble(),
+      confirm: createConfirmService({ now: () => clock.now(), randomBytes: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) }),
+      agora: () => clock.now(),
+      scheduler: new FakeScheduler(),
+      restritoAtivo: () => false,
+      segredoForte: () => true,
+      requerConfirmacao: true,
+      audit: { append: () => undefined },
+      broadcast: () => undefined,
+      persistirIntencao: () => undefined,
+    })
+    const avisos: string[] = []
+    const responder = criarRespondedorDeNonce({
+      controller: controlador,
+      log: createFakeLogger()('nonce'),
+    })
+    void avisos
+
+    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req-nonce' })
+    assert.equal(resposta.type, 'nonce.issued')
+    assert.equal((resposta as { acao?: string }).acao, 'start')
+    assert.equal((resposta as { requestId?: string }).requestId, 'req-nonce')
+    // O nonce emitido e CONSUMIVEL pelo mesmo ConfirmService (uso unico):
+    // o worker transportou-o opaco e o host aceita-o no consume.
+    const emitido = resposta as { nonce?: string; expiresAt?: number }
+    assert.ok(typeof emitido.nonce === 'string' && emitido.nonce.length === 32, '128 bits em hex')
+    assert.ok(typeof emitido.expiresAt === 'number' && emitido.expiresAt > clock.now(), 'o prazo do nonce viaja')
+  })
+
+  it('sem controlador (modo loopback) responde EXPOSURE_DISABLED — fail-closed', () => {
+    const responder = criarRespondedorDeNonce({
+      controller: undefined,
+      log: createFakeLogger()('nonce'),
+    })
+    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req-loopback' })
+    assert.equal(resposta.type, 'error')
+    assert.equal((resposta as { code?: string }).code, 'EXPOSURE_DISABLED')
+    assert.equal((resposta as { requestId?: string }).requestId, 'req-loopback')
+  })
+
+  it('o VALOR do nonce nunca vai ao log (S3): o log so menciona a acao e o prazo', () => {
+    const clock = new FakeClock(1_000)
+    const controlador = createTunnelController({
+      log: createFakeLogger()('ctl'),
+      supervisor: new SupervisorDuble(),
+      confirm: createConfirmService({ now: () => clock.now(), randomBytes: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]) }),
+      agora: () => clock.now(),
+      scheduler: new FakeScheduler(),
+      restritoAtivo: () => false,
+      segredoForte: () => true,
+      requerConfirmacao: true,
+      audit: { append: () => undefined },
+      broadcast: () => undefined,
+      persistirIntencao: () => undefined,
+    })
+    const linhas: string[] = []
+    const log = {
+      ...createFakeLogger()('nonce'),
+      debug: (mensagem: string): void => void linhas.push(mensagem),
+    }
+    const responder = criarRespondedorDeNonce({ controller: controlador, log })
+    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'reset', requestId: 'req-s3' }) as { nonce?: string }
+    assert.ok(resposta.nonce !== undefined)
+    for (const linha of linhas) assert.ok(!linha.includes(resposta.nonce), 'o nonce nao vai ao log')
+  })
+})
+
+/* ========================================================================= */
+/* 8(d): /parear em grupo — a identidade e REVALIDADA NO HOST (S6, os 2 eixos) */
+/* ========================================================================= */
+
+describe('8(d): pareamento de GRUPO — o host revalida os DOIS eixos (from E chat)', () => {
+  it('intent do dono NO grupo pareado passa; de outro chat ou de outro from e NOT_PAIRED', () => {
+    const clock = new FakeClock(1_000)
+    // O pareamento persistido tem o chat do GRUPO: a revalidacao no host
+    // exige from == dono E chat == grupo — o worker nao decide sozinho (S6).
+    const dono = 42
+    const grupo = -1001234567890
+    const pareado = (from: number, chat: number): boolean => from === dono && chat === grupo
+    const auditoria: AuditEvent[] = []
+    const responder = criarRespondedorIpc({
+      controller: undefined,
+      modoTunel: true,
+      pareado,
+      audit: { append: (evento) => auditoria.push(evento) },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    const aceite = responder({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'g-1', from: dono, chat: grupo })
+    // Sem controlador (modo loopback) a resposta e EXPOSURE_DISABLED — o que
+    // importa aqui e que a IDENTIDADE passou: nada de NOT_PAIRED, nada no audit.
+    assert.equal((aceite as { code?: string }).code, 'EXPOSURE_DISABLED', 'o dono no grupo pareado passa o portao de identidade')
+
+    const chatErrado = responder({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'g-2', from: dono, chat: 999 })
+    assert.equal((chatErrado as { code?: string }).code, 'NOT_PAIRED', 'mesmo from, chat fora do pareamento')
+
+    const fromErrado = responder({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'g-3', from: 7, chat: grupo })
+    assert.equal((fromErrado as { code?: string }).code, 'NOT_PAIRED', 'mesmo grupo, from fora do pareamento')
+
+    assert.equal(auditoria.length, 2, 'as recusas de identidade sao contadas no audit (CTL-029)')
+    for (const evento of auditoria) {
+      assert.equal(evento.resultado, 'negado')
+      assert.match(evento.evento, /tunel_intent_nao_pareado:telegram:/u)
+    }
   })
 })

@@ -202,7 +202,7 @@ export function criarHostFalso(): HostFalso {
   const consumidos = new Set<string>()
   const lista: string[] = []
   return {
-    emitirNonce: (_acao) => {
+    emitirNonce: async (_acao) => {
       const nonce = gerarTokenOpaque()
       emitidos.add(nonce)
       lista.push(nonce)

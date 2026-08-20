@@ -38,7 +38,9 @@ import { AUTH_EVENTS } from '../../../src/http/session-auth.ts'
 import { MAGIC_CRAWLER_EVENT } from '../../../src/panel/magic.ts'
 import { CSRF_REJECTION_EVENT } from '../../../src/panel/routes.ts'
 import { SECRET_REJECTION_EVENT } from '../../../src/panel/secret.ts'
+import { EVENTO_DESLIGAR, EVENTO_LIGAR, EVENTO_RESET } from '../../../src/control/controller.ts'
 import {
+  comporEventoReset,
   comporEventoToggle,
   emitSessaoNova,
   eventoDoVocabulario,
@@ -63,6 +65,7 @@ import {
   EVENTO_TTL_EXPIRADO,
   EVENTO_TUNEL_DESLIGAR,
   EVENTO_TUNEL_LIGAR,
+  EVENTO_TUNEL_RESET,
   registerSessaoNovaObserver,
   type AuditEventoNome,
   type AuthFalhaJanelaEvent,
@@ -172,6 +175,7 @@ describe('o vocabulario fechado', () => {
       EVENTO_AUTH_FALHA_JANELA,
       EVENTO_TUNEL_LIGAR,
       EVENTO_TUNEL_DESLIGAR,
+      EVENTO_TUNEL_RESET,
       EVENTO_TTL_EXPIRADO,
       EVENTO_MODO_RESTRITO,
       EVENTO_EXPOSICAO_RESTRITA,
@@ -215,6 +219,7 @@ describe('o vocabulario fechado', () => {
     // As formas com sufixo que os emissores reais escrevem:
     exigeNome('tunel_ligar:telegram:123')
     exigeNome('tunel_desligar:painel:a1b2c3d4')
+    exigeNome('tunel_reset:telegram:123')
     exigeNome('tunel_ttl_expirado:60min:timer')
     exigeNome('tunel_ttl_expirado:480min:boot')
     exigeNome('exposicao_restrita:100')
@@ -239,6 +244,13 @@ describe('o vocabulario fechado', () => {
     assert.equal(EVENTO_EXPOSICAO_RESTRITA, AUTH_EVENTS.exposicaoRestrita, 'exposicao_restrita: session-auth.ts')
     assert.equal(EVENTO_PAINEL_SEGREDO_RECUSA_ANONIMA, SECRET_REJECTION_EVENT, 'segredo recusa anonima: secret.ts')
     assert.equal(EVENTO_PAINEL_CSRF_RECUSADO, CSRF_REJECTION_EVENT, 'csrf recusado: routes.ts')
+    // Os toggles EMITIDOS pela costura: o controlador de T5.1 declara os MESMOS
+    // literais (EVENTO_LIGAR/EVENTO_DESLIGAR/EVENTO_RESET) e compoe o nome via
+    // `comporEventoToggle`/`comporEventoReset` — a paridade abaixo prende os
+    // dois lados: se o vocabulario ou o emissor mudar de forma, fica vermelho.
+    assert.equal(EVENTO_TUNEL_LIGAR, EVENTO_LIGAR, 'tunel_ligar: controller.ts (T5.1)')
+    assert.equal(EVENTO_TUNEL_DESLIGAR, EVENTO_DESLIGAR, 'tunel_desligar: controller.ts (T5.1)')
+    assert.equal(EVENTO_TUNEL_RESET, EVENTO_RESET, 'tunel_reset: controller.ts (T5.1)')
   })
 
   it('PARIDADE com os emissores de LITERAIS — cada nome real emitido e reconhecido (file:line no comentario)', () => {
@@ -286,6 +298,11 @@ describe('o vocabulario fechado', () => {
       ['auditoria_lacuna:3', 'log.ts:301'],
       // src/audit/notify.ts:431 (relatorio periodico: escreve e depois notifica)
       ['relatorio_periodico', 'notify.ts:431'],
+      // src/control/controller.ts (T5.1, costura da Onda 5): o `auditar` compoe
+      // o nome via comporEventoToggle/comporEventoReset — familia <origem> no sufixo.
+      ['tunel_ligar:telegram:123', 'controller.ts (auditar, comporEventoToggle)'],
+      ['tunel_desligar:painel:a1b2c3d4', 'controller.ts (auditar, comporEventoToggle)'],
+      ['tunel_reset:ui:native', 'controller.ts (auditar, comporEventoReset)'],
     ]
     for (const [nome, emissor] of reais) {
       assert.equal(eventoDoVocabulario(nome), true, `${nome} e emitido em ${emissor} e tem de ser reconhecido`)
@@ -293,20 +310,21 @@ describe('o vocabulario fechado', () => {
   })
 
   it('HONESTIDADE (costura): os nomes marcados PENDENTE NAO tem emissor em src/ nem worker/', () => {
-    // Os nomes PENDENTE so podem aparecer no proprio vocabulario (declaracao,
+    // A COSTURA da Onda 5 resolveu os toggles: o controlador de T5.1
+    // (src/control/controller.ts) ja os EMITE e eles sairam desta lista para a
+    // lista de emitidos acima (paridade com as constantes do emissor). O que
+    // CONTINUA PENDENTE e so a primeira falha da janela de 10 min: nenhum
+    // caminho a escreve hoje (o gate escreve auth_credencial por tentativa; o
+    // limitador nao emite) — e a composicao do vocabulario NAO pode mentir que
+    // o emissor existe. Este teste prova o contrario da lista de emitidos: os
+    // nomes PENDENTE so podem aparecer no proprio vocabulario (declaracao,
     // comentario) e no consumidor notify.ts (checagem de prefixo do texto).
-    // A COSTURA pos-onda cria os emissores (o controlador de T5.1 para os
-    // toggles; o caminho de autenticacao + limitador para a primeira falha da
-    // janela) — e ela, e so ela, tira o nome desta lista e o poe na lista de
-    // emitidos acima. Se um emissor chegar antes, este teste fica vermelho.
+    // Quando o emissor chegar (Onda 6, caminho de autenticacao + limitador),
+    // este teste fica vermelho e obriga a mover o nome para a lista de emitidos.
     const excecoes = new Set(['audit/events.ts', 'audit/notify.ts'])
     const pendentes: ReadonlyArray<readonly [nome: string, costura: string]> = [
       ['auth_falha_primeira_janela', 'caminho de autenticacao + limitador (por janela de 10 min)'],
       ['EVENTO_AUTH_FALHA_JANELA', 'caminho de autenticacao + limitador (por janela de 10 min)'],
-      ['tunel_ligar', 'controlador de T5.1 (toggle ligar, origem no sufixo)'],
-      ['EVENTO_TUNEL_LIGAR', 'controlador de T5.1 (toggle ligar, origem no sufixo)'],
-      ['tunel_desligar', 'controlador de T5.1 (toggle desligar, origem no sufixo)'],
-      ['EVENTO_TUNEL_DESLIGAR', 'controlador de T5.1 (toggle desligar, origem no sufixo)'],
     ]
     const achados: string[] = []
     for (const raiz of ['../../../src', '../../../worker']) {
@@ -323,7 +341,43 @@ describe('o vocabulario fechado', () => {
     assert.deepEqual(
       achados,
       [],
-      'nenhum emissor escreve os nomes PENDENTE hoje — quando a costura os emitir, este teste obriga a atualizar a lista',
+      'nenhum emissor escreve os nomes PENDENTE hoje — auth_falha_primeira_janela continua sem emissor (Onda 6)',
+    )
+  })
+
+  it('HONESTIDADE (costura): os nomes marcados EMITIDOS tem emissor real em src/', () => {
+    // O ESPELHO do teste acima: a lista de emitidos nao pode mentir no sentido
+    // contrario — um nome declarado "emitido" tem de ter o seu literal escrito
+    // por um emissor fora do vocabulario. A COSTURA da Onda 5 registou os
+    // toggles porque o controlador de T5.1 (src/control/controller.ts) os
+    // emite: os literais EVENTO_LIGAR/EVENTO_DESLIGAR/EVENTO_RESET vivem la e a
+    // composicao passa por comporEventoToggle/comporEventoReset (A5: origem
+    // vazia recusada). Se um dia o emissor deixar de escrever o nome, este
+    // teste fica vermelho.
+    const excecoes = new Set(['audit/events.ts', 'audit/notify.ts'])
+    const emitidos: ReadonlyArray<readonly [nome: string, emissor: string]> = [
+      ['tunel_ligar', 'src/control/controller.ts (EVENTO_LIGAR + comporEventoToggle)'],
+      ['EVENTO_LIGAR', 'src/control/controller.ts (constante do emissor)'],
+      ['tunel_desligar', 'src/control/controller.ts (EVENTO_DESLIGAR + comporEventoToggle)'],
+      ['EVENTO_DESLIGAR', 'src/control/controller.ts (constante do emissor)'],
+      ['tunel_reset', 'src/control/controller.ts (EVENTO_RESET + comporEventoReset)'],
+      ['EVENTO_RESET', 'src/control/controller.ts (constante do emissor)'],
+    ]
+    let encontrado = false
+    for (const raiz of ['../../../src', '../../../worker']) {
+      for (const arquivo of globSync('**/*.ts', { cwd: new URL(raiz, import.meta.url) })) {
+        if (excecoes.has(arquivo)) continue
+        const texto = readFileSync(new URL(`${raiz}/${arquivo}`, import.meta.url), 'utf8')
+        for (const [nome] of emitidos) {
+          if (texto.includes(nome)) encontrado = true // um emissor real escreve o literal
+        }
+      }
+    }
+    assert.ok(
+      encontrado,
+      `nenhum emissor fora do vocabulario escreve os nomes EMITIDOS (${emitidos.map(([n]) => n).join(', ')}): ` +
+        'se o emissor deixou de emitir, o nome volta para a lista PENDENTE — ' +
+        'a lista de emitidos nao pode mentir sobre o codigo.',
     )
   })
 
@@ -335,6 +389,12 @@ describe('o vocabulario fechado', () => {
   it('A5: comporEventoToggle RECUSA origem vazia — `tunel_ligar:` nao entra no log', () => {
     assert.throws(() => comporEventoToggle('ligar', ''), /EVENTO_TOGGLE_SEM_ORIGEM/u)
     assert.throws(() => comporEventoToggle('desligar', ''), /EVENTO_TOGGLE_SEM_ORIGEM/u)
+  })
+
+  it('comporEventoReset produz o nome completo e RECUSA origem vazia (A5, CTL-012)', () => {
+    assert.equal(comporEventoReset('telegram:123456'), 'tunel_reset:telegram:123456')
+    assert.equal(comporEventoReset('ui:native'), 'tunel_reset:ui:native')
+    assert.throws(() => comporEventoReset(''), /EVENTO_TOGGLE_SEM_ORIGEM/u)
   })
 
   it('eventoDoVocabulario reconhece as formas REAIS e recusa as malformadas', () => {
@@ -378,6 +438,7 @@ describe('o vocabulario fechado', () => {
       'auditoria_lacuna:7',
       'tunel_ligar:telegram:123',
       'tunel_desligar:painel:a1b2c3d4',
+      'tunel_reset:ui:native',
     ]) {
       assert.equal(eventoDoVocabulario(nome), true, `${nome} pertence ao vocabulario`)
     }
@@ -387,8 +448,10 @@ describe('o vocabulario fechado', () => {
       'sessao_nova_extra',
       'tunel_ligar', // o prefixo SEM sufixo nao designa ninguem (a uniao so tem a forma com sufixo)
       'tunel_desligar',
+      'tunel_reset',
       'tunel_ligar:', // origem vazia (A5): nao designa ninguem
       'tunel_desligar:',
+      'tunel_reset:',
       'auth_falha', // nome incompleto do vocabulario
       'login_ok',
       'auditoria_lacuna_extra:1',

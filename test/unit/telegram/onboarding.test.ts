@@ -37,14 +37,9 @@ import { describe, it } from 'node:test'
 import { promisify } from 'node:util'
 
 import {
-  AVISOS_ANTES_DO_TUNEL,
   CHAVE_DO_TOKEN,
   MODO_DO_SECRETS_ENV,
   OnboardingError,
-  TITULO_PRONTO,
-  TITULO_SEM_DONO,
-  TITULO_SEM_TOKEN,
-  TITULO_TOKEN_INVALIDO,
   analisarArgumentos,
   analisarSecretsEnv,
   caminhoApresentavel,
@@ -60,6 +55,14 @@ import {
   type EstadoOnboarding,
   type RetratoDoAmbiente,
 } from '../../../src/telegram/onboarding.ts'
+// Os TEXTO do onboarding vivem em texts.ts desde a costura da Onda 5 (item 6).
+import {
+  AVISOS_ANTES_DO_TUNEL,
+  TITULO_PRONTO,
+  TITULO_SEM_DONO,
+  TITULO_SEM_TOKEN,
+  TITULO_TOKEN_INVALIDO,
+} from '../../../src/telegram/texts.ts'
 import { statePathsAt } from '../../../src/state/paths.ts'
 import { makeTempStateDir } from '../../support/state-dir.ts'
 

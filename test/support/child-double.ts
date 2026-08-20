@@ -44,7 +44,15 @@ import type { SupervisorDeps } from '../../src/proc/supervisor.ts'
 export class FakeSubprocessHandle {
   readonly stdout = new PassThrough()
   readonly stderr = new PassThrough()
-  readonly stdin = undefined
+  /**
+  * `stdin` do filho: um pipe REAL, para o sentido host -> worker ser
+  * observavel (a EMENDA-COSTURA-5 envia pairing.owner no boot — 8c). O
+  * assento real entrega `Readable | Writable`; aqui um PassThrough acumula o
+  * que o host escreve.
+  */
+  readonly stdin = new PassThrough()
+  /** Linhas JSONL que o host escreveu no stdin (observabilidade do duble). */
+  readonly stdinLines: string[] = []
   readonly collected = {}
   readonly done: Promise<SubprocessOutcome>
   /** Chamadas a `terminate()` (observabilidade do duble). */
@@ -67,6 +75,11 @@ export class FakeSubprocessHandle {
 
     signal?.addEventListener('abort', (): void => {
       this.terminate()
+    })
+    this.stdin.on('data', (chunk: Buffer) => {
+      for (const linha of chunk.toString('utf8').split('\n')) {
+        if (linha.trim() !== '') this.stdinLines.push(linha)
+      }
     })
   }
 

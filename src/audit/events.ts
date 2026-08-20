@@ -140,16 +140,22 @@ import { PLUGIN_NAME } from '../errors.ts'
  *                                    e forjavel. O emissor (o caminho de
  *                                    autenticacao, junto do limitador) ainda nao
  *                                    existe; a composicao esta pronta.
- *   - `tunel_ligar:<origem>` / `tunel_desligar:<origem>` — PENDENTE (costura):
- *                                    todo toggle do tunel com a ORIGEM no sufixo
+ *   - `tunel_ligar:<origem>` / `tunel_desligar:<origem>` — EMITIDOS: o
+ *                                    controlador de T5.1 (`src/control/controller.ts`,
+ *                                    costura da Onda 5) escreve todo toggle do
+ *                                    tunel com a ORIGEM no sufixo
  *                                    (`tunel_ligar:telegram:123` /
- *                                    `tunel_desligar:painel:<idHash>`). O
- *                                    controlador de T5.1 (`src/control/controller.ts`)
- *                                    e esqueleto nesta arvore; o emissor e a
- *                                    costura pos-onda. O contrato `AuditEvent`
- *                                    nao tem campo de origem e a lista branca de
+ *                                    `tunel_desligar:painel:<idHash>`), via
+ *                                    `comporEventoToggle` (que RECUSA origem
+ *                                    vazia — A5). O contrato `AuditEvent` nao
+ *                                    tem campo de origem e a lista branca de
  *                                    `format.ts` descarta campos a mais — o
  *                                    sufixo e o unico sitio onde ela viaja.
+ *   - `tunel_reset:<origem>`         — EMITIDO: o mesmo controlador de T5.1
+ *                                    escreve o reset do estado terminal com a
+ *                                    MESMA regra de origem no sufixo
+ *                                    (`src/control/controller.ts`, via
+ *                                    `comporEventoReset`).
  *
  * ORDEM E CONTRATO (03-ONDAS 10): todo evento deste vocabulario e escrito no
  * AuditSink ANTES de virar notificacao. O consumidor em `src/audit/notify.ts`
@@ -184,9 +190,12 @@ export const EVENTO_AUTH_SEGREDO_INDISPONIVEL = 'auth_segredo_indisponivel'
  */
 export const EVENTO_AUTH_FALHA_JANELA = 'auth_falha_primeira_janela'
 
-/** Prefijos dos toggles. PENDENTE (costura): o emissor e o controlador de T5.1. */
+/** Prefixos dos toggles. EMITIDOS: o controlador de T5.1 (costura da Onda 5). */
 export const EVENTO_TUNEL_LIGAR = 'tunel_ligar'
 export const EVENTO_TUNEL_DESLIGAR = 'tunel_desligar'
+
+/** Prefixo do reset do estado terminal. EMITIDO: o controlador de T5.1 (costura da Onda 5). */
+export const EVENTO_TUNEL_RESET = 'tunel_reset'
 
 /**
  * O TTL expirou e o tunel foi derrubado (controlo a agir, nao erro).
@@ -275,15 +284,41 @@ export function comporEventoToggle(acao: TunelToggleAcao, origem: string): Tunel
 }
 
 /**
- * Evento de toggle do tunel. PENDENTE (costura): o emissor (o controlador de
- * T5.1) ainda nao escreve este nome. O sufixo de origem e OBRIGATORIO na forma
- * da familia; a forma NAO consegue excluir o sufixo vazio (o `${{string}}` do
- * template aceita `''`) — quem exclui o vazio e `comporEventoToggle` e o
- * reconhecedor `eventoDoVocabulario`.
+ * Evento de toggle do tunel. EMITIDO: o controlador de T5.1
+ * (`src/control/controller.ts`, costura da Onda 5). O sufixo de origem e
+ * OBRIGATORIO na forma da familia; a forma NAO consegue excluir o sufixo vazio
+ * (o `${{string}}` do template aceita `''`) — quem exclui o vazio e
+ * `comporEventoToggle` e o reconhecedor `eventoDoVocabulario`.
  */
 export interface TunelToggleEvent extends AuditEvent {
   readonly evento: `tunel_ligar:${string}` | `tunel_desligar:${string}`
   readonly resultado: 'permitido'
+}
+
+/**
+ * Evento de reset do estado terminal (FAILED -> STOPPED, CTL-012). EMITIDO: o
+ * controlador de T5.1 (`src/control/controller.ts`, costura da Onda 5), com a
+ * MESMA regra de origem do toggle — sufixo OBRIGATORIO e nao vazio.
+ */
+export interface TunelResetEvent extends AuditEvent {
+  readonly evento: `tunel_reset:${string}`
+  readonly resultado: 'permitido' | 'negado'
+}
+
+/**
+ * Compoe o NOME do evento de reset com a origem identificada — o mesmo
+ * contrato de `comporEventoToggle` para a terceira acao do controlador
+ * (CTL-012: reset em FAILED). RECUSA ORIGEM VAZIA: `tunel_reset:` nao designa
+ * ninguem.
+ */
+export function comporEventoReset(origem: string): TunelResetEvent['evento'] {
+  if (origem.length === 0) {
+    throw new Error(
+      `[${PLUGIN_NAME}] EVENTO_TOGGLE_SEM_ORIGEM: a origem do reset nao pode ser vazia ` +
+      '(esperado `telegram:<id>` ou `panel:<idHash>`).',
+    )
+  }
+  return `${EVENTO_TUNEL_RESET}:${origem}`
 }
 
 /**
@@ -337,6 +372,7 @@ export type AuditEventoNome =
   | typeof EVENTO_AUTH_FALHA_JANELA
   | `tunel_ligar:${string}`
   | `tunel_desligar:${string}`
+  | `tunel_reset:${string}`
   | typeof EVENTO_TTL_EXPIRADO
   | `tunel_ttl_expirado:${number}min:${TtlDetectedBy}`
   | typeof EVENTO_MODO_RESTRITO
@@ -368,10 +404,11 @@ const SUFIXO_RAJADA = /^_x[0-9]+$/u
 /**
  * Os nomes BASE (sem sufixo). A lacuna entra aqui E na familia com sufixo.
  *
- * Os PREFIXOS de toggle (`EVENTO_TUNEL_LIGAR` / `EVENTO_TUNEL_DESLIGAR`) NAO
- * entram: a uniao `AuditEventoNome` so aceita `tunel_ligar:<origem>` (a forma
- * com sufixo). O nome sem sufixo nao designa ninguem — e o mesmo defeito que
- * `comporEventoToggle` e `eventoDoVocabulario` recusam no sufixo vazio.
+ * Os PREFIXOS de toggle (`EVENTO_TUNEL_LIGAR` / `EVENTO_TUNEL_DESLIGAR` / o
+ * reset `EVENTO_TUNEL_RESET`) NAO entram: a uniao `AuditEventoNome` so aceita
+ * `tunel_ligar:<origem>` (a forma com sufixo). O nome sem sufixo nao designa
+ * ninguem — e o mesmo defeito que `comporEventoToggle`/`comporEventoReset` e
+ * `eventoDoVocabulario` recusam no sufixo vazio.
  */
 const NOMES_BASE: ReadonlySet<string> = new Set([
   EVENTO_SESSAO_NOVA,
@@ -432,6 +469,10 @@ export function eventoDoVocabulario(nome: string): boolean {
 
   const sufixoDesligar = sufixoDe(nome, EVENTO_TUNEL_DESLIGAR)
   if (sufixoDesligar !== undefined) return nome.length > EVENTO_TUNEL_DESLIGAR.length + 1
+
+  const sufixoReset = sufixoDe(nome, EVENTO_TUNEL_RESET)
+  // A mesma regra dos toggles: `tunel_reset:` (origem vazia) nao designa ninguem.
+  if (sufixoReset !== undefined) return nome.length > EVENTO_TUNEL_RESET.length + 1
 
   for (const base of [EVENTO_MAGIC_SUSPEITO, EVENTO_PAINEL_SEGREDO_RECUSA_ANONIMA, EVENTO_PAINEL_CSRF_RECUSADO]) {
     const sufixoRajada = sufixoDe(nome, base)

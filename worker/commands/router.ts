@@ -333,10 +333,12 @@ export interface ApiDoBot {
 
 /**
  * Nonce de confirmacao das acoes que AUMENTAM exposicao. O worker NAO o gera
- * nem o valida (S5): pede-o ao HOST e transporta-o opaco. `undefined` = host
- * indisponivel — o comando falha FECHADO, nenhum intent sai.
+ * nem o valida (S5): pede-o ao HOST pelo canal (EMENDA-COSTURA-5 —
+ * `nonce.request`/`nonce.issued`) e transporta-o opaco. A resposta e
+ * ASSINCRONA (o host responde pelo pipe); `undefined` = host indisponivel ou
+ * timeout — o comando falha FECHADO, nenhum intent sai (CTL-023).
  */
-export type EmitirNonce = (acao: IpcIntentName) => string | undefined
+export type EmitirNonce = (acao: IpcIntentName) => Promise<string | undefined>
 
 /** O que a superficie oferece aos comandos (onoff/access/status). */
 export interface ContextoDoComando {

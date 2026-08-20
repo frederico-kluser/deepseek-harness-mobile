@@ -92,6 +92,7 @@ describe('RECUSA_MOTIVO', () => {
       'NONCE_AUSENTE',
       'NONCE_INVALIDO',
       'NONCE_EXPIRADO',
+      'TERMINAL_SEM_RESET', // desde a costura (W3): a rota de reset existe
     ]
     for (const codigo of codigos) {
       const motivo = RECUSA_MOTIVO[codigo]
@@ -101,14 +102,13 @@ describe('RECUSA_MOTIVO', () => {
     assert.deepEqual(Object.keys(RECUSA_MOTIVO).toSorted(), [...codigos].toSorted())
   })
 
-  it('TERMINAL_SEM_RESET nao tem rotulo DE PROPOSITO — e codigo morto ate a costura acrescentar a rota de reset', () => {
-    // Em FAILED os dois botoes desativam e nao ha rota de reset nesta
-    // superficie; a recusa nunca chega pelo caminho de UI. Um rotulo para ela
-    // prometeria uma rota que nao existe. A costura pos-onda acrescenta
-    // `POST /__guard-ui/api/reset` — quando a rota nascer, o rotulo volta.
-    assert.deepEqual(RECUSA_SEM_ROTULO, ['TERMINAL_SEM_RESET'])
-    assert.equal(RECUSA_MOTIVO.TERMINAL_SEM_RESET, undefined)
-    assert.equal(motivoDaRecusa('TERMINAL_SEM_RESET'), undefined)
+  it('TERMINAL_SEM_RESET TEM rotulo desde a costura (W3): a rota de reset existe', () => {
+    // A COSTURA da Onda 5 (W3) acrescentou `POST /__guard-ui/api/reset` e o
+    // confirm — FAILED so sai por reset humano (CTL-012) e a recusa de um
+    // reset forjado chega a UI. O rotulo deixa de ser codigo morto.
+    assert.deepEqual(RECUSA_SEM_ROTULO, [])
+    assert.ok(typeof RECUSA_MOTIVO.TERMINAL_SEM_RESET === 'string')
+    assert.ok(typeof motivoDaRecusa('TERMINAL_SEM_RESET') === 'string')
   })
 })
 

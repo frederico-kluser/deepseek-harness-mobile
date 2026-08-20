@@ -80,8 +80,9 @@ export function criarOnOff(ctx: ContextoDoComando): ComandosOnOff {
 
   return {
     async ligar(identidade): Promise<void> {
-      // 1a etapa: pedir o nonce ao host. OPACO — o worker nao o le (S5).
-      const nonce = ctx.emitirNonce('tunnel.up')
+      // 1a etapa: pedir o nonce ao host pelo canal (EMENDA-COSTURA-5). OPACO — o
+      // worker nao o le (S5). A resposta chega pelo pipe, por isso o `await`.
+      const nonce = await ctx.emitirNonce('tunnel.up')
       if (nonce === undefined) {
         // Fail-closed (CTL-023): sem nonce nao ha confirmacao possivel, e sem
         // confirmacao nao ha intent. O dono fica a saber o porquê.

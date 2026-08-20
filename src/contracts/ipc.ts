@@ -2,6 +2,13 @@
  * Contrato do canal IPC host <-> worker do Telegram. CONGELADO no COMMIT PREP 4;
  * EMENDADO pelo COMMIT PREP 5, que acrescentou `notify` e `pairing.challenge`.
  *
+ * EMENDA-COSTURA-5 (costura da Onda 5, a RATIFICAR no COMMIT PREP 6): acrescenta
+ * `nonce.request` e `nonce.issued` — o transporte do nonce de confirmacao de
+ * 2 etapas entre o worker e o host. O worker NAO gera nem valida nonce (S5);
+ * pede-o por `nonce.request` e recebe-o por `nonce.issued`, sempre OPACO e
+ * NUNCA logado (S3). Antes desta emenda o fluxo de /ligar do Telegram nao
+ * fechava ponta a ponta (BLOQUEIO T5.2 reportado no handoff).
+ *
  * LEITURA LIVRE, ESCRITA PROIBIDA na Onda 5 (03-ONDAS.md 16).
  *
  * ===========================================================================
@@ -117,6 +124,16 @@
  * tem de rejeitar antes de o update chegar ao canal, senao o host vira
  * executor de qualquer coisa que a internet mande.
  */
+// EMENDA-COSTURA-5: `ControlAction` do contrato de controlo (PREP 5,
+// `./control.ts`) e o vocabulario do campo `acao` de `nonce.request`/`nonce.issued`.
+// Nao ha ciclo: `control.ts` so importa de `./tunnel.ts`.
+import type { ControlAction } from './control.ts'
+
+// Re-export para o worker: a regra de fronteira de modulo (05-QUALIDADE 5.5)
+// so lhe permite importar de `src/` ESTE ficheiro — o tipo viaja por aqui,
+// nao por um import novo de `./control.ts`.
+export type { ControlAction }
+
 export const IPC_PROTOCOL_VERSION = 1
 
 /** Toda mensagem carrega a versao. Versao desconhecida cai na regra S4. */
@@ -330,6 +347,66 @@ export interface IpcPairingChallengeMessage extends IpcEnvelope {
   readonly expiresAt: number
 }
 
+/**
+ * >>> EMENDA-COSTURA-5 (a RATIFICAR no COMMIT PREP 6): pedido de nonce. <<<
+ *
+ * worker -> host. O worker NAO gera nem valida nonce (S5); quando uma acao que
+ * AUMENTA exposicao (/ligar, /rotacionar) precisa de confirmacao, pede-o ao
+ * HOST por esta mensagem. `acao` e a `ControlAction` do contrato de controlo
+ * (PREP 5, `./control.ts`) para a qual o nonce sera emitido e consumido
+ * (`start` / `reset`). `requestId` correlaciona o pedido com a resposta
+ * `nonce.issued` — o host reutiliza-o na resposta.
+ */
+export interface IpcNonceRequestMessage extends IpcEnvelope {
+  readonly type: 'nonce.request'
+  /** A acao de controlo que o nonce vai autorizar (start/reset). */
+  readonly acao: ControlAction
+  /** Correlaciona pedido e resposta. NAO e a chave de idempotencia do intent. */
+  readonly requestId: string
+}
+
+/**
+ * >>> EMENDA-COSTURA-5 (a RATIFICAR no COMMIT PREP 6): nonce emitido. <<<
+ *
+ * host -> worker, resposta a `nonce.request`. `nonce` e o valor OPACO do
+ * `ConfirmService` de T5.1 (`src/control/confirm.ts`): o worker apenas o
+ * transporta dentro do `callback_data` / do intent — nao o le, nao o valida,
+ * nao o loga (S3/S5). `expiresAt` e o prazo do nonce (TTL 60 s decidido no
+ * host); o worker pode usá-lo para expirar o teclado de confirmacao.
+ */
+export interface IpcNonceIssuedMessage extends IpcEnvelope {
+  readonly type: 'nonce.issued'
+  /** A acao de controlo para a qual o nonce foi emitido. */
+  readonly acao: ControlAction
+  /** O `requestId` do pedido que originou esta resposta. */
+  readonly requestId: string
+  /** Valor opaco (128 bits em hex). NUNCA em log, NUNCA no texto do Telegram. */
+  readonly nonce: string
+  /** Epoch ms em que o nonce deixa de valer. */
+  readonly expiresAt: number
+}
+
+/**
+ * >>> EMENDA-COSTURA-5 (a RATIFICAR no COMMIT PREP 6): dono persistido no boot. <<<
+ *
+ * host -> worker. Num reboot com pareamento ja fechado no `state.json`, o
+ * worker NAO sabe quem e o dono (o ambiente e construido por allowlist e nao
+ * transporta ids) e nasceria 'aberto' com o desafio morto — o dono ficaria
+ * trancado para fora. Esta mensagem entrega os DOIS EIXOS do dono persistido
+ * (from/chat — os mesmos que `src/contracts/state.ts` grava), e o worker
+ * re-monta o receptor com `owner` (T4.4 ja suporta a semeadura): `fechado`,
+ * allowlist ativa e `/parear` recusado, sem nova parelha. NAO e segredo (S3)
+ * e NAO autoriza nada por si: quem valida intents e o HOST (S6).
+ */
+export interface IpcPairingOwnerMessage extends IpcEnvelope {
+  readonly type: 'pairing.owner'
+  /** `from.id` do dono gravado. Numerico. */
+  readonly from: number
+  /** `chat.id` do dono gravado. Numerico; em grupo e o id do grupo. */
+  readonly chat: number
+  /** Epoch ms do pareamento original. */
+  readonly pairedAt: number
+}
 // ---------------------------------------------------------------------------
 // A uniao
 // ---------------------------------------------------------------------------
@@ -344,9 +421,11 @@ export type IpcMessageToWorker =
   | IpcErrorMessage
   | IpcNotifyMessage
   | IpcPairingChallengeMessage
+  | IpcNonceIssuedMessage
+  | IpcPairingOwnerMessage
 
-/** worker -> host. */
-export type IpcMessageFromWorker = IpcIntentMessage
+/** worker -> host. A EMENDA-COSTURA-5 acrescentou `nonce.request`. */
+export type IpcMessageFromWorker = IpcIntentMessage | IpcNonceRequestMessage
 
 export type IpcMessage = IpcMessageToWorker | IpcMessageFromWorker
 

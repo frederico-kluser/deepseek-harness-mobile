@@ -13,8 +13,8 @@ import { describe, it } from 'node:test'
 import {
   criarAllowlistDinamica,
   criarDespachoDoCanal,
+  criarPonteDeNonce,
   desafioMorto,
-  emitirNonceDeProducao,
   montarSuperficie,
 } from '../../../../worker/commands/costura.ts'
 import {
@@ -24,6 +24,12 @@ import {
 } from '../../../../worker/commands/router.ts'
 import { parseCallbackData } from '../../../../worker/auth/guard.ts'
 import { createPairingReceiver } from '../../../../worker/auth/pairing.ts'
+import { createConfirmService } from '../../../../src/control/confirm.ts'
+import { criarRespondedorDeNonce } from '../../../../src/control/surface-ipc.ts'
+import type { ControlAction } from '../../../../src/contracts/control.ts'
+import type { IpcMessageToWorker } from '../../../../src/contracts/ipc.ts'
+import type { TunnelController } from '../../../../src/control/controller.ts'
+import { FakeClock } from '../../../support/clock.ts'
 import {
   callbackQuery,
   dmMessage,
@@ -31,7 +37,7 @@ import {
   pairCommand,
   STRANGER,
 } from '../../../support/fixtures/telegram/updates.ts'
-import { digestDoCodigo, montarBancada, tick, type Bancada } from './apoio.ts'
+import { captureLog, digestDoCodigo, FakeTime, montarBancada, tick, type Bancada } from './apoio.ts'
 
 
 /* ========================================================================== */
@@ -62,7 +68,7 @@ describe('criarDespachoDoCanal — uma entrada por tipo, sem switch', () => {
     assert.ok(bancada.api.mensagens.some((m) => m.texto.includes('erro de teste')))
   })
 
-  it('a tabela tem exactamente as cinco chaves do vocabulario host -> worker', () => {
+  it('a tabela tem exactamente as SEIS chaves do vocabulario host -> worker (EMENDA-COSTURA-5: + nonce.issued)', () => {
     const despacho = criarDespachoDoCanal({
       onState: () => undefined,
       onAck: () => undefined,
@@ -71,7 +77,10 @@ describe('criarDespachoDoCanal — uma entrada por tipo, sem switch', () => {
       onPairingChallenge: () => undefined,
       tratarUpdate: async () => undefined,
     })
-    assert.deepEqual(Object.keys(despacho).toSorted(), ['ack', 'error', 'notify', 'pairing.challenge', 'state'])
+    assert.deepEqual(
+      Object.keys(despacho).toSorted(),
+      ['ack', 'error', 'nonce.issued', 'notify', 'pairing.challenge', 'state'],
+    )
   })
 })
 
@@ -287,23 +296,167 @@ describe('montarSuperficie — a composicao de producao', () => {
     assert.ok(pairing !== undefined)
     assert.ok(roteador !== undefined)
   })
+describe('8(c): dono persistido semeado na montagem — o worker reaprende sem nova parelha', () => {
+  it('montarSuperficie com donoInicial nasce FECHADO: allowlist aceita o dono e /parear e recusado', async () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    const { guard, pairing, roteador } = montarSuperficie({
+      log: log.logger,
+      time,
+      api: {
+        sendMessage: async () => ({ message_id: 1 }),
+        editMessageText: async () => ({ ok: true }),
+        answerCallbackQuery: async () => true,
+      },
+      ipc: { send: () => true, log: () => undefined, dispose: () => undefined },
+      donoInicial: { from: 42, chat: -1001234567890, pairedAt: 2_000 },
+      parar: async () => undefined,
+    })
+    void roteador
+    assert.deepEqual(pairing.state(), { status: 'fechado', owner: { from: 42, chat: -1001234567890, pairedAt: 2_000 } })
+    // A allowlist aceita os DOIS eixos do dono reaprendido:
+    assert.equal(guard.admit(dmMessage(42, '/status')).kind !== 'discarded', true, 'from do dono passa')
+    // /parear e recusado a partida (o segundo pareamento nao existe):
+    const parear = pairing.receive(dmMessage(42, '/parear 123456'))
+    assert.equal(parear.kind, 'refused')
+    assert.equal(guard.admit(dmMessage(999, '/status')).kind, 'discarded', 'um estranho continua fora')
+  })
+})
 
-  it('A3-b: o porte emitirNonce de producao falha FECHADO e AVISA (BLOQUEIO T5.2)', () => {
-    // O fallback de producao, exercitado DE VERDADE: devolve undefined (nenhum
-    // nonce inventado — S5) e avisa o operador, para o botao nao morrer em
-    // silencio.
-    const avisos: string[] = []
-    const emitir = emitirNonceDeProducao({
-      debug: () => undefined,
-      info: () => undefined,
-      error: () => undefined,
-      warn: (mensagem: string) => {
-        avisos.push(mensagem)
+  it('EMENDA-COSTURA-5: emitir pede o nonce ao host (nonce.request) e devolve o valor de nonce.issued', async () => {
+    // O fluxo de producao do /ligar: o worker pede pelo CANAL (nunca inventa —
+    // S5) e o host responde pelo pipe. O valor viaja opaco e NUNCA e logado (S3).
+    const time = new FakeTime()
+    const log = captureLog()
+    const enviadas: Array<{ type?: unknown; acao?: unknown; requestId?: unknown }> = []
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: {
+        send: (msg) => {
+          enviadas.push(msg as { type?: unknown; acao?: unknown; requestId?: unknown })
+          return true
+        },
+        log: () => undefined,
+        dispose: () => undefined,
       },
     })
-    assert.equal(emitir('tunnel.up'), undefined, 'falha fechado: sem nonce nao ha confirmacao')
-    assert.equal(avisos.length, 1, 'o operador e avisado')
-    assert.match(avisos[0] ?? '', /BLOQUEIO T5.2/u)
+
+    const pedido = ponte.emitir('tunnel.up')
+    assert.equal(enviadas.length, 1, 'o nonce.request saiu pelo canal')
+    assert.equal(enviadas[0]?.type, 'nonce.request')
+    assert.equal(enviadas[0]?.acao, 'start', 'tunnel.up mapeia para a ControlAction start')
+    const requestId = enviadas[0]?.requestId
+    assert.ok(typeof requestId === 'string' && requestId.length > 0)
+
+    // O host responde (como criarRespondedorDeNonce faria):
+    ponte.onMessage({
+      v: 1,
+      type: 'nonce.issued',
+      acao: 'start',
+      requestId,
+      nonce: 'nonce-opaco-do-host',
+      expiresAt: time.now() + 60_000,
+    })
+    assert.equal(await pedido, 'nonce-opaco-do-host')
+    assert.ok(!log.all().includes('nonce-opaco-do-host'), 'S3: o nonce nao vai ao log')
+  })
+
+  it('EMENDA-COSTURA-5: timeout fail-closed — sem nonce.issued a tempo, resolve undefined', async () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: () => true, log: () => undefined, dispose: () => undefined },
+    })
+
+    const pedido = ponte.emitir('tunnel.up')
+    await tick() // o sono injetado resolve: o timeout corre
+    assert.equal(await pedido, undefined, 'sem nonce a tempo, a confirmacao fica indisponivel (CTL-023)')
+    assert.match(log.all(), /nao chegou a tempo/u, 'o operador e avisado')
+  })
+
+  it('EMENDA-COSTURA-5: canal indisponivel falha FECHADO ja, sem esperar o timeout', async () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: () => false, log: () => undefined, dispose: () => undefined },
+    })
+    assert.equal(await ponte.emitir('tunnel.up'), undefined, 'sem canal nao ha pedido')
+    assert.match(log.all(), /sem canal para o host/u, 'o operador e avisado')
+  })
+
+  it('EMENDA-COSTURA-5: um error do host a um pedido de nonce falha fechado JA e nao vai ao roteador', async () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    const enviadas: Array<{ requestId?: unknown }> = []
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: {
+        send: (msg) => {
+          enviadas.push(msg as { requestId?: unknown })
+          return true
+        },
+        log: () => undefined,
+        dispose: () => undefined,
+      },
+    })
+    const pedido = ponte.emitir('tunnel.up')
+    const requestId = enviadas[0]?.requestId
+    assert.ok(typeof requestId === 'string')
+    // O host recusa (ex.: modo loopback): EXPOSURE_DISABLED como error.
+    const consumido = ponte.onMessage({
+      v: 1,
+      type: 'error',
+      requestId,
+      code: 'EXPOSURE_DISABLED',
+      message: 'exposicao desativada',
+    })
+    assert.equal(consumido, true, 'o error do pedido de nonce e consumido pela ponte')
+    assert.equal(await pedido, undefined, 'falha fechado ja, sem esperar o timeout')
+  })
+
+  it('EMENDA-COSTURA-5: request -> issued fecha ponta a ponta (ponte do worker + responder do host)', async () => {
+    // As DUAS metades do transporte, ligadas por um canal fake: o worker pede
+    // pelo pipe, o HOST (ConfirmService real de T5.1 via criarRespondedorDeNonce)
+    // emite e responde, e a ponte entrega o valor opaco ao comando. O mesmo
+    // nonce que viajou e CONSUMIVEL no controlador (uso unico — CTL-021).
+    const clock = new FakeClock(1_000)
+    const confirm = createConfirmService({
+      now: () => clock.now(),
+      randomBytes: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+    })
+    const responder = criarRespondedorDeNonce({
+      controller: {
+        emitirNonce: (acao: ControlAction) => confirm.issue(acao),
+      } as unknown as TunnelController,
+      log: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
+    })
+    const time = new FakeTime()
+    const log = captureLog()
+    const enviadas: Array<Record<string, unknown>> = []
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: (msg) => { enviadas.push(msg as unknown as Record<string, unknown>); return true }, log: () => undefined, dispose: () => undefined },
+    })
+
+    const pedido = ponte.emitir('tunnel.up')
+    const request = enviadas[0] as { type?: string; acao?: string; requestId?: string }
+    assert.equal(request?.type, 'nonce.request')
+    // O canal entrega ao HOST; o HOST responde; o canal devolve a resposta:
+    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'start', requestId: request?.requestId ?? '' })
+    assert.equal(resposta.type, 'nonce.issued')
+    ponte.onMessage(resposta as IpcMessageToWorker)
+    const nonce = await pedido
+    assert.ok(nonce !== undefined && nonce.length === 32, 'o nonce real do host chegou ao worker')
+    // E o mesmo nonce autoriza (e so autoriza uma vez) um start no controlador:
+    assert.equal(confirm.consume(nonce, 'start'), true, 'uso unico: autoriza uma vez')
+    assert.equal(confirm.consume(nonce, 'start'), false, 'uso unico: replay recusado (CTL-021)')
   })
 })
 

@@ -54,7 +54,7 @@ import { createServer as createNetServer, type Server as TcpServer } from 'node:
 import type { AuditSink } from './contracts/auth.ts'
 import { registerSessaoNovaObserver } from './audit/events.ts'
 import { resolveAuditLogPath } from './audit/log.ts'
-import { criarObservadorSessaoNova } from './audit/notify.ts'
+import { criarCoalescedor, criarObservadorSessaoNova, criarRelatorioPeriodico } from './audit/notify.ts'
 import { assertValidConfig } from './config/assert.ts'
 import { assertSecureBind } from './config/bind.ts'
 import { resolveControl, resolveExposure, shouldAutoStartTunnel, type Config } from './config/schema.ts'
@@ -62,17 +62,25 @@ import type { StateStore } from './contracts/state.ts'
 import { IPC_PROTOCOL_VERSION, type IpcIntentMessage } from './contracts/ipc.ts'
 import { createConfirmService } from './control/confirm.ts'
 import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelController } from './control/controller.ts'
-import { criarRespondedorIpc } from './control/surface-ipc.ts'
+import { criarRespondedorDeNonce, criarRespondedorIpc } from './control/surface-ipc.ts'
 import { resolveWebServerHttpServer, type Context, type Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
 import { createGuardedHandler, createGuardedUpgradeHandler, type GateDeps } from './http/gate.ts'
 import { installAuthBarrier } from './http/intercept.ts'
 import {
   createGateAuthStack,
+  createRequestOriginResolver,
   createTunnelOriginRegistry,
   type GateAuth,
   type GateAuthStack,
 } from './http/session-auth.ts'
+import type { TunnelSnapshot } from './contracts/tunnel.ts'
+import { createCsrfGuard } from './panel/csrf.ts'
+import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
+import { createOneTimeTokenStore } from './secret/ott.ts'
+import { createMagicStore } from './session/magic.ts'
+import { createNativeUiSurface } from './ui-contrib/surface.ts'
+import type { WebRoute } from './dsh/adapter.ts'
 
 /**
  * O RESOLUTOR DE ORIGEM DO PAINEL -- reexportado, e agora o UNICO que existe.
@@ -279,7 +287,12 @@ function recuperarBoot(
     readonly auditSink: Pick<AuditSink, 'append'>
     readonly notificarDono: (texto: string) => void
   },
-): { readonly intencao: 'READY' | 'STOPPED'; readonly restrito: boolean } {
+): {
+  readonly intencao: 'READY' | 'STOPPED'
+  readonly restrito: boolean
+  /** O pareamento persistido, para o worker o reaprender no boot (8c). */
+  readonly pareamento: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+} {
   const persistido = store.read()
   const intencao = persistido.desiredState
   const restrito = persistido.restricted !== undefined
@@ -291,7 +304,7 @@ function recuperarBoot(
       efeitos.auditSink.append({ evento: EVENTO_ORFAO, resultado: 'permitido' })
       efeitos.notificarDono(ownerOrphanMessage())
     }
-    return { intencao, restrito }
+    return { intencao, restrito, pareamento: persistido.pairing }
   }
 
   const effects: TtlEffects = createTtlEffects({
@@ -310,7 +323,7 @@ function recuperarBoot(
     log,
   })
 
-  return { intencao, restrito }
+  return { intencao, restrito, pareamento: persistido.pairing }
 }
 
 /** Nome do PLUGIN (identidade do modulo perante o motor Cordis). */
@@ -360,6 +373,49 @@ export const inject = ['webServer', 'subprocess']
  * janela em que o plano de controlo responde sem credencial enquanto o worker
  * ainda esta vivo.
  */
+
+/**
+ * O FAN-OUT de estado para as superficies assinantes (a UI nativa de T5.5).
+ *
+ * W2 da revisao T5.5: o REPLAY IMEDIATO e CONTRATO — assinar entrega o
+ * estado corrente JA, e depois cada difusao chega por `emitir`. O desassinar
+ * e sincrono e idempotente; um observador que lance nao derruba o fan-out
+ * (best-effort, registado).
+ */
+export function criarFanoutDeEstado(lerAtual: () => { readonly seq: number; readonly snapshot: TunnelSnapshot }, log: GuardLogger): {
+  assinar(listener: (broadcast: { readonly seq: number; readonly snapshot: TunnelSnapshot }) => void): () => void
+  emitir(): void
+} {
+  const observadores: Array<(broadcast: { readonly seq: number; readonly snapshot: TunnelSnapshot }) => void> = []
+  return {
+    assinar(listener) {
+      try {
+        listener(lerAtual()) // W2: o replay imediato e parte da assinatura
+      } catch (error) {
+        // Best-effort tambem aqui: um observador avariado nao pode impedir a
+        // assinatura (nem o seu desassinar) de existir.
+        log.warn(
+          `observador de estado falhou no replay imediato: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      observadores.push(listener)
+      return (): void => {
+        const indice = observadores.indexOf(listener)
+        if (indice !== -1) observadores.splice(indice, 1)
+      }
+    },
+    emitir(): void {
+      const atual = lerAtual()
+      for (const observador of observadores.slice()) {
+        try {
+          observador(atual)
+        } catch (error) {
+          log.warn(`observador de estado falhou: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+    },
+  }
+}
 export function apply(ctx: Context, config: Config): void {
   /* --- 1. Validacao ruidosa no arranque -------------------------------- */
   assertValidConfig(config)
@@ -677,6 +733,11 @@ export function apply(ctx: Context, config: Config): void {
    */
   let controladorAtual: TunnelController | undefined
   let workerSupervisor: WorkerSupervisor | undefined
+  /** O ConfirmService partilhado (controlador + responder de nonce + rotate). */
+  let confirmService: ReturnType<typeof createConfirmService> | undefined
+  /** O dono persistido lido no boot (8c) e o MagicStore partilhado (item 5). */
+  let pareamentoDoBoot: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+  let magicStoreAtual: ReturnType<typeof createMagicStore> | undefined
 
   /**
    * A difusao de estado host -> worker, com `seq` monotonico (CTL-010). A URL e
@@ -715,6 +776,23 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /**
+   * O broadcast do controlador com fan-out: o worker (difusao IPC) e a UI
+   * nativa (criarFanoutDeEstado). O observador recebe a projecao COMPLETA do
+   * controlador (snapshot + seq), nunca um delta; a assinatura faz replay
+   * imediato do estado corrente (W2 — ver criarFanoutDeEstado).
+   */
+  const fanoutDeEstado = criarFanoutDeEstado(() => {
+    const atual = controladorAtual?.snapshot()
+    return atual === undefined
+      ? { seq: 0, snapshot: { state: 'STOPPED' as const, attempts: 0 } }
+      : { seq: atual.seq, snapshot: atual }
+  }, log)
+  const broadcastControlador = (difusao: DifusaoEstado): void => {
+    difundir(difusao)
+    fanoutDeEstado.emitir()
+  }
+
+  /**
    * S6 (`src/contracts/ipc.ts`): o host RE-VERIFICA a identidade contra o
    * pareamento persistido — a verificacao no processo que fala com a internet
    * e a primeira a cair se ele for comprometido. A pilha nasce no primeiro
@@ -736,8 +814,10 @@ export function apply(ctx: Context, config: Config): void {
   /**
    * `/emergencia` (kill switch, 02-SEGURANCA L8): DEPOIS de o tunel cair (o
    * despacho `stop` resolve — "tunel primeiro, sempre"), invalida TODAS as
-   * sessoes emitidas (SESS-009) e audita com a origem. Nao derruba o processo
-   * do DSH: so a EXPOSICAO.
+   * sessoes emitidas (SESS-009), audita com a origem e — 8(b) — derruba o
+   * WORKER (o bot para e o processo sai) dispondo o supervisor, que NAO o
+   * reinicia. O que o emergency NAO derruba e o processo do DSH: so a
+   * EXPOSICAO e o worker.
    */
   const aposEmergencia = (intent: IpcIntentMessage): void => {
     try {
@@ -749,6 +829,15 @@ export function apply(ctx: Context, config: Config): void {
       authStack().audit.append({ evento: `tunel_emergencia:telegram:${String(intent.from)}`, resultado: 'permitido' })
     } catch (error) {
       log.error(`falha ao auditar o /emergencia: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    // 8(b): o emergency MATA o worker (o bot para e o processo sai) e o
+    // supervisor NAO o reinicia. Dispose() cancela o orcamento/backoff e
+    // aborta o ciclo — a terminacao do processo que se segue e tratada como
+    // intencional ("sem reinicio"). O tunel ja caiu antes (despacho stop).
+    try {
+      workerSupervisor?.dispose()
+    } catch (error) {
+      log.error(`falha ao encerrar o worker apos o /emergencia: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -805,10 +894,17 @@ export function apply(ctx: Context, config: Config): void {
       notifyOwner: difundirNotificacao,
     })
 
+    // O ConfirmService e HOISTED: o controlador consome-o e o responder de
+    // nonce (EMENDA-COSTURA-5) e o `secret.rotate` (item 5) partilham a MESMA
+    // instancia — dois servicos de nonce seriam dois universos de uso unico.
+    const confirm = createConfirmService({ now: defaultSupervisorDeps.now })
+    confirmService = confirm
+    pareamentoDoBoot = boot.pareamento
+
     const controlador = createTunnelController({
       log,
       supervisor,
-      confirm: createConfirmService({ now: defaultSupervisorDeps.now }),
+      confirm,
       agora: defaultSupervisorDeps.now,
       scheduler: defaultSupervisorDeps.scheduler,
       restritoAtivo: (): boolean => {
@@ -829,7 +925,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       requerConfirmacao: resolveControl(config).requireConfirmation,
       audit: { append: (evento) => authStack().audit.append(evento) },
-      broadcast: difundir,
+      broadcast: broadcastControlador,
       persistirIntencao: (alvo) => {
         try {
           authStack().state.update((estado) => ({ ...estado, desiredState: alvo }))
@@ -839,6 +935,96 @@ export function apply(ctx: Context, config: Config): void {
       },
     })
     controladorAtual = controlador
+
+    /* 2b. O PAINEL (T5.3, costura) e a UI NATIVA (T5.5, costura) — as
+          outras duas superficies, fiadas ao MESMO controlador. Item 2: os tres
+          campos obrigatorios do PanelDeps (seq/confirm/dispatch) sao fiados
+          aqui. Item 3: o relatorio periodico (L8) e o coalescedor. Item 4: a
+          superficie /__guard-ui com replay imediato (W2) e reset em FAILED (W3).
+          Tudo vive NESTE efeito porque precisa do controlador; os disposers
+          sao SINCRONOS e revertem tudo (rotas removidas, tap desligado,
+          assinaturas canceladas, timer desarmado). */
+    const agora = defaultSupervisorDeps.now
+    const magicStore = createMagicStore({ clock: { now: agora } })
+    magicStoreAtual = magicStore
+    const ott = createOneTimeTokenStore({ clock: { now: agora } })
+    const csrf = createCsrfGuard({ clock: { now: agora } })
+    const desregistrarPainel = ctx.webServer.register({
+      kind: 'prefix',
+      path: PANEL_PREFIX,
+      handler: createPanelRouter({
+        log,
+        // O PORTEIRO de auditoria e lazy: a pilha nasce no primeiro pedido que
+        // decide — nunca no apply() (a doutrina deste ficheiro).
+        audit: { append: (evento) => authStack().audit.append(evento) },
+        realm: config.realm,
+        snapshot: (): TunnelSnapshot => controlador.snapshot(),
+        secrets: { verify: (candidato) => authStack().secrets.verify(candidato) },
+        sessions: {
+          regenerate: (id) => authStack().sessions.regenerate(id),
+          validate: (id) => authStack().sessions.validate(id),
+        },
+        magic: magicStore,
+        ott,
+        // >>> O SEGREDO EM CLARO VIVE SO NO CLI DE ARRANQUE (T4.1); o plugin
+        // nunca o retem — `null` e a leitura honesta desta camada. A ponte do
+        // CLI para o painel (tela /__guard/secret) fica para a Onda 6. <<<
+        reveal: () => null,
+        limiter: {
+          // PROXY LAZY da pilha (a doutrina deste ficheiro: a pilha nasce no
+          // primeiro pedido que decide, nunca no apply). Mesma instancia do
+          // portao — um segundo limitador teria uma contagem paralela.
+          check: (identity) => authStack().limiter.check(identity),
+          recordFailure: (identity) => authStack().limiter.recordFailure(identity),
+          recordSuccess: (identity) => authStack().limiter.recordSuccess(identity),
+          recordVerifiedButDenied: (identity) => authStack().limiter.recordVerifiedButDenied(identity),
+          snapshot: () => authStack().limiter.snapshot(),
+          dispose: () => authStack().limiter.dispose(),
+        },
+        csrf,
+        clock: { now: agora },
+        seq: (): number => controlador.snapshot().seq,
+        confirm: { issue: (action) => controlador.emitirNonce(action) },
+        dispatch: (intent) => controlador.despachar(intent),
+        resolveOrigin: createRequestOriginResolver({ config, tunnelOrigin }),
+      }),
+    })
+
+    const desmontarUi = createNativeUiSurface({
+      tapIndex: (transform) => ctx.webServer.tapIndex(transform),
+      registerRoute: (route) => ctx.webServer.register(route as WebRoute),
+      emit: (intent) => controlador.despachar(intent),
+      issueNonce: (action) => controlador.emitirNonce(action),
+      subscribe: (listener) => fanoutDeEstado.assinar(listener),
+      now: agora,
+    })
+
+    /* 2c. NOTIFICACOES (T5.4, costura): o relatorio periodico de tunel aberto
+          (L8, 30 min) e o coalescedor de 30 s sobre o observador de sessao
+          nova. A ORDEM e contrato: o append corre ANTES do notify (o emissor
+          escreve; notify.ts so compoe e envia). */
+    const relatorio = criarRelatorioPeriodico({
+      // LAZY: o workerSupervisor so nasce no efeito seguinte; o canal real e
+      // consultado a cada ciclo, nunca capturado na montagem.
+      canal: { send: (message) => workerSupervisor?.send(message) ?? false },
+      log,
+      audit: { append: (evento) => authStack().audit.append(evento) },
+      now: agora,
+      scheduler: defaultSupervisorDeps.scheduler,
+      estado: () => {
+        const snap = controlador.snapshot()
+        return { aberto: snap.state === 'READY', expiraEm: snap.expiresAt }
+      },
+    })
+    relatorio.iniciar()
+    const coalescedor = criarCoalescedor(agora)
+    const desregistrarObservador = registerSessaoNovaObserver((evento) => {
+      // Coalescencia por CATEGORIA: uma rajada de sessoes novas nao vira
+      // enxurrada (02-SEGURANCA 6.2); o observador congelado (PREP 5) faz o
+      // append-antes-do-notify pelo ponto do gate.
+      if (!coalescedor.tentar('sessao-nova')) return
+      criarObservadorSessaoNova({ send: (m) => workerSupervisor?.send(m) ?? false })(evento)
+    })
 
     /* 3. AUTOSTART: a INTENCAO persistida decide o arranque (TENSAO-003,
           CTL-033/034). Reiniciar o DSH nao e o bypass do modo restrito. */
@@ -863,6 +1049,11 @@ export function apply(ctx: Context, config: Config): void {
     }
 
     return (): void => {
+      // LIFO interno: notificacoes antes do painel/UI antes do controlador.
+      desregistrarObservador()
+      relatorio.disposer()
+      desmontarUi()
+      desregistrarPainel()
       controlador.dispose()
       alocador.dispose()
     }
@@ -895,10 +1086,9 @@ export function apply(ctx: Context, config: Config): void {
    *
    * O `onIntent` e o RESPONDEDOR de T5.1 (`src/control/surface-ipc.ts`): a
    * maquina de controlo decide no proprio tick — o canal so transporta a
-   * resposta. E aqui que o observador de sessao nova se regista, com a
-   * assinatura congelada do PREP 5 (`criarObservadorSessaoNova(canal)` — o
-   * corpo real e de T5.4, que mergeia antes; o canal e o proprio supervisor,
-   * cujo `send` e a superficie `Pick<HostIpcChannel, 'send'>`).
+   * resposta. O observador de sessao nova vive no efeito do controlador
+   * (item 3, com o coalescedor); aqui fica a fiacao do transporte do nonce
+   * (EMENDA-COSTURA-5) e do dono persistido no boot (8c).
    */
   ctx.effect((): Disposable => {
     const responder = criarRespondedorIpc({
@@ -910,13 +1100,38 @@ export function apply(ctx: Context, config: Config): void {
       agora: defaultSupervisorDeps.now,
       reemitirEstado,
       aposEmergencia,
+      // Item 5 (costura): /acessar (link magico) e /rotacionar (segredo novo,
+      // sessoes invalidadas, nunca a senha pelo chat). Opcionais por forma —
+      // ausentes, o responder volta ao INTERNAL fail-closed de antes.
+      confirm: confirmService,
+      magic: magicStoreAtual,
+      secretos: { rotate: () => authStack().secrets.rotate() },
+      notificarDono: difundirNotificacao,
     })
-    const supervisor = createWorkerSupervisor(ctx, config, defaultSupervisorDeps, { onIntent: responder })
+    // EMENDA-COSTURA-5: o transporte do nonce (T5.2 fecha o /ligar ponta a
+    // ponta). O worker pede `nonce.request` e o HOST responde `nonce.issued`
+    // com o `ConfirmService` de T5.1; o nonce NUNCA e logado (S3) e viaja so
+    // pelo pipe host <-> worker.
+    const responderDeNonce = criarRespondedorDeNonce({ controller: controladorAtual, log })
+    const supervisor = createWorkerSupervisor(ctx, config, defaultSupervisorDeps, {
+      onIntent: responder,
+      onNonceRequest: responderDeNonce,
+    })
     workerSupervisor = supervisor
     supervisor.start()
-    const desregistrarObservador = registerSessaoNovaObserver(criarObservadorSessaoNova(supervisor))
+    // 8(c): com dono persistido no state.json, o worker reaprende-o no
+    // arranque (`pairing.owner`) — sem nova parelha; sem isso, o dono ficaria
+    // trancado para fora apos um reboot. O nonce do boot NAO e o do par.
+    if (pareamentoDoBoot !== undefined) {
+      supervisor.send({
+        v: IPC_PROTOCOL_VERSION,
+        type: 'pairing.owner',
+        from: pareamentoDoBoot.ownerUserId,
+        chat: pareamentoDoBoot.ownerChatId,
+        pairedAt: pareamentoDoBoot.pairedAt,
+      })
+    }
     return (): void => {
-      desregistrarObservador()
       supervisor.dispose()
     }
   }, 'dsh-guard.worker')

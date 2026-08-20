@@ -121,6 +121,29 @@ export class FakeWebServer {
   /** Despacho ORIGINAL de `upgrade`. */
   onUpgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => void = () => {}
   readonly server = new Server()
+  /** Rotas registadas (a costura da Onda 5: painel /__guard + UI /__guard-ui). */
+  readonly routes: Array<{ kind: string; path: string; handler: unknown }> = []
+  /** Transforms de indice registados (a superficie de UI nativa de T5.5). */
+  readonly taps: Array<(html: string) => string> = []
+
+  // A costura da Onda 5 monta o painel e a UI nativa por `ctx.webServer`; o
+  // duble regista e devolve o desregistro — a MESMA forma do servico real
+  // (types/dsh-host-webserver/index.d.ts).
+  register(route: { kind: string; path: string; handler: unknown }): () => void {
+    this.routes.push(route)
+    return (): void => {
+      const indice = this.routes.indexOf(route)
+      if (indice !== -1) this.routes.splice(indice, 1)
+    }
+  }
+
+  tapIndex(transform: (html: string) => string): () => void {
+    this.taps.push(transform)
+    return (): void => {
+      const indice = this.taps.indexOf(transform)
+      if (indice !== -1) this.taps.splice(indice, 1)
+    }
+  }
 
   constructor(options: { withUpgrade?: boolean } = {}) {
     this.server.on('request', (req, res) => {
