@@ -36,6 +36,7 @@
 import { pathToFileURL } from 'node:url'
 
 import { createBot } from './lib/client.ts'
+import { configure as configureBot } from './commands/costura.ts'
 import { systemTime, type TimeSource } from './lib/clock.ts'
 import { exitCodeFor, WORKER_EXIT, WorkerError } from './lib/errors.ts'
 import { createWorkerLogger, type WorkerLogger, type WorkerLogLevel } from './lib/log.ts'
@@ -54,10 +55,10 @@ export interface WorkerRuntime {
    * (T4.3) e comandos (T5.2) registam-se aqui, DEPOIS de o bot existir e ANTES
    * de o polling arrancar.
    *
-   * PORQUE UM GANCHO E NAO UM `import`: `worker/auth/**`, `worker/ipc.ts` e
-   * `worker/commands/**` sao de outros donos e estao a ser escritos em
-   * paralelo. Um `import` daqui para la seria uma dependencia de compilacao
-   * sobre ficheiros que ainda sao `export {}`.
+   * PORQUE UM GANCHO E NAO UM `import` DIRECTO: a costura (T5.2) e dona de
+   * `worker/commands/**` e o call site de producao (`main`) passa-a — ver
+   * `configureBot` abaixo. O gancho mantem o entrypoint testavel com
+   * configuracao injetada; a producao liga a costura num unico lugar.
    */
   readonly configure?: (bot: ReturnType<typeof createBot>) => void | Promise<void>
 }
@@ -166,9 +167,15 @@ export const WORKER_LOG_LEVEL: WorkerLogLevel = 'debug'
  */
 export const EXIT_GRACE_MS = 2000
 
-/** Entrada real. Separada para que importar este modulo num teste nao arranque nada. */
+/**
+ * Entrada real. Separada para que importar este modulo num teste nao arranque nada.
+ *
+ * O call site de producao e o PASSO DE INTEGRACAO da costura: `configureBot`
+ * (T5.2, `worker/commands/costura.ts`) liga allowlist, pareamento, canal IPC e
+ * comandos ao bot, DEPOIS de o bot existir e ANTES de o polling arrancar.
+ */
 export async function main(): Promise<void> {
-  const code = await runTelegramWorker()
+  const code = await runTelegramWorker({ configure: configureBot })
   process.exitCode = code
   if (code !== WORKER_EXIT.OK) {
     const timer = setTimeout(() => {
