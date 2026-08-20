@@ -204,41 +204,69 @@ export interface ExposureConfig {
 /**
  * Eixo `tunnel` da `Config`.
  *
- * ---- `ttlMinutes`: default 60, tecto 480, e NENHUM caminho sem TTL ----
+ * ---- `ttlMinutes`: obrigatorio, tecto 480, e SEM default no codigo ----
  *
- * `02-SEGURANCA.md` 10.2 e D6 dizem "default 60, tecto 480, `0`/ausente e config
- * invalida recusada no load". Lidas a letra, "tem default" e "ausente e
- * invalido" contradizem-se. Resolucao do orquestrador, registada no TASK_PLAN e
- * congelada aqui, que preserva a INTENCAO das duas metades — nunca existir um
- * tunel sem prazo, e nunca haver clamp silencioso:
+ * D6 e `02-SEGURANCA.md` L1 dizem "default 60"; `04-TESTES.md` TUN-019 diz
+ * "`0`, ausente, negativo, nao inteiro ou `> 480` => `assertValidConfig` recusa
+ * no load, com erro accionavel; NENHUM default silencioso". Lidos a letra
+ * parecem contradizer-se. Nao contradizem, e a reconciliacao esta congelada
+ * aqui porque decidir isto dentro de uma sub-tarefa produziria dois
+ * comportamentos incompativeis em duas worktrees:
  *
- *   - chave OMITIDA        -> aplica-se `60`. O `cordis.patch.yml` entrega `60`
- *                             explicitamente, portanto na pratica nunca falta.
- *   - `0`, negativo, `null`, nao-inteiro, ou `> 480` -> LANCA no load.
+ *   O DEFAULT DE 60 VIVE NO `cordis.patch.yml`, NAO NO CODIGO.
  *
- * NUNCA fazer clamp. Um `ttlMinutes: 10080` silenciosamente reduzido a 480 diz
- * ao utilizador que ele pediu uma semana e recebeu uma semana. Fail LOUD.
+ * O manifesto entrega `ttlMinutes: 60` explicitamente. E um valor que o
+ * utilizador VE e pode editar — logo nao e silencioso. O codigo, esse, nao tem
+ * fallback nenhum: valor em falta LANCA no load, como qualquer outro valor
+ * invalido. Por isso a propriedade e OBRIGATORIA neste tipo.
+ *
+ * Recusa no load (`assertValidConfig`, T3.3): ausente, `0`, negativo, nao
+ * inteiro, `> 480`. NUNCA clamp. Um `ttlMinutes: 10080` reduzido em silencio a
+ * 480 diz ao utilizador que ele pediu uma semana e recebeu uma semana. Fail
+ * LOUD.
  *
  * A ameaca concreta e T10 de `02-SEGURANCA.md`: abre-se o tunel numa terca a
  * noite, fecha-se o portatil, e descobre-se no domingo que ele nunca fechou.
- * Ao expirar: derruba o tunel, INVALIDA TODAS AS SESSOES EMITIDAS, avisa no
- * Telegram. Invalidar as sessoes nao e opcional — sem isso o cookie sobrevive
- * ao tunel e autentica no seguinte.
+ * Ao expirar (TUN-016..TUN-018): derruba o tunel, INVALIDA TODAS AS SESSOES
+ * EMITIDAS, regista em auditoria, e SO DEPOIS avisa no Telegram. A ordem
+ * importa — o aviso e o passo que pode falhar (rede), e a auditoria nao pode
+ * depender dele.
+ *
+ * TUN-026: um `/status` ou um acesso NAO estendem o TTL. So um `start`
+ * explicito abre janela nova.
  *
  * O TTL tem de sobreviver a mais do que um `setTimeout`, que morre com o event
  * loop. A base e o `startedAt` PERSISTIDO: o boot seguinte compara-o com o
  * relogio e conclui que o prazo ja passou.
  */
 export interface TunnelConfig {
-  /** Default `'quick'` (D6). */
+  /** Default (do manifesto) `'quick'` (D6). */
   readonly mode: TunnelMode
-  /** Default `60`. Tecto `480`. Ver a nota acima — nao ha clamp. */
+  /**
+   * OBRIGATORIO. Tecto `480`. Ver a nota acima — sem default no codigo, sem
+   * clamp, e ausente e tao invalido quanto `0`.
+   */
   readonly ttlMinutes: number
+  /**
+   * Caminho do binario do `cloudflared`.
+   *
+   * ESTA CHAVE E O QUE TORNA A SUITE POSSIVEL. Sem ela nao ha como injectar
+   * `test/bin/fake-cloudflared.mjs`, e `04-TESTES.md` 5.4 inteiro — TUN-001 a
+   * TUN-026, SUP-001 a SUP-015 — deixa de ser executavel sem subir um tunel a
+   * serio. E o tunel a serio publica na internet o que estiver na porta: foi
+   * assim que a pesquisa expos o DSH real do utilizador por ~40 s. Nenhum teste
+   * de `unit`, `integration`, `security` ou `e2e` invoca o `cloudflared`
+   * verdadeiro (D10); so `test/live/**` e o roteiro manual M2.
+   *
+   * Omitida significa `'cloudflared'`, resolvido pelo `PATH`.
+   */
+  readonly binaryPath?: string | undefined
   /**
    * So para `mode: 'named'`. Caminho de um ficheiro `0600` com o token.
    *
    * >>> NUNCA `--token` em `argv`. <<< `argv` e legivel por qualquer processo
-   * do mesmo utilizador em `/proc/<pid>/cmdline`. E `--token-file`, sempre.
+   * do mesmo utilizador em `/proc/<pid>/cmdline` e no `ps`. E `--token-file`,
+   * sempre (TUN-014).
    */
   readonly tokenFile?: string | undefined
   /**
@@ -246,10 +274,37 @@ export interface TunnelConfig {
    *
    * OMITIDA significa "o plugin escolhe uma porta livre e passa-a
    * explicitamente" — NAO significa "deixa o cloudflared decidir". O default do
-   * `cloudflared` e porta ALEATORIA, e a faixa 20241-20245 que circula na
-   * internet nao e contrato nenhum. Adivinhar a porta e o bug.
+   * `cloudflared` 2026.7.3 e `localhost:0`, ou seja porta ALEATORIA, com
+   * fallback 20241-20245. A doc afirma a faixa; o binario afirma o aleatorio.
+   * Adivinhar a porta e o bug (TUN-011).
    */
   readonly metricsPort?: number | undefined
+  /**
+   * Janela de terminacao graciosa: `SIGTERM` ao GRUPO -> espera -> `SIGKILL`
+   * (SUP-014). O `--grace-period` do proprio `cloudflared` tem default 30 s; o
+   * nosso e passado explicitamente e o teste assere o valor no spawn spec
+   * (SUP-015). Omitido significa `3000`, alinhado com `worker.graceMs`.
+   */
+  readonly graceMs?: number | undefined
+  /**
+   * Orcamento de reinicio. Os valores sao os mesmos que o supervisor do worker
+   * ja usa, e isso e deliberado: T3.1 GENERALIZA o supervisor existente em vez
+   * de o duplicar. Se ficarem dois blocos de backoff no repositorio, a
+   * generalizacao e ficticia e a revisao adversarial rejeita.
+   *
+   * `resetAfterMs` e o detalhe que separa um supervisor correcto de um que
+   * reinicia para sempre: o contador zera apos UPTIME SAUDAVEL, nunca "a cada
+   * sucesso" — senao um processo que morre aos 5 minutos reinicia
+   * indefinidamente com o backoff sempre zerado (SUP-004).
+   */
+  readonly backoff?:
+    | {
+        readonly initialDelayMs: number
+        readonly maxDelayMs: number
+        readonly maxAttempts: number
+        readonly resetAfterMs: number
+      }
+    | undefined
 }
 
 // ---------------------------------------------------------------------------
