@@ -25,6 +25,36 @@ export function denyUntrustedOrigin(res: ServerResponse): void {
   res.end('Acesso Intercetado: origem nao confiada.\n')
 }
 
+/**
+ * Responde 404 SEM confirmar que o recurso existe.
+ *
+ * ---------------------------------------------------------------------------
+ * PORQUE ISTO E UMA FUNCAO PARTILHADA, E NAO UM `writeHead(404)` A MAO
+ * ---------------------------------------------------------------------------
+ * Ha DOIS sitios que tem de devolver exatamente estes bytes:
+ *
+ *   - `GET /__guard/secret` com `ott` invalido, expirado ou ja usado (T3.4);
+ *   - `GET /__guard/secret` alcancado por um canal NAO-LOCAL, recusado pelo
+ *     portao antes de a rota ser sequer invocada (`src/http/gate.ts`).
+ *
+ * Se os dois escrevessem o seu proprio 404, a menor diferenca -- uma virgula no
+ * corpo, um cabecalho a mais, o `Content-Length` -- passava a distinguir "esta
+ * rota nao existe" de "esta rota existe e voce veio do sitio errado". Isso e um
+ * oraculo, e e exatamente o oraculo que o 404 existe para fechar: um 401 ou um
+ * 403 aqui CONFIRMARIAM a rota. Uma funcao so, um corpo so.
+ *
+ * O CORPO E GENERICO DE PROPOSITO. Nao leva o nome do plugin nem a redaccao
+ * "Acesso Intercetado" dos outros dois: um 404 com marca deste plugin anunciava
+ * que foi ESTE plugin a responder, o que ja diz mais do que "nao ha nada aqui".
+ */
+export function denyNotFound(res: ServerResponse): void {
+  res.writeHead(404, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store',
+  })
+  res.end('Not Found\n')
+}
+
 /** Emite o desafio 401 com `WWW-Authenticate: Basic realm="..."`. */
 export function challengeBasicAuth(res: ServerResponse, realm: string): void {
   res.writeHead(401, {

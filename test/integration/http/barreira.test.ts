@@ -19,7 +19,10 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
 import type { AddressInfo } from 'node:net'
@@ -30,6 +33,19 @@ import { EFFECT, makeConfig, VALID_CREDENTIAL, WRONG_CREDENTIAL } from '../../su
 
 const ctx = new FakeContext()
 let port = 0
+
+/**
+ * RAIZ DE ESTADO DESCARTAVEL, e nao a do utilizador.
+ *
+ * `apply()` nao toca no disco -- a pilha de autenticacao e montada no PRIMEIRO
+ * pedido. Mas este ficheiro FAZ pedidos, logo a pilha nasce mesmo: sem estas
+ * duas variaveis, correr a suite escreveria `state.json` e `audit.log` em
+ * `~/.dsh` da maquina de quem a corre. O `node --test` da a cada ficheiro o seu
+ * proprio processo, logo isto nao contamina mais nenhum.
+ */
+const stateRoot = mkdtempSync(join(tmpdir(), 'dsh-guard-barreira-'))
+process.env['DSH_HOME'] = stateRoot
+process.env['DSH_GUARD_AUDIT_LOG'] = join(stateRoot, 'audit.log')
 
 /** As rotas que o "resto do DSH" serve por baixo do despacho. */
 function router(url: string): { status: number; body: string } {
@@ -114,6 +130,7 @@ after(async () => {
   await new Promise<void>((resolve) => {
     ctx.webServer.server.close(() => resolve())
   })
+  rmSync(stateRoot, { recursive: true, force: true })
 })
 
 describe('FASE A -- linha de base, sem barreira', () => {

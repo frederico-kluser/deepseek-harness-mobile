@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import { assertValidConfig } from '../../../src/config/assert.ts'
 import { PACKAGED_WORKER_DIR, resolveWorkerCwd } from '../../../src/config/schema.ts'
+import type { ExposureConfig, TunnelConfig } from '../../../src/contracts/tunnel.ts'
 import { makeConfig } from '../../support/fixtures.ts'
 
 describe('fail loud at load', () => {
@@ -169,5 +170,173 @@ describe('worker.cwd', () => {
   it('um cwd declarado ganha ao default', () => {
     const config = makeConfig()
     assert.notEqual(resolveWorkerCwd(config), PACKAGED_WORKER_DIR)
+  })
+})
+
+/* ========================================================================== */
+/* Os eixos da Onda 3                                                         */
+/* ========================================================================== */
+
+/** Um `tunnel` valido, para variar UMA chave de cada vez. */
+const TUNEL_VALIDO: TunnelConfig = { mode: 'quick', ttlMinutes: 60 }
+const EXPOSICAO_TUNEL: ExposureConfig = { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false }
+
+describe('TUN-019 -- ttlMinutes recusa no load, sem default silencioso e sem clamp', () => {
+  it('>>> ausente, 0, negativo, nao-inteiro e 481 sao TODOS recusados <<<', () => {
+    const invalidos: Array<[string, unknown]> = [
+      ['ausente', undefined],
+      ['zero', 0],
+      ['negativo', -1],
+      ['negativo grande', -480],
+      ['nao-inteiro', 60.5],
+      ['481 (um acima do tecto)', 481],
+      ['uma semana', 10_080],
+      ['NaN', Number.NaN],
+      ['Infinity', Number.POSITIVE_INFINITY],
+      ['string', '60'],
+      ['null', null],
+    ]
+
+    for (const [rotulo, ttlMinutes] of invalidos) {
+      const tunnel = { mode: 'quick', ...(ttlMinutes === undefined ? {} : { ttlMinutes }) }
+      assert.throws(
+        () => assertValidConfig(makeConfig({ tunnel: tunnel as TunnelConfig })),
+        /tunnel\.ttlMinutes/u,
+        `ttlMinutes ${rotulo} devia ser recusado`,
+      )
+    }
+  })
+
+  it('a mensagem e ACCIONAVEL: nomeia a chave, o intervalo e onde esta o 60', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ tunnel: { mode: 'quick' } as TunnelConfig })),
+      (error: unknown) => {
+        const message = (error as Error).message
+        assert.match(message, /config\.tunnel\.ttlMinutes/u)
+        assert.match(message, /entre 1 e 480/u)
+        assert.match(message, /cordis\.patch\.yml/u)
+        assert.match(message, /NAO ha default no codigo e NAO ha clamp/u)
+        return true
+      },
+    )
+  })
+
+  it('NUNCA faz clamp: 10080 nao vira 480, LANCA', () => {
+    const config = makeConfig({ tunnel: { mode: 'quick', ttlMinutes: 10_080 } })
+    assert.throws(() => assertValidConfig(config))
+    assert.equal(config.tunnel?.ttlMinutes, 10_080, 'a configuracao nao pode ser mutada')
+  })
+
+  it('aceita o intervalo legitimo, incluindo os dois extremos', () => {
+    for (const ttlMinutes of [1, 60, 479, 480]) {
+      assert.doesNotThrow(() => assertValidConfig(makeConfig({ tunnel: { mode: 'quick', ttlMinutes } })))
+    }
+  })
+})
+
+describe('eixo `tunnel` -- o resto das chaves', () => {
+  it("mode 'named' exige tokenFile (o token NUNCA vai no argv -- TUN-014)", () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ tunnel: { mode: 'named', ttlMinutes: 60 } })),
+      /tokenFile/u,
+    )
+    assert.doesNotThrow(() =>
+      assertValidConfig(
+        makeConfig({ tunnel: { mode: 'named', ttlMinutes: 60, tokenFile: '/etc/dsh/token' } }),
+      ),
+    )
+  })
+
+  it('recusa um modo desconhecido', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ tunnel: { mode: 'rapido', ttlMinutes: 60 } as unknown as TunnelConfig })),
+      /tunnel\.mode/u,
+    )
+  })
+
+  it('valida metricsPort, graceMs e backoff quando presentes', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ tunnel: { ...TUNEL_VALIDO, metricsPort: 70_000 } })),
+      /metricsPort/u,
+    )
+    assert.throws(
+      () => assertValidConfig(makeConfig({ tunnel: { ...TUNEL_VALIDO, graceMs: 0 } })),
+      /graceMs/u,
+    )
+    assert.throws(
+      () =>
+        assertValidConfig(
+          makeConfig({
+            tunnel: {
+              ...TUNEL_VALIDO,
+              backoff: { initialDelayMs: 500, maxDelayMs: 100, maxAttempts: 3, resetAfterMs: 1000 },
+            },
+          }),
+        ),
+      /maxDelayMs/u,
+    )
+  })
+})
+
+describe('eixo `exposure`', () => {
+  it('AUSENTE nao e erro -- a leitura da ausencia e a mais fechada que existe', () => {
+    const config = makeConfig()
+    assert.equal(config.exposure, undefined)
+    assert.doesNotThrow(() => assertValidConfig(config))
+  })
+
+  it('recusa modo desconhecido e chaves que nao sao booleanas', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ exposure: { mode: 'publico' } as unknown as ExposureConfig })),
+      /exposure\.mode/u,
+    )
+    assert.throws(
+      () =>
+        assertValidConfig(
+          makeConfig({ exposure: { ...EXPOSICAO_TUNEL, autoStart: 'true' } as unknown as ExposureConfig, tunnel: TUNEL_VALIDO }),
+        ),
+      /exposure\.autoStart/u,
+    )
+  })
+
+  it('>>> trustEdgeHeaders:true SEM borda a frente e recusado no arranque <<<', () => {
+    // Em `loopback` nao ha borda: o cabecalho so pode ter sido escrito por um
+    // processo local, que passaria a escolher o proprio IP -- e com ele o balde
+    // do rate limit e a linha do audit log.
+    assert.throws(
+      () =>
+        assertValidConfig(
+          makeConfig({ exposure: { mode: 'loopback', autoStart: false, trustEdgeHeaders: true } }),
+        ),
+      /trustEdgeHeaders/u,
+    )
+    assert.doesNotThrow(() =>
+      assertValidConfig(
+        makeConfig({
+          exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: true },
+          tunnel: TUNEL_VALIDO,
+        }),
+      ),
+    )
+  })
+
+  it("mode 'tunnel' sem o objeto `tunnel` e recusado no arranque", () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ exposure: EXPOSICAO_TUNEL })),
+      /exige o objeto config\.tunnel/u,
+    )
+  })
+})
+
+describe('eixo `control` -- minimo, e o PREP 5 e dono da expansao', () => {
+  it('valida o booleano quando presente e aceita a ausencia', () => {
+    assert.doesNotThrow(() => assertValidConfig(makeConfig({ control: { requireConfirmation: true } })))
+    assert.throws(
+      () =>
+        assertValidConfig(
+          makeConfig({ control: { requireConfirmation: 'sim' } as unknown as { requireConfirmation: boolean } }),
+        ),
+      /control\.requireConfirmation/u,
+    )
   })
 })

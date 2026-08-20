@@ -48,20 +48,109 @@
  * =============================================================================
  */
 
+import { resolveAuditLogPath } from './audit/log.ts'
 import { assertValidConfig } from './config/assert.ts'
 import { assertSecureBind } from './config/bind.ts'
-import type { Config } from './config/schema.ts'
+import { resolveExposure, type Config } from './config/schema.ts'
 import { resolveWebServerHttpServer, type Context, type Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
-import { verifyBasicAuth } from './http/auth-basic.ts'
 import { createGuardedHandler, createGuardedUpgradeHandler, type GateDeps } from './http/gate.ts'
 import { installAuthBarrier } from './http/intercept.ts'
+import {
+  createGateAuthStack,
+  createTunnelOriginRegistry,
+  type GateAuth,
+  type GateAuthStack,
+} from './http/session-auth.ts'
+
+/**
+ * REEXPORTADO PARA T3.4 / PREP 4, e nao instanciado aqui de proposito.
+ *
+ * `PanelDeps.resolveOrigin` (T3.4) precisa de decidir o ESQUEMA do pedido para
+ * poder emitir o cookie `__Host-dsh_sid`, e a decisao correta depende de
+ * `exposure.mode` -- que o painel nao conhece e esta raiz sim.
+ * {@link createRequestOriginResolver} e a implementacao a injetar; o JSDoc dela
+ * explica porque a condicao e o MODO e nao o HOST (uma instalacao em LAN e
+ * nao-loopback e nao tem borda nenhuma a frente).
+ *
+ * A INJECAO em si nao esta feita porque `src/panel/routes.ts` ainda e o
+ * esqueleto do COMMIT PREP 1 nesta arvore: instanciar o resolutor sem chamador
+ * seria exatamente o codigo dormente que esta onda removeu do portao.
+ */
+export { createRequestOriginResolver } from './http/session-auth.ts'
+import { readSessionCookie } from './session/cookie.ts'
 import { createGuardLogger } from './logging/logger.ts'
 import { requestsDeniedPermission } from './permissions/deny.ts'
 import { createWorkerSupervisor } from './proc/supervisor.ts'
+import { resolveStatePaths } from './state/paths.ts'
 
 export { PLUGIN_NAME } from './errors.ts'
-export type { Config, BackoffConfig } from './config/schema.ts'
+export type { Config, BackoffConfig, ControlConfig } from './config/schema.ts'
+export { shouldAutoStartTunnel, resolveExposure } from './config/schema.ts'
+
+/**
+ * As UNICAS portas que o portao deixa passar sem credencial.
+ *
+ * PORQUE EXISTEM, e porque sao exatamente estas tres. A barreira e dona do
+ * despacho e guarda a superficie INTEIRA -- incluindo o painel. Sem excecao
+ * nenhuma nao haveria como AUTENTICAR: as tres rotas abaixo sao os passos que
+ * ANTECEDEM a existencia de uma sessao, e cada uma traz a sua propria credencial
+ * de uso unico em vez de depender da que ainda nao existe.
+ *
+ *   `/__guard/magic`     GET inerte + POST que consome o `mk` do link do Telegram;
+ *   `/__guard/secret`    mostra o segredo UMA vez, destrancado por um `ott`;
+ *   `/__guard/api/login` cria a sessao a partir do segredo (rota de T3.4).
+ *
+ * ISENCAO DE L3, E SO DE L3: `trustedRemotes` (L2) e o `Host` (L2.5) continuam a
+ * correr sobre elas. Uma porta sem credencial aberta a rede inteira nao e uma
+ * porta, e um buraco.
+ *
+ * >>> QUEM ACRESCENTAR UMA LINHA AQUI ESTA A ABRIR UMA ROTA SEM CREDENCIAL. <<<
+ * A lista e curta de proposito, e a comparacao e por SEGMENTO (`isGuardedPath`):
+ * `/__guard/magic` NAO cobre `/__guard/magico`.
+ */
+export const UNAUTHENTICATED_PANEL_PREFIXES: readonly string[] = [
+  '/__guard/magic',
+  '/__guard/secret',
+  '/__guard/api/login',
+]
+
+/**
+ * CANAL LOCAL APENAS -- 404 quando o pedido nao chega por um nome de loopback.
+ *
+ * ===========================================================================
+ * ISTO FECHA UM FURO REAL, e vale a pena o furo ficar escrito.
+ * ===========================================================================
+ * `/__guard/secret` esta -- e continua -- na lista de isencao acima, porque quem
+ * o vem buscar e precisamente quem ainda NAO tem o segredo: exigir credencial ali
+ * era um ciclo. Eu tinha justificado a isencao com "L2 (`trustedRemotes`) e L2.5
+ * (`Host`) continuam a correr". O raciocinio estava certo; a PREMISSA nao:
+ *
+ *   sob `cloudflared`, quem abre o socket e o `cloudflared`, que corre em
+ *   `127.0.0.1` e portanto passa L2; e a origem do tunel e DELIBERADAMENTE
+ *   acrescentada a allowlist de `Host` enquanto ele esta `READY`, logo passa
+ *   L2.5. As duas camadas defendem de outros processos locais e de DNS
+ *   rebinding -- nao da internet que o tunel deixa entrar de proposito.
+ *
+ * O resultado era `GET https://<x>.trycloudflare.com/__guard/secret?ott=<token>`
+ * a servir o SEGREDO PERSISTENTE em texto claro, da internet publica, sem
+ * credencial. `02-SEGURANCA.md` 4.4 e literal em sentido contrario: **"Canal
+ * local apenas, sem excecao"**.
+ *
+ * O `ott` nao salva isto sozinho, e e por isso que a invariante importa mais do
+ * que a aritmetica dele: 128 bits, uso unico e 10 minutos tornam a forca bruta
+ * inviavel, mas o token e impresso no STDOUT DO TERMINAL -- vive em scrollback,
+ * em multiplexador, em gravacao de sessao, em captura de ecra, no historico de
+ * quem faz copiar-colar. O desenho inteiro tolera isso PORQUE a rota so e
+ * alcancavel de quem ja esta na maquina.
+ *
+ * >>> AS OUTRAS DUAS ENTRADAS NAO ENTRAM AQUI, E ISSO E DELIBERADO. <<<
+ * `/__guard/magic` existe precisamente para ser aberto do telemovel PELO TUNEL,
+ * e `/__guard/api/login` TEM de ser alcancavel de fora ou nao ha como
+ * autenticar. Trancar qualquer uma das duas no loopback nao endurecia nada --
+ * partia o produto.
+ */
+export const LOOPBACK_ONLY_PREFIXES: readonly string[] = ['/__guard/secret']
 
 /** Nome do PLUGIN (identidade do modulo perante o motor Cordis). */
 export const name = PLUGIN_NAME
@@ -165,6 +254,33 @@ export function apply(ctx: Context, config: Config): void {
     )
   }
 
+  /* --- 1b. Os eixos da Onda 3 ----------------------------------------- */
+  const exposure = resolveExposure(config)
+
+  if (config.exposure === undefined) {
+    // A ausencia e lida na direccao FECHADA (`LOOPBACK_ONLY_EXPOSURE`) -- nao ha
+    // como ela abrir alguma coisa. Mas tem de ser VISTA: quem espera aceder pelo
+    // telemovel e nao declarou `exposure` vai concluir que o tunel esta avariado.
+    log.warn(
+      'config.exposure AUSENTE: assume-se a leitura mais fechada -- ' +
+        "mode='loopback', autoStart=false, trustEdgeHeaders=false. Nenhum tunel pode subir. " +
+        'Declare o eixo `exposure` no cordis.patch.yml para mudar isto.',
+    )
+  }
+
+  if (exposure.trustEdgeHeaders) {
+    // Nao e erro (`assertValidConfig` ja recusou a combinacao impossivel), mas e
+    // a chave mais perigosa do ficheiro: acreditar num cabecalho de IP e deixar
+    // que ele decida o balde do rate limit e a linha do audit log.
+    log.warn(
+      `config.exposure.trustEdgeHeaders=true: o cabecalho da borda passa a decidir ` +
+        'a identidade do cliente. So e seguro porque a borda da Cloudflare RECUSA (403) ' +
+        'o pedido em que o cliente envia CF-Connecting-IP (spike S2) -- e SO esse ' +
+        'cabecalho e lido. X-Forwarded-For e ACRESCENTADO ao valor do cliente e ' +
+        'continua proibido em todos os modos.',
+    )
+  }
+
   /**
    * ORDEM DE CARREGAMENTO -- O AVISO INVERTEU-SE, E O REGISTO FICA.
    *
@@ -195,6 +311,51 @@ export function apply(ctx: Context, config: Config): void {
     `Portao ativo em ${ctx.webServer.host}:${ctx.webServer.port} ` +
       `(inventario do plano de controlo: ${config.guardedPrefixes.join(', ') || 'nenhum'}).`,
   )
+
+  /**
+   * A PILHA DE AUTENTICACAO, SOB PROCURA.
+   *
+   * `apply()` NAO TOCA NO SISTEMA DE FICHEIROS, e isso e deliberado: montar a
+   * pilha abre o `state.json` e o `audit.log`, e carregar um plugin -- num
+   * harness que talvez nunca sirva um pedido -- nao pode criar ficheiros na casa
+   * do operador. A pilha nasce no PRIMEIRO pedido que precisa de decidir.
+   *
+   * O QUE CONTINUA A FALHAR ALTO NO CARREGAMENTO: a RESOLUCAO dos caminhos, que
+   * e pura e nao toca no disco. Um `$DSH_HOME` ou um `$DSH_GUARD_AUDIT_LOG`
+   * relativo -- a classe de erro de configuracao que faria o estado aparecer e
+   * desaparecer conforme o diretorio de arranque -- lanca AQUI, no `apply()`, e
+   * nao no primeiro 401 de madrugada.
+   */
+  const statePaths = resolveStatePaths()
+  const auditPath = resolveAuditLogPath()
+  log.info(`Estado em ${statePaths.file}; auditoria em ${auditPath}.`)
+
+  const tunnelOrigin = createTunnelOriginRegistry()
+
+  let stack: GateAuthStack | undefined
+  const authStack = (): GateAuthStack => {
+    // MEMOIZADO: uma so montagem por Fiber. Duas montagens dariam dois
+    // `SessionStore` e um cookie emitido por um nunca validaria no outro.
+    stack ??= createGateAuthStack({ log, tunnelOrigin })
+    return stack
+  }
+  const auth = (): GateAuth => authStack().auth
+
+  /**
+   * O TUNEL PODE SUBIR SOZINHO?
+   *
+   * A resposta le o `state.json` -- e por isso corre DEPOIS de a pilha existir,
+   * ou seja, nunca em `apply()`. O que fica em `apply()` e a decisao ESCRITA:
+   * `shouldAutoStartTunnel` e exportado e e o predicado que T3.1/T5.1 tem de
+   * consultar antes de spawnar o `cloudflared`. Com o modo restrito ativo no
+   * `state.json` ele devolve `false` -- reiniciar o DSH nao e o bypass.
+   */
+  if (exposure.mode === 'tunnel' && exposure.autoStart) {
+    log.info(
+      'exposure.autoStart=true: o tunel sobe no arranque, EXCETO se o modo restrito ' +
+        'estiver ativo no state.json (shouldAutoStartTunnel).',
+    )
+  }
 
   /* --- 2. Veto de elevacao de permissao -------------------------------- */
   /**
@@ -245,59 +406,104 @@ export function apply(ctx: Context, config: Config): void {
 
   /* --- 3. Ouvinte de autenticacao (around-middleware) ------------------ */
   /**
-   * Faz a verificacao da credencial em Basic Auth. Em caso de falha devolve
-   * `false` sem invocar `next()`, vetando a cascata; em caso de sucesso delega em
-   * `next()`, deixando outros plugins acrescentarem politicas adicionais (2FA,
-   * mTLS, lista de sessoes) por cima desta.
+   * VETO ESTRUTURAL, sem I/O e sem comparacao de credencial.
    *
-   * PROPRIEDADE DA CASCATA A CONHECER (semantica do Cordis, nao bug deste
-   * plugin): num `waterfall` ganha o PRIMEIRO ouvinte que responde sem invocar
-   * `next()`. Um `http/auth-check` registado por OUTRO plugin ANTES deste pode
-   * portanto devolver `true` e anular esta barreira sem que ela sequer corra. A
-   * mitigacao possivel ja esta em `createGuardedHandler`: o `next` TERMINAL
-   * repete a verificacao da credencial, o que mantem a politica fail-closed
-   * quando nao ha ouvintes -- mas nao ha, nesta superficie tipada, forma de
-   * impedir que um ouvinte anterior aprove. Auditar os plugins que subscrevem
-   * `http/auth-check` faz parte da instalacao segura (ver README.md).
+   * -------------------------------------------------------------------------
+   * O QUE ESTE OUVINTE DEIXOU DE FAZER, E PORQUE (mudanca desta onda)
+   * -------------------------------------------------------------------------
+   * Ate aqui ele repetia `verifyBasicAuth`. Isso deixou de ser correcto no
+   * instante em que o portao passou a aceitar TRES credenciais -- sessao, Basic
+   * estatico e o segredo gerado pelo plugin -- porque o `encodedAuthString` e
+   * normalmente AUSENTE (D19) e este ouvinte vetava, ANTES do terminal, um
+   * pedido que se autenticava perfeitamente pelo segredo.
+   *
+   * Repetir aqui a verificacao COMPLETA tambem nao serve: ela roda o atraso
+   * interno do limitador e conta a tentativa. Corrida duas vezes por pedido,
+   * duplicaria o atraso e contaria a mesma tentativa duas vezes.
+   *
+   * O que sobra e o que este ponto pode fazer sem custo e sem estado: recusar o
+   * que nao apresenta credencial NENHUMA. E leitura de cabecalho, sem disco, sem
+   * relogio e sem alocacao dependente da entrada. O veredito final continua a
+   * ser o do terminal, que e a decisao ja tomada pelo portao.
+   *
+   * `false` SEM invocar `next()` instaura o curto-circuito irreversivel da
+   * cascata; com credencial apresentada, delega em `next()` para que outros
+   * plugins possam acrescentar politicas (2FA, mTLS) por cima desta.
    */
   ctx.effect(
     (): Disposable =>
       ctx.on('http/auth-check', async (req, next): Promise<boolean> => {
-        if (!verifyBasicAuth(req.headers.authorization, config.encodedAuthString)) {
-          return false // veto: sem `next()`.
-        }
+        const temAutorizacao = typeof req.headers.authorization === 'string'
+        const temSessao =
+          readSessionCookie(
+            typeof req.headers.cookie === 'string' ? req.headers.cookie : undefined,
+          ) !== null
+
+        if (!temAutorizacao && !temSessao) return false // veto: sem `next()`.
         return next()
       }),
     'dsh-guard.auth-check',
   )
 
   /* --- 4. A barreira, sobre o despacho do node:http.Server ------------- */
-  const gate: GateDeps = { ctx, log, config }
+  const gate: GateDeps = {
+    ctx,
+    log,
+    config,
+    auth,
+    tunnelOrigin,
+    // L2.5: o endereco por que este servidor responde de facto. NAO e
+    // `config.allowedHosts` (allowlist do BIND) nem `config.trustedRemotes`
+    // (allowlist da PONTA REMOTA) -- ver o cabecalho de `src/http/host-header.ts`.
+    bindHost: ctx.webServer.host,
+    loopbackAuthority: `${ctx.webServer.host}:${String(ctx.webServer.port)}`,
+    loopbackOnlyPrefixes: LOOPBACK_ONLY_PREFIXES,
+    unauthenticatedPrefixes: UNAUTHENTICATED_PANEL_PREFIXES,
+  }
 
   /**
-   * A superficie e guardada INTEIRA (`alwaysGuarded: true`), e a razao e
-   * estrutural: no ponto de despacho existe o `req` (metodo, pathname,
-   * cabecalhos) mas NAO a identidade do plugin dono da rota. Uma politica
-   * diferenciada por rota teria de reconstruir as tabelas do `WebServer`, o que
-   * acopla a tres ou quatro campos `private` em vez de um.
+   * A superficie e guardada INTEIRA, e a razao e estrutural: no ponto de
+   * despacho existe o `req` (metodo, pathname, cabecalhos) mas NAO a identidade
+   * do plugin dono da rota. Uma politica diferenciada por rota teria de
+   * reconstruir as tabelas do `WebServer`, o que acopla a tres ou quatro campos
+   * `private` em vez de um.
    *
    * ISTO E UM ENDURECIMENTO, e esta declarado: o assento de fallback ja era
    * guardado incondicionalmente e apanha tudo o que nenhuma rota nomeada
    * reclama, pelo que a diferenca observavel e apenas nas rotas NOMEADAS fora do
    * inventario -- na composicao Web medida, `prefix /plugins` e a sonda de
    * invariante `exact`, que passam de abertas a 401.
+   *
+   * O PARAMETRO `alwaysGuarded` DESAPARECEU. Ele era passado como `true`
+   * literal e nenhuma chave de configuracao o podia mudar -- um controlo com
+   * aparencia de configuravel que nao existia. O que existe no lugar e
+   * {@link UNAUTHENTICATED_PANEL_PREFIXES}, que tem valor real e chamador real.
    */
   ctx.effect((): Disposable => {
     const server = resolveWebServerHttpServer(ctx.webServer)
 
-    return installAuthBarrier(
+    const revert = installAuthBarrier(
       server,
       {
-        wrapRequest: (delegate) => createGuardedHandler(gate, delegate, 'dispatch:request', true),
+        wrapRequest: (delegate) => createGuardedHandler(gate, delegate, 'dispatch:request'),
         wrapUpgrade: (delegate) => createGuardedUpgradeHandler(gate, delegate, 'dispatch:upgrade'),
       },
       log,
     )
+
+    return (): void => {
+      // ORDEM FAIL-CLOSED, e ela e o inverso do que a intuicao sugere: fecha-se
+      // PRIMEIRO a pilha de autenticacao e so DEPOIS se devolve o despacho. Um
+      // pedido que esteja a decidir neste instante encontra um `SessionStore`
+      // disposto (que devolve `null`) e um limitador disposto (que LANCA) --
+      // ambos desaguam no mesmo 401. Pela ordem inversa, haveria uma janela em
+      // que o despacho original ja responde e a pilha ainda decide.
+      try {
+        stack?.dispose()
+      } finally {
+        revert()
+      }
+    }
   }, 'dsh-guard.barreira')
 
   /* --- 5. Worker de long-polling sob ciclo de vida atomico ------------- */

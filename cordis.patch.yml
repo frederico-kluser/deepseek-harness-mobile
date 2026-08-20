@@ -241,6 +241,66 @@
         deniedPermissions:
           - 'danger-full-access'
 
+        # --- Exposição -------------------------------------------------------
+        # >>> TODOS OS VALORES ABAIXO SÃO LITERAIS. NENHUM `!!js`. <<<
+        # A regra de ouro deste ficheiro (topo) é que nenhuma expressão pode
+        # LANÇAR: uma que lançasse não produziria "configuração inválida", mas um
+        # `dsh` que não arranca para quem só correu `dsh plugin add`. O *fail
+        # loud* destes eixos vive dentro do plugin, em `assertValidConfig`.
+        exposure:
+          # 'loopback' = só 127.0.0.1. 'tunnel' = o `cloudflared` pode subir.
+          mode: 'loopback'
+
+          # >>> `false`, E O DEFAULT É A DECISÃO. <<<
+          # Um túnel que abre sozinho a cada boot é um túnel que fica aberto sem
+          # ninguém saber — e a ameaça concreta (T10) é abrir numa terça à noite,
+          # fechar o portátil, e descobrir no domingo que ele nunca fechou.
+          autoStart: false
+
+          # >>> `false`, e só pode virar `true` com `mode: 'tunnel'`. <<<
+          # MEDIDO (spike S2): a borda da Cloudflare entrega `CF-Connecting-IP`
+          # com o IP real e RECUSA na própria borda (403, `error code: 1000`) o
+          # pedido em que o CLIENTE envia esse header — logo o valor que chega
+          # nunca é escolhido pelo cliente. `X-Forwarded-For`, ao contrário, é
+          # ACRESCENTADO ao valor do cliente (forjado primeiro, real por último):
+          # é FORJÁVEL e continua PROIBIDO em todos os modos. O plugin lê UM
+          # header, `cf-connecting-ip`, e mais nenhum.
+          #
+          # Enquanto `false`, `Identity.ip` fica `undefined` e o limitador conta
+          # por sessão/global — que é o caso colapsado previsto em ORIG-015.
+          trustEdgeHeaders: false
+
+        # --- Túnel -----------------------------------------------------------
+        tunnel:
+          # 'quick' (default, D6) é o único com onboarding automatizado. 'named'
+          # é suportado como TRANSPORTE e exige `tokenFile` — NUNCA `--token` no
+          # argv, que é legível por qualquer processo do mesmo utilizador.
+          mode: 'quick'
+
+          # >>> É AQUI QUE VIVE O DEFAULT DE 60, E NÃO NO CÓDIGO. <<<
+          # `04-TESTES.md` TUN-019 exige que ausente, 0, negativo, não-inteiro ou
+          # > 480 sejam RECUSADOS no load, sem default silencioso e sem clamp. As
+          # duas coisas casam exatamente por esta linha: o valor está aqui, à
+          # vista e editável, portanto não é silencioso; e o código não tem
+          # fallback nenhum — apagar esta linha faz o plugin recusar arrancar,
+          # com o nome da chave na mensagem.
+          #
+          # Ao expirar, o túnel cai, TODAS as sessões emitidas são invalidadas, o
+          # facto é auditado, e só depois o dono é avisado no Telegram — nessa
+          # ordem, porque o aviso é o passo que pode falhar por rede.
+          ttlMinutes: 60
+
+        # --- Plano de controlo -----------------------------------------------
+        # MÍNIMO de propósito. O COMMIT PREP 5 congela `src/contracts/control.ts`
+        # e é o dono da expansão (tabela de transições, `ControlIntent`, e a
+        # regra D29 de que um `start` durante `STOPPING` é REJEITADO e nunca
+        # enfileirado). Inventar a máquina de estados aqui criaria duas fontes da
+        # verdade que divergiriam na primeira correção.
+        control:
+          # Ação destrutiva (derrubar o túnel, rodar o segredo, revogar sessões)
+          # exige confirmação em duas etapas.
+          requireConfirmation: true
+
         # --- Worker de long-polling do Telegram ------------------------------
         # Processo filho de longa duração, fora do event loop central do Node,
         # para não monopolizar os pools HTTP internos do DSH.

@@ -31,6 +31,33 @@
 
 import { fileURLToPath } from 'node:url'
 
+import type { ExposureConfig, TunnelConfig } from '../contracts/tunnel.ts'
+
+/**
+ * Eixo `control` da `Config` -- MINIMO, de proposito.
+ *
+ * >>> O COMMIT PREP 5 CONGELA `src/contracts/control.ts` E E DONO DA EXPANSAO. <<<
+ *
+ * A maquina de estados do plano de controlo (a tabela de transicoes, o
+ * `ControlIntent`, a regra D29 de que um `start` durante `STOPPING` e REJEITADO
+ * e nunca enfileirado) NAO se inventa aqui. `src/contracts/tunnel.ts` diz porque,
+ * na seccao 1: duplicar a maquina em dois sitios produz duas fontes da verdade
+ * que divergem na primeira correccao.
+ *
+ * O que fica aqui e apenas o que o portao precisa de saber HOJE, e nada mais.
+ */
+export interface ControlConfig {
+  /**
+   * Uma accao destrutiva (derrubar o tunel, rodar o segredo, revogar sessoes)
+   * exige confirmacao em duas etapas antes de correr.
+   *
+   * Default (do manifesto) `true`: o valor seguro. O nonce, o TTL de 60 s e o
+   * uso unico sao de `src/control/confirm.ts` (T5.1), nao desta chave -- esta
+   * chave apenas diz SE a etapa existe.
+   */
+  readonly requireConfirmation: boolean
+}
+
 /** Forma exata da entrada `config` do `cordis.patch.yml`. */
 export interface Config {
   /**
@@ -65,6 +92,40 @@ export interface Config {
   guardedPrefixes: string[]
   /** Niveis de permissao recusados mesmo a pedidos autenticados. */
   deniedPermissions: string[]
+  /**
+   * Eixo `exposure` -- COMPOSTO, nao redeclarado (`src/contracts/tunnel.ts` 4).
+   *
+   * PORQUE OPCIONAL AQUI, quando o manifesto o entrega sempre. Duas razoes, e
+   * nenhuma delas e conveniencia:
+   *
+   *   1. o `replace` do motor de patches substitui o objeto `config` INTEIRO
+   *      (ver o cabecalho deste ficheiro): uma camada de precedencia superior
+   *      -- Home, ou um `--patch` da CLI -- que reescreva `config` sem esta
+   *      chave APAGA-A. A ausencia e portanto um estado alcancavel em producao,
+   *      e o tipo tem de a admitir para que o codigo seja obrigado a trata-la;
+   *   2. a leitura da ausencia e a MAIS FECHADA que existe, e nao um default
+   *      de conveniencia: {@link LOOPBACK_ONLY_EXPOSURE}. Sem `exposure`
+   *      declarado NAO ha exposicao -- o tunel nao sobe, o cabecalho de IP da
+   *      borda nao e lido. E a mesma direccao de `trustedRemotes: []`.
+   *
+   * O `warn` ruidoso do arranque (`src/index.ts`) existe para que a ausencia
+   * seja uma escolha visivel e nunca um esquecimento silencioso.
+   */
+  exposure?: ExposureConfig
+  /**
+   * Eixo `tunnel` -- COMPOSTO de `src/contracts/tunnel.ts`.
+   *
+   * Ausente significa "nao ha tunel configurado". Isso e legitimo com
+   * `exposure.mode: 'loopback'` e e um ERRO DE ARRANQUE com
+   * `exposure.mode: 'tunnel'` (`assertValidConfig`): pedir modo tunel sem
+   * declarar o tunel e uma configuracao que so se revelaria errada no instante
+   * em que alguem carregasse em "ligar".
+   *
+   * PRESENTE, `ttlMinutes` e OBRIGATORIO e validado sem misericordia (TUN-019).
+   */
+  tunnel?: TunnelConfig
+  /** Eixo `control` -- ver {@link ControlConfig}. Minimo por decisao. */
+  control?: ControlConfig
   /** Worker de long-polling executado fora do event loop central. */
   worker: {
     /**
@@ -218,4 +279,103 @@ export function resolveWorkerCwd(config: Config): string {
   const declared = config.worker.cwd
   if (typeof declared === 'string' && declared.trim().length > 0) return declared
   return PACKAGED_WORKER_DIR
+}
+
+/* ========================================================================== */
+/* Os eixos da Onda 3, resolvidos                                             */
+/* ========================================================================== */
+
+/**
+ * A leitura de `exposure` AUSENTE. Os tres valores sao os fechados.
+ *
+ * NAO E O `?? valor_por_omissao` PROIBIDO POR Q-3, e a distincao e a mesma que
+ * `resolveWorkerCwd` ja documenta -- mas aqui ela precisa de ser feita com mais
+ * cuidado, porque esta chave PARTICIPA de politica de seguranca. O que Q-3
+ * proibe e preencher uma ausencia com um valor que ABRE alguma coisa. Aqui a
+ * ausencia e preenchida com a recusa de tudo:
+ *
+ *   mode: 'loopback'        -> nenhum tunel pode subir;
+ *   autoStart: false        -> nada arranca sozinho;
+ *   trustEdgeHeaders: false -> nenhum cabecalho de IP e acreditado.
+ *
+ * Um `exposure` em falta nao pode, por construcao, tornar o sistema mais aberto
+ * do que um `exposure` declarado. E o arranque grita (`src/index.ts`), para que
+ * a ausencia seja vista.
+ */
+export const LOOPBACK_ONLY_EXPOSURE: ExposureConfig = {
+  mode: 'loopback',
+  autoStart: false,
+  trustEdgeHeaders: false,
+}
+
+/** O eixo `exposure` efetivo. Ver {@link LOOPBACK_ONLY_EXPOSURE}. */
+export function resolveExposure(config: Config): ExposureConfig {
+  return config.exposure ?? LOOPBACK_ONLY_EXPOSURE
+}
+
+/** A leitura de `control` ausente: a confirmacao de duas etapas fica LIGADA. */
+export const CONFIRMATION_REQUIRED_CONTROL: ControlConfig = { requireConfirmation: true }
+
+/** O eixo `control` efetivo. */
+export function resolveControl(config: Config): ControlConfig {
+  return config.control ?? CONFIRMATION_REQUIRED_CONTROL
+}
+
+/**
+ * O tunel pode SUBIR SOZINHO no arranque?
+ *
+ * TRES condicoes, todas necessarias, e a terceira e a que fecha `04-TESTES.md`
+ * RL-015 do lado do arranque: com o MODO RESTRITO ativo no `state.json`, o boot
+ * NAO sobe o tunel. Reiniciar o DSH nao pode ser o bypass do modo restrito --
+ * se fosse, o controlo que o teto NIST aciona duraria ate ao proximo `Ctrl-C`.
+ *
+ * PORQUE E UMA FUNCAO E NAO UM `if` DENTRO DO SUPERVISOR: o supervisor do tunel
+ * e de T3.1 e este predicado e de politica, nao de processo. Escrito aqui, e
+ * verificavel sem spawnar nada -- que e a unica forma de o testar sem invocar o
+ * `cloudflared` verdadeiro (D10).
+ */
+export function shouldAutoStartTunnel(config: Config, restrictedModeActive: boolean): boolean {
+  if (restrictedModeActive) return false
+  const exposure = resolveExposure(config)
+  return exposure.mode === 'tunnel' && exposure.autoStart
+}
+
+/**
+ * O cabecalho de IP da borda pode ser lido NESTE pedido?
+ *
+ * ---------------------------------------------------------------------------
+ * MEDIDO (spike S2, `docs/spikes/cloudflared.md` VEREDITO S2: CONFIRMADO)
+ * ---------------------------------------------------------------------------
+ * A borda da Cloudflare entrega `CF-Connecting-IP` a origem com o IP real do
+ * cliente e RECUSA NA PROPRIA BORDA (HTTP 403, `error code: 1000`) qualquer
+ * requisicao em que o CLIENTE envie esse cabecalho. O valor que chega a origem
+ * nunca e escolhido pelo cliente -- a borda faz MELHOR do que sobrescrever, ela
+ * recusa o pedido forjado. Foi assim medido, caso a caso:
+ *
+ *   R1 (sem forja)                -> 200, `Cf-Connecting-Ip: <ip real>`
+ *   R2 (X-Forwarded-For: 1.2.3.4) -> 200, `X-Forwarded-For: 1.2.3.4,<ip real>`
+ *   R3 (CF-Connecting-IP: 1.2.3.4)-> 403 NA BORDA; nada chegou a origem
+ *
+ * >>> R2 E A RAZAO DE `X-Forwarded-For` ESTAR PROIBIDO EM TODOS OS MODOS. <<<
+ * Ele e ACRESCENTADO ao valor do cliente, com o valor forjado PRIMEIRO. Quem
+ * ler o primeiro elemento deixa o atacante escolher o proprio IP -- e nesse
+ * mundo o rate limit por IP e o audit log por IP passam a ser controlados por
+ * ele. O mesmo vale para `X-Real-Ip`. A lista de cabecalhos acreditados tem
+ * EXATAMENTE UM elemento, e e por isso.
+ *
+ * A proxima pessoa vai olhar para `CF-Connecting-IP` e para `X-Forwarded-For` e
+ * concluir que sao equivalentes. Nao sao, e a diferenca esta medida acima.
+ * ---------------------------------------------------------------------------
+ *
+ * DUAS CONDICOES ALEM DA CHAVE, e nenhuma e decorativa:
+ *
+ *   - `mode: 'tunnel'`: em `loopback` nao ha borda nenhuma a frente, logo o
+ *     cabecalho so pode ter sido escrito por um processo LOCAL -- exatamente
+ *     quem nao pode escolher o proprio IP;
+ *   - o pedido tem de ter CHEGADO pelo tunel (`viaTunnel`): um processo local
+ *     que se ligue direto ao `127.0.0.1:<porta>` nao passou pela borda, e a
+ *     recusa dela nao o protege.
+ */
+export function mayTrustEdgeClientIp(exposure: ExposureConfig, viaTunnel: boolean): boolean {
+  return exposure.trustEdgeHeaders && exposure.mode === 'tunnel' && viaTunnel
 }

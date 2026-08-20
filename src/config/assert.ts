@@ -31,8 +31,30 @@
 
 import { statSync } from 'node:fs'
 
+import type { ExposureConfig, TunnelConfig, TunnelMode } from '../contracts/tunnel.ts'
 import { PLUGIN_NAME } from '../errors.ts'
-import { resolveWorkerCwd, type Config } from './schema.ts'
+import { resolveWorkerCwd, type Config, type ControlConfig } from './schema.ts'
+
+/**
+ * Tecto do TTL do tunel, em minutos. 8 horas.
+ *
+ * `src/contracts/tunnel.ts` congela a reconciliacao entre D6 ("default 60") e
+ * `04-TESTES.md` TUN-019 ("ausente, 0, negativo, nao inteiro ou > 480 recusa no
+ * load; NENHUM default silencioso"). Nao ha contradicao:
+ *
+ *   >>> O DEFAULT DE 60 VIVE NO `cordis.patch.yml`, NAO NO CODIGO. <<<
+ *
+ * O manifesto entrega `ttlMinutes: 60` como VALOR LITERAL -- um valor que o
+ * utilizador ve e edita, logo nao e silencioso. O codigo nao tem fallback
+ * nenhum.
+ */
+export const TUNNEL_TTL_MAX_MINUTES = 480
+
+/** Os dois unicos modos de tunel (D6). Union de literais, nao `enum`. */
+const TUNNEL_MODES: readonly TunnelMode[] = ['quick', 'named']
+
+/** Os dois unicos modos de exposicao. */
+const EXPOSURE_MODES: readonly ExposureConfig['mode'][] = ['loopback', 'tunnel']
 
 /**
  * Caracteres proibidos no `realm`.
@@ -136,6 +158,148 @@ function assertUsableCredential(encodedAuthString: string, path: string): void {
       )
     }
   }
+}
+
+function assertBoolean(value: unknown, path: string): asserts value is boolean {
+  if (typeof value !== 'boolean') {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path} tem de ser um booleano (recebido: ${typeof value}). ` +
+        'Uma chave de politica de exposicao nao aceita valor "quase verdadeiro": ' +
+        "'true' em string, 1 ou null nao sao respostas a uma pergunta de seguranca.",
+    )
+  }
+}
+
+function assertPositiveInteger(value: unknown, path: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path} tem de ser um inteiro positivo (recebido: ${String(value)}).`,
+    )
+  }
+}
+
+/**
+ * Valida o eixo `exposure`. So corre quando a chave EXISTE -- a ausencia e lida
+ * por `resolveExposure` como `LOOPBACK_ONLY_EXPOSURE`, que e a leitura fechada.
+ */
+export function assertExposureConfig(value: unknown, path: string): asserts value is ExposureConfig {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error(`[${PLUGIN_NAME}] config.${path} tem de ser um objeto.`)
+  }
+  const exposure = value as Record<string, unknown>
+
+  if (typeof exposure['mode'] !== 'string' || !EXPOSURE_MODES.includes(exposure['mode'] as never)) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.mode tem de ser 'loopback' ou 'tunnel' ` +
+        `(recebido: ${JSON.stringify(exposure['mode'])}).`,
+    )
+  }
+
+  assertBoolean(exposure['autoStart'], `${path}.autoStart`)
+  assertBoolean(exposure['trustEdgeHeaders'], `${path}.trustEdgeHeaders`)
+
+  // ---------------------------------------------------------------------
+  // `trustEdgeHeaders: true` SEM BORDA A FRENTE E UM BURACO, NAO UMA OPCAO.
+  // ---------------------------------------------------------------------
+  // A garantia medida em S2 e da BORDA da Cloudflare: e ela que recusa (403,
+  // `error code: 1000`) o pedido em que o cliente envia `CF-Connecting-IP`. Em
+  // `mode: 'loopback'` nao existe borda nenhuma -- o cabecalho so pode ter sido
+  // escrito por um processo local, que passaria a escolher o proprio IP e, com
+  // ele, o balde do rate limit e a linha do audit log. Recusa-se no arranque,
+  // com o nome da chave, em vez de deixar a combinacao viver ate ao primeiro
+  // atacante local.
+  if (exposure['trustEdgeHeaders'] === true && exposure['mode'] !== 'tunnel') {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.trustEdgeHeaders so pode ser true com ` +
+        `config.${path}.mode = 'tunnel'. Em 'loopback' nao ha borda a frente que ` +
+        'sobrescreva o cabecalho de IP do cliente, logo qualquer processo local ' +
+        'escolheria o proprio IP -- e o rate limit por IP e o audit log por IP ' +
+        'passariam a ser controlados por ele (spike S2).',
+    )
+  }
+}
+
+/**
+ * Valida o eixo `tunnel`. So corre quando a chave EXISTE.
+ *
+ * TUN-019 vive aqui, e vive INTEIRO: `ttlMinutes` ausente, `0`, negativo, nao
+ * inteiro ou `> 480` recusa no load, com erro accionavel, sem default
+ * silencioso e SEM CLAMP. Um `ttlMinutes: 10080` reduzido em silencio a 480 diz
+ * ao utilizador que ele pediu uma semana e recebeu uma semana -- e a ameaca T10
+ * de `02-SEGURANCA.md` e exatamente essa: abre-se o tunel numa terca a noite,
+ * fecha-se o portatil, e descobre-se no domingo que ele nunca fechou.
+ */
+export function assertTunnelConfig(value: unknown, path: string): asserts value is TunnelConfig {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error(`[${PLUGIN_NAME}] config.${path} tem de ser um objeto.`)
+  }
+  const tunnel = value as Record<string, unknown>
+
+  if (typeof tunnel['mode'] !== 'string' || !TUNNEL_MODES.includes(tunnel['mode'] as never)) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.mode tem de ser 'quick' ou 'named' ` +
+        `(recebido: ${JSON.stringify(tunnel['mode'])}).`,
+    )
+  }
+
+  const ttl = tunnel['ttlMinutes']
+  if (typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl <= 0 || ttl > TUNNEL_TTL_MAX_MINUTES) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.ttlMinutes tem de ser um inteiro entre 1 e ` +
+        `${String(TUNNEL_TTL_MAX_MINUTES)} minutos (recebido: ${String(ttl)}). ` +
+        'NAO ha default no codigo e NAO ha clamp: o valor de referencia (60) e ' +
+        `entregue como literal pelo cordis.patch.yml, em config.${path}.ttlMinutes, ` +
+        'que e onde voce o ve e o edita. Um tunel sem prazo e um tunel que fica ' +
+        'aberto sem ninguem saber.',
+    )
+  }
+
+  if (tunnel['binaryPath'] !== undefined) assertNonEmptyString(tunnel['binaryPath'], `${path}.binaryPath`)
+  if (tunnel['tokenFile'] !== undefined) assertNonEmptyString(tunnel['tokenFile'], `${path}.tokenFile`)
+
+  // `mode: 'named'` sem `tokenFile` nao tem como autenticar o conector -- e a
+  // alternativa (`--token` no argv) e proibida por TUN-014: `argv` e legivel por
+  // qualquer processo do mesmo utilizador em `/proc/<pid>/cmdline` e no `ps`.
+  if (tunnel['mode'] === 'named' && tunnel['tokenFile'] === undefined) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.mode = 'named' exige config.${path}.tokenFile ` +
+        '(um ficheiro 0600 com o token). Passar o token por argv e proibido: `argv` ' +
+        'e legivel por qualquer processo do mesmo utilizador (TUN-014).',
+    )
+  }
+
+  if (tunnel['metricsPort'] !== undefined) {
+    assertPositiveInteger(tunnel['metricsPort'], `${path}.metricsPort`)
+    if ((tunnel['metricsPort'] as number) > 65535) {
+      throw new Error(`[${PLUGIN_NAME}] config.${path}.metricsPort tem de ser <= 65535.`)
+    }
+  }
+  if (tunnel['graceMs'] !== undefined) assertPositiveNumber(tunnel['graceMs'], `${path}.graceMs`)
+
+  if (tunnel['backoff'] !== undefined) {
+    const backoff = tunnel['backoff']
+    if (typeof backoff !== 'object' || backoff === null) {
+      throw new Error(`[${PLUGIN_NAME}] config.${path}.backoff tem de ser um objeto.`)
+    }
+    const b = backoff as Record<string, unknown>
+    assertPositiveNumber(b['initialDelayMs'], `${path}.backoff.initialDelayMs`)
+    assertPositiveNumber(b['maxDelayMs'], `${path}.backoff.maxDelayMs`)
+    assertPositiveNumber(b['maxAttempts'], `${path}.backoff.maxAttempts`)
+    assertPositiveNumber(b['resetAfterMs'], `${path}.backoff.resetAfterMs`)
+    if ((b['maxDelayMs'] as number) < (b['initialDelayMs'] as number)) {
+      throw new Error(
+        `[${PLUGIN_NAME}] config.${path}.backoff.maxDelayMs nao pode ser inferior a initialDelayMs.`,
+      )
+    }
+  }
+}
+
+/** Valida o eixo `control` -- minimo. A expansao e do COMMIT PREP 5. */
+export function assertControlConfig(value: unknown, path: string): asserts value is ControlConfig {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error(`[${PLUGIN_NAME}] config.${path} tem de ser um objeto.`)
+  }
+  assertBoolean((value as Record<string, unknown>)['requireConfirmation'], `${path}.requireConfirmation`)
 }
 
 /**
@@ -259,6 +423,26 @@ export function assertValidConfig(config: Config): void {
     throw new Error(
       `[${PLUGIN_NAME}] config.worker.backoff.maxDelayMs (${backoff.maxDelayMs}) ` +
         `nao pode ser inferior a initialDelayMs (${backoff.initialDelayMs}).`,
+    )
+  }
+
+  /* --- Os eixos da Onda 3 -------------------------------------------- */
+  // AUSENTE NAO E ERRO, e a razao esta em `schema.ts`: o `replace` do motor de
+  // patches substitui o objeto `config` inteiro, logo uma camada superior pode
+  // apagar estas chaves. A ausencia e lida na direccao FECHADA
+  // (`LOOPBACK_ONLY_EXPOSURE`), nunca na aberta. PRESENTE, e validado inteiro.
+  if (config.exposure !== undefined) assertExposureConfig(config.exposure, 'exposure')
+  if (config.tunnel !== undefined) assertTunnelConfig(config.tunnel, 'tunnel')
+  if (config.control !== undefined) assertControlConfig(config.control, 'control')
+
+  // Pedir modo tunel sem declarar o tunel e uma configuracao que so se revelaria
+  // errada no instante em que alguem carregasse em "ligar" -- e nesse instante
+  // ja nao ha ninguem a ler o arranque. Falha aqui.
+  if (config.exposure?.mode === 'tunnel' && config.tunnel === undefined) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.exposure.mode = 'tunnel' exige o objeto config.tunnel ` +
+        '(pelo menos `mode` e `ttlMinutes`). Declarar o modo sem declarar o tunel ' +
+        'adia a falha para o momento em que alguem tenta ligar a exposicao.',
     )
   }
 }
