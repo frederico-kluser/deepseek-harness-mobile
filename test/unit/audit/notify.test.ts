@@ -286,6 +286,20 @@ describe('o envio e best-effort: falha vira aviso, nunca excecao', () => {
     assert.equal(avisos.length, 1)
   })
 
+  it('canal hostil que LANCA um NAO-Error: aviso legivel e false (String(error))', () => {
+    // O best-effort nao depende do tipo do lancamento: um canal de terceiros
+    // que atira uma string tem de cair no MESMO aviso, nunca no chamador.
+    const canal = {
+      send: (): boolean => {
+        throw 'canal avariado em string'
+      },
+    }
+    const { log, avisos } = logMock()
+    assert.equal(enviarNotificacao(canal, log, 'alerta:x\ncorpo'), false)
+    assert.equal(avisos.length, 1)
+    assert.ok(avisos[0]?.includes('canal avariado em string'), 'a string chega ao log do operador')
+  })
+
   it('o observador congelado compoe e envia UMA mensagem notify', () => {
     const { canal, enviadas } = canalMock()
     const observador = criarObservadorSessaoNova(canal)
@@ -447,6 +461,34 @@ describe('criarRelatorioPeriodico — o lembrete de 30 min contra T10', () => {
     assert.equal(enviadas.length, 0, 'projecao avariada: nada sai')
     assert.equal(avisos.length, 1, 'o timer registou o ciclo falho no log do operador')
     assert.equal(scheduler.pending.length, 1, 'o timer continua vivo')
+    relatorio.disposer()
+  })
+
+  it('MUTACAO dirigida: projecao que LANCA um NAO-Error e engolida com String(error)', () => {
+    // O mesmo fail-closed do teste anterior, com um lancamento que nao e
+    // Error: o relogio/projecao de um terceiro pode atirar qualquer coisa, e o
+    // callback do timer nunca pode deixa-la escapar (uncaughtException).
+    const scheduler = new FakeScheduler()
+    const clock = new FakeClock(TS)
+    const { canal, enviadas } = canalMock()
+    const { log, avisos } = logMock()
+    const relatorio = criarRelatorioPeriodico({
+      canal,
+      log,
+      audit: { append: (): void => {} },
+      now: () => clock.now(),
+      scheduler,
+      estado: (): { aberto: boolean; expiraEm: number | undefined } => {
+        throw 'estado avariado em string'
+      },
+      intervaloMs: INTERVALO,
+    })
+    relatorio.iniciar()
+    assert.doesNotThrow(() => scheduler.runLast())
+    assert.equal(enviadas.length, 0)
+    assert.equal(avisos.length, 1)
+    assert.ok(avisos[0]?.includes('estado avariado em string'), 'a string chega ao log do operador')
+    assert.equal(scheduler.pending.length, 1, 'o ciclo continua')
     relatorio.disposer()
   })
 

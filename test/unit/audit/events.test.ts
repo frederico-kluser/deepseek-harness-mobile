@@ -159,6 +159,60 @@ describe('a parte congelada do PREP 5 mantem a forma', () => {
     desregistaA()
     desregistaB()
   })
+
+  it('MUTACAO dirigida: um observador que se desregista DURANTE o disparo nao faz os seguintes saltar (slice)', () => {
+    // O `slice()` do fan-out e deliberado (cabecalho): um splice a meio do
+    // for-of vivo saltaria o observador seguinte. Com a copia, o desregisto do
+    // 'a' no proprio disparo nao tira o 'b' nem o 'c' do ciclo.
+    const ordem: string[] = []
+    let desregistaB: (() => void) | undefined
+    const desregistaA = registerSessaoNovaObserver(() => {
+      ordem.push('a')
+      desregistaB?.() // remove o 'b' a meio do fan-out
+    })
+    desregistaB = registerSessaoNovaObserver(() => {
+      ordem.push('b')
+    })
+    const desregistaC = registerSessaoNovaObserver(() => {
+      ordem.push('c')
+    })
+    const evento: SessaoNovaEvent = {
+      evento: 'sessao_nova',
+      resultado: 'permitido',
+      sessao_id_hash: '9'.repeat(64),
+    }
+
+    emitSessaoNova(evento, LOG_MUDO)
+
+    assert.deepEqual(ordem, ['a', 'b', 'c'], 'o slice() protege o fan-out de um splice a meio')
+
+    desregistaA()
+    // Depois da atribuicao acima, o TS sabe que esta definido — sem o operador opcional.
+    desregistaB()
+    desregistaC()
+  })
+
+  it('um observador que LANCA um NAO-Error (string) e engolido com o texto legivel', () => {
+    // O best-effort nao depende do tipo do lancamento: um observador hostil
+    // que atira uma string (canal de terceiros) tem de cair no MESMO aviso,
+    // nunca no chamador. O ramo `String(error)` do catch e este.
+    const desregista = registerSessaoNovaObserver(() => {
+      throw 'canal partido em string'
+    })
+    const evento: SessaoNovaEvent = {
+      evento: 'sessao_nova',
+      resultado: 'permitido',
+      sessao_id_hash: 'f'.repeat(64),
+    }
+    const avisos: string[] = []
+    const log = { ...LOG_MUDO, warn: (mensagem: string): void => void avisos.push(mensagem) }
+
+    assert.doesNotThrow(() => emitSessaoNova(evento, log))
+    assert.equal(avisos.length, 1)
+    assert.ok(avisos[0]?.includes('canal partido em string'), 'a string chega ao log do operador')
+
+    desregista()
+  })
 })
 
 /* ========================================================================== */
