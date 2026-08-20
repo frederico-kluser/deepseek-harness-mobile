@@ -23,6 +23,13 @@ import type { AddressInfo } from 'node:net'
 
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
 import type { Config } from '../../../src/config/schema.ts'
+import type {
+  ControlAction,
+  ControlIntent,
+  ControlResultado,
+  Nonce,
+} from '../../../src/contracts/control.ts'
+import { NONCE_TTL_MS } from '../../../src/contracts/control.ts'
 import type { PersistedState, StateStore } from '../../../src/contracts/state.ts'
 import type { TunnelSnapshot } from '../../../src/contracts/tunnel.ts'
 import type { GuardLogger } from '../../../src/logging/logger.ts'
@@ -89,6 +96,16 @@ export interface Bancada {
   estado: TunnelSnapshot
   /** Segredo canonico que `GET /__guard/secret` mostra. `null` = nada a mostrar. */
   segredo: string | null
+  /**
+   * Intents que o despacho falso recebeu, por ordem. E a janela do teste para
+   * o que a superficie entregou ao controlador (T5.1) -- action, origem,
+   * `requestId`, nonce e `at`.
+   */
+  readonly intentos: ControlIntent[]
+  /** Resultado que o despacho falso devolve. Mutavel de proposito. */
+  resultadoControl: ControlResultado
+  /** Valor que `deps.seq()` devolve. Mutavel de proposito. */
+  seqValor: number
   /** Sobe o servidor em porta efemera e devolve-a. */
   servir(routes?: PanelRouteFactory): Promise<number>
   fechar(): Promise<void>
@@ -128,6 +145,8 @@ export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
   const eventos: AuditEvent[] = []
   const esperas: number[] = []
   const logs: string[] = []
+  const intentos: ControlIntent[] = []
+  let contadorNonce = 0
   const log: GuardLogger = {
     info: (m) => void logs.push(`info ${m}`),
     warn: (m) => void logs.push(`warn ${m}`),
@@ -150,6 +169,9 @@ export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
     eventos,
     esperas,
     logs,
+    intentos,
+    resultadoControl: { estado: 'STOPPED', idempotente: false },
+    seqValor: 0,
     estado: opcoes.estado ?? SNAPSHOT_PARADO,
     segredo: null,
     deps: {
@@ -178,6 +200,26 @@ export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
       resolveOrigin: createRequestOriginResolver({ config, tunnelOrigin }),
       wait: async (ms: number): Promise<void> => {
         esperas.push(ms)
+      },
+      /**
+       * A COSTURA COM T5.1, DUBLADA AQUI: o `seq` e o despacho sao do
+       * controlador real (T5.1 fia em `src/index.ts`); a bancada fornece
+       * versoes observaveis e mutaveis para o teste falsificar o que a
+       * superficie faz com eles.
+       */
+      seq: (): number => bancada.seqValor,
+      confirm: {
+        issue: (_action: ControlAction): Nonce => {
+          contadorNonce += 1
+          return {
+            valor: `nonce-teste-${String(contadorNonce)}`,
+            expiresAt: clock.now() + NONCE_TTL_MS,
+          }
+        },
+      },
+      dispatch: (intent: ControlIntent): Promise<ControlResultado> => {
+        intentos.push(intent)
+        return Promise.resolve(bancada.resultadoControl)
       },
       ...opcoes.deps,
     },

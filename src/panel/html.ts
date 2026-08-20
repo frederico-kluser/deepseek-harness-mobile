@@ -44,6 +44,7 @@
 
 import { randomBytes } from 'node:crypto'
 
+import type { ControlRecusa } from '../contracts/control.ts'
 import type { TunnelState } from '../contracts/tunnel.ts'
 
 export const PANEL_HTML_CONTENT_TYPE = 'text/html; charset=utf-8'
@@ -62,6 +63,31 @@ export const TUNNEL_STATE_LABEL: Readonly<Record<TunnelState, string>> = Object.
   DEGRADED: 'instável, tentando de novo',
   STOPPING: 'desligando',
   FAILED: 'falhou — precisa de ação sua',
+})
+
+/**
+ * TEXTO DE INTERFACE das recusas do controlador (D7: portugues vive aqui, e so
+ * aqui). O payload da API transporta o CODIGO em ingles (`ControlRecusa`,
+ * contrato congelado); quem o converte em frase legivel e esta mapa, embutido
+ * na pagina. O botao de LIGAR cai aqui quando o controlador recusa -- modo
+ * restrito ativo (CTL-015), nonce repetido ou expirado (CTL-021/022), estado
+ * terminal (CTL-011) ou desligamento em curso (CTL-007/D29).
+ */
+export const CONTROL_RECUSA_LABEL: Readonly<Record<ControlRecusa, string>> = Object.freeze({
+  SHUTDOWN_IN_PROGRESS:
+    'O túnel está a desligar. Espere terminar e tente outra vez.',
+  MODO_RESTRITO:
+    'Modo restrito ativo: o DSH recusa ligar o túnel até ser desbloqueado na máquina.',
+  SEM_SEGREDO_FORTE:
+    'Não há segredo forte configurado — o túnel não pode ligar.',
+  TERMINAL_SEM_RESET:
+    'O túnel está num estado terminal (falhou) — reinicie o DSH para recuperar.',
+  NONCE_AUSENTE:
+    'Confirmação ausente — use o botão de duas etapas.',
+  NONCE_INVALIDO:
+    'Confirmação inválida ou já usada — toque em Ligar outra vez para obter uma nova.',
+  NONCE_EXPIRADO:
+    'Confirmação expirada (60 s) — toque em Ligar outra vez para obter uma nova.',
 })
 
 /** Valor novo de nonce, em base64url (sem `/` e sem `+`, logo sem `//`). */
@@ -151,6 +177,11 @@ h1 { font-size: 1.1rem; letter-spacing: .04em; text-transform: uppercase; color:
 pre { margin: 0; padding: 1rem; background: #000; color: #fff; border-radius: .4rem; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; line-height: 1.05; }
 button { font: inherit; padding: .7rem 1.2rem; border-radius: .4rem; border: 1px solid #2f6f4f; background: #1d4b36; color: #eafff4; cursor: pointer; }
 button[disabled] { opacity: .5; cursor: default; }
+button.perigo { border-color: #8f3f3f; background: #5c2626; color: #ffe9e9; }
+.acoes { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .75rem; }
+.acao { color: #e6e8ea; font-size: .9rem; margin: .5rem 0 0; }
+.confirmar { border: 1px solid #3d4550; border-radius: .4rem; padding: .75rem .9rem; margin-top: .75rem; background: #14171b; }
+.confirmar p { margin: 0 0 .6rem; }
 .rodape { color: #6f7880; font-size: .8rem; }
 `.trim()
 
@@ -202,9 +233,16 @@ ${input.body}
  * (b) a URL entra no DOM por `textContent`, que nao interpreta marcacao --
  * interpolar a URL no HTML seria uma injecao a espera de um dia mau.
  *
- * SEM BOTOES DE LIGA/DESLIGA. Isso e T5.3, na Onda 5. O `<meta>` com o token
- * anti-CSRF ja vai aqui porque e o que essa sub-tarefa vai consumir, e emiti-lo
- * agora nao abre superficie nenhuma: sem rota de mutacao, ele nao destranca nada.
+ * OS BOTOES DE LIGA/DESLIGA SAO T5.3, e vivem aqui ao lado do `<meta>` com o
+ * token anti-CSRF. O painel e SUPERFICIE: os botoes chamam
+ * `POST /__guard/api/tunnel/start|stop` (com o nonce de confirmacao no
+ * `start` e o token anti-CSRF em AMBOS -- NIST SP 800-63B-4 5.1.1), e o
+ * controlador unico (T5.1) decide. O painel NAO decide nada: so projeta.
+ *
+ * A DESAMBIGUACAO ESCRITA NA TELA: "desligar o tunel" derruba a exposicao
+ * publica (o processo do cloudflared) -- o DSH continua a funcionar em
+ * loopback. Isto NAO desliga o worker do bot nem o DSH; essas duas acoes nao
+ * sao este botao, e o texto diz isso com todas as letras.
  */
 export function renderPanelPage(input: { readonly nonce: string; readonly csrfToken: string }): string {
   const body = `<h1>DSH · painel</h1>
@@ -216,22 +254,74 @@ export function renderPanelPage(input: { readonly nonce: string; readonly csrfTo
   <div class="linha"><span>expira</span><span class="valor" id="expira">—</span></div>
   <p class="erro" id="falha" hidden></p>
 </section>
+<section class="cartao">
+  <p class="linha"><span>liga/desliga</span></p>
+  <p class="acoes">
+    <button id="ligar" type="button" disabled>Ligar túnel</button>
+    <button id="desligar" type="button" class="perigo" disabled>Desligar túnel</button>
+  </p>
+  <p class="acao" id="acao" hidden></p>
+  <div class="confirmar" id="confirmar" hidden>
+    <p id="confirmar-texto"></p>
+    <p>
+      <button id="confirmar-botao" type="button">Confirmar</button>
+      <button id="cancelar-botao" type="button">Cancelar</button>
+    </p>
+  </div>
+  <p class="rodape">"Desligar o túnel" derruba a exposição pública (o processo do cloudflared) — o DSH continua a funcionar em loopback. Isto não desliga o worker do bot nem o DSH.</p>
+</section>
 <p class="rodape" id="rodape">a atualizar a cada 2 s</p>`
 
   const script = `
 const ROTULOS = ${jsonForScript(TUNNEL_STATE_LABEL)};
+const RECUSAS = ${jsonForScript(CONTROL_RECUSA_LABEL)};
+const CSRF = document.querySelector('meta[name="dsh-csrf"]').content;
 const elEstado = document.getElementById('estado');
 const elUrl = document.getElementById('url');
 const elTentativas = document.getElementById('tentativas');
 const elExpira = document.getElementById('expira');
 const elFalha = document.getElementById('falha');
 const elRodape = document.getElementById('rodape');
+const elLigar = document.getElementById('ligar');
+const elDesligar = document.getElementById('desligar');
+const elAcao = document.getElementById('acao');
+const elConfirmar = document.getElementById('confirmar');
+const elConfirmarTexto = document.getElementById('confirmar-texto');
+const elConfirmarBotao = document.getElementById('confirmar-botao');
+const elCancelarBotao = document.getElementById('cancelar-botao');
 let vivo = true;
+let ultimoSeq = null;
+let passos = null;
+let noncePendente = '';
 
 function parar(mensagem) {
   vivo = false;
   elRodape.textContent = mensagem;
   elRodape.className = 'rodape aviso';
+  elLigar.disabled = true;
+  elDesligar.disabled = true;
+}
+
+function mostrarAcao(mensagem) {
+  elAcao.textContent = mensagem;
+  elAcao.hidden = false;
+}
+
+function ocultarAcao() {
+  elAcao.textContent = '';
+  elAcao.hidden = true;
+}
+
+function mostrarConfirmacao(texto) {
+  elConfirmarTexto.textContent = texto;
+  elConfirmar.hidden = false;
+}
+
+function ocultarConfirmacao() {
+  elConfirmar.hidden = true;
+  elConfirmarTexto.textContent = '';
+  passos = null;
+  noncePendente = '';
 }
 
 function pintar(s) {
@@ -247,6 +337,12 @@ function pintar(s) {
     elFalha.textContent = '';
     elFalha.hidden = true;
   }
+  // Os botoes DERIVAM do estado projetado; o controlador continua a ser a
+  // autoridade -- um pedido que ele recuse mostra o motivo via RECUSAS.
+  elLigar.disabled = !(s.state === 'STOPPED' || s.state === 'FAILED');
+  elDesligar.disabled = !(s.state === 'STARTING' || s.state === 'READY' || s.state === 'DEGRADED');
+  ocultarAcao();
+  ocultarConfirmacao();
 }
 
 async function tick() {
@@ -260,14 +356,130 @@ async function tick() {
   }
   if (resposta.status === 401) { parar('sessão expirada — entre outra vez'); return; }
   if (!resposta.ok) { elRodape.textContent = 'o servidor não respondeu ao estado'; return; }
+  let s;
   try {
-    pintar(await resposta.json());
-    elRodape.textContent = 'a atualizar a cada 2 s';
-    elRodape.className = 'rodape';
+    s = await resposta.json();
   } catch (erro) {
     elRodape.textContent = 'resposta de estado ilegível';
+    return;
   }
+  elRodape.textContent = 'a atualizar a cada 2 s';
+  elRodape.className = 'rodape';
+  if (typeof s.seq === 'number' && s.seq === ultimoSeq) return;
+  ultimoSeq = typeof s.seq === 'number' ? s.seq : null;
+  pintar(s);
 }
+
+async function postar(caminho, corpo) {
+  const campos = new URLSearchParams();
+  for (const [nome, valor] of Object.entries(corpo)) campos.set(nome, valor);
+  let resposta;
+  try {
+    resposta = await fetch(caminho, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-dsh-csrf': CSRF },
+      body: campos.toString(),
+    });
+  } catch (erro) {
+    return null;
+  }
+  return resposta;
+}
+
+async function tratarResposta(resposta) {
+  if (resposta.status === 401) {
+    parar('sessão expirada — entre outra vez');
+    return;
+  }
+  if (resposta.status === 403) {
+    mostrarAcao('Pedido recusado — recarregue a página e tente outra vez.');
+    return;
+  }
+  let dados = null;
+  try {
+    dados = await resposta.json();
+  } catch (erro) {
+    dados = null;
+  }
+  if (resposta.ok && dados !== null && dados.ok === true) {
+    void tick();
+    return;
+  }
+  if (dados !== null && typeof dados.recusa === 'string') {
+    const motivo = Object.prototype.hasOwnProperty.call(RECUSAS, dados.recusa) ? RECUSAS[dados.recusa] : 'Ação recusada pelo servidor.';
+    mostrarAcao(motivo);
+    return;
+  }
+  mostrarAcao('Ação recusada pelo servidor.');
+}
+
+elLigar.addEventListener('click', async () => {
+  ocultarConfirmacao();
+  mostrarAcao('A obter confirmação…');
+  const resposta = await postar('/__guard/api/tunnel/start/nonce', {});
+  if (resposta === null) {
+    mostrarAcao('Sem ligação ao servidor.');
+    return;
+  }
+  if (resposta.status === 401) { parar('sessão expirada — entre outra vez'); return; }
+  if (resposta.status === 403) { mostrarAcao('Pedido recusado — recarregue a página e tente outra vez.'); return; }
+  let dados = null;
+  try {
+    dados = await resposta.json();
+  } catch (erro) {
+    dados = null;
+  }
+  if (!resposta.ok || dados === null || typeof dados.nonce !== 'string' || dados.nonce === '') {
+    mostrarAcao('Não foi possível obter a confirmação.');
+    return;
+  }
+  noncePendente = dados.nonce;
+  passos = 'start';
+  ocultarAcao();
+  mostrarConfirmacao('Confirmação: ' + noncePendente + '. Ligar o túnel? Vale 60 s e uma única vez.');
+});
+
+elDesligar.addEventListener('click', () => {
+  ocultarAcao();
+  ocultarConfirmacao();
+  passos = 'stop';
+  mostrarConfirmacao('Desligar o túnel? O DSH continua a funcionar em loopback. Isto não desliga o worker do bot nem o DSH.');
+});
+
+elConfirmarBotao.addEventListener('click', async () => {
+  if (passos === 'start') {
+    const nonce = noncePendente;
+    ocultarConfirmacao();
+    if (nonce === '') {
+      mostrarAcao('Confirmação em falta — toque em Ligar outra vez.');
+      return;
+    }
+    elConfirmarBotao.disabled = true;
+    mostrarAcao('A ligar…');
+    const resposta = await postar('/__guard/api/tunnel/start', { nonce });
+    elConfirmarBotao.disabled = false;
+    if (resposta === null) { mostrarAcao('Sem ligação ao servidor.'); return; }
+    await tratarResposta(resposta);
+    return;
+  }
+  if (passos === 'stop') {
+    ocultarConfirmacao();
+    elConfirmarBotao.disabled = true;
+    mostrarAcao('A desligar…');
+    const resposta = await postar('/__guard/api/tunnel/stop', {});
+    elConfirmarBotao.disabled = false;
+    if (resposta === null) { mostrarAcao('Sem ligação ao servidor.'); return; }
+    await tratarResposta(resposta);
+    return;
+  }
+  ocultarConfirmacao();
+});
+
+elCancelarBotao.addEventListener('click', () => {
+  ocultarConfirmacao();
+  ocultarAcao();
+});
 
 tick();
 setInterval(tick, 2000);

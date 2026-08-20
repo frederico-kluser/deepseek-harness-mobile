@@ -16,10 +16,26 @@ import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { Script } from 'node:vm'
 
+import type { ControlRecusa } from '../../../src/contracts/control.ts'
 import type { TunnelState } from '../../../src/contracts/tunnel.ts'
-import { escapeHtml, jsonForScript, TUNNEL_STATE_LABEL } from '../../../src/panel/html.ts'
-import { PANEL_PATH_MAGIC, PANEL_PATH_ROOT, PANEL_PATH_SECRET } from '../../../src/panel/routes.ts'
-import { criarBancada, pedir, type Bancada } from './harness.ts'
+import {
+  CONTROL_RECUSA_LABEL,
+  escapeHtml,
+  jsonForScript,
+  TUNNEL_STATE_LABEL,
+} from '../../../src/panel/html.ts'
+import {
+  PANEL_PATH_MAGIC,
+  PANEL_PATH_ROOT,
+  PANEL_PATH_SECRET,
+} from '../../../src/panel/routes.ts'
+import {
+  criarBancada,
+  pedir,
+  SNAPSHOT_ONLINE,
+  URL_DO_TUNEL,
+  type Bancada,
+} from './harness.ts'
 
 /**
  * As formas proibidas. Cada uma corresponde a uma maneira REAL de o navegador
@@ -180,5 +196,95 @@ describe('as tres paginas servidas', () => {
     const canonico = String(bancada.segredo)
     assert.ok(paginaSegredo.includes(canonico.slice(0, 4)))
     assert.ok(!paginaSegredo.includes('<script nonce'))
+  })
+})
+
+describe('os botoes de liga/desliga (T5.3)', () => {
+  let bancada: Bancada
+  let port = 0
+  let pagina = ''
+
+  before(async () => {
+    // Estado ONLINE de proposito: o painel nunca embute a URL -- ela so
+    // entra pelo `GET /__guard/api/state` autenticado.
+    bancada = criarBancada({ estado: SNAPSHOT_ONLINE })
+    port = await bancada.servir()
+
+    const id = bancada.sessions.create()
+    pagina = (await pedir(port, PANEL_PATH_ROOT, { cookie: `__Host-dsh_sid=${id}` })).body
+  })
+
+  after(async () => {
+    await bancada.fechar()
+  })
+
+  it('a pagina tem os dois botoes, o da confirmacao e o botao de desligar marcado como perigo', () => {
+    assert.ok(pagina.includes('id="ligar"'))
+    assert.ok(pagina.includes('id="desligar"'))
+    assert.ok(pagina.includes('id="confirmar"'))
+    assert.ok(pagina.includes('id="confirmar-botao"'))
+    assert.ok(pagina.includes('id="cancelar-botao"'))
+    assert.ok(pagina.includes('class="perigo"'))
+    assert.ok(pagina.includes('Ligar túnel'))
+    assert.ok(pagina.includes('Desligar túnel'))
+  })
+
+  it('os dois botoes nascem DESLIGADOS: sem estado projetado ninguem muta', () => {
+    // O estado inicial do DOM e "…"; a primeira projecao e que os habilita.
+    // Sem isto, um clique antes do primeiro tick despacharia com estado cego.
+    assert.ok(pagina.includes('<button id="ligar" type="button" disabled>'))
+    assert.ok(pagina.includes('<button id="desligar" type="button" class="perigo" disabled>'))
+  })
+
+  it('a desambiguacao obrigatoria esta escrita: desligar o tunel != desligar o worker != desligar o DSH', () => {
+    // "Desligar o tunel" derruba a exposicao publica (o cloudflared); o DSH
+    // continua em loopback. As outras duas acoes nao sao este botao, e a
+    // tela diz isso com todas as letras.
+    assert.ok(pagina.includes('"Desligar o túnel" derruba a exposição pública'))
+    assert.ok(pagina.includes('o DSH continua a funcionar em loopback'))
+    assert.ok(pagina.includes('não desliga o worker do bot nem o DSH'))
+  })
+
+  it('cada recusa do controlador tem um rotulo em portugues, e o painel embute todos', () => {
+    const recusas: readonly ControlRecusa[] = [
+      'SHUTDOWN_IN_PROGRESS',
+      'MODO_RESTRITO',
+      'SEM_SEGREDO_FORTE',
+      'TERMINAL_SEM_RESET',
+      'NONCE_AUSENTE',
+      'NONCE_INVALIDO',
+      'NONCE_EXPIRADO',
+    ]
+    for (const recusa of recusas) {
+      const rotulo = CONTROL_RECUSA_LABEL[recusa]
+      assert.ok(rotulo.length > 0, `a recusa ${recusa} nao tem rotulo`)
+      assert.ok(pagina.includes(rotulo), `o painel nao embutiu o rotulo de ${recusa}`)
+    }
+    assert.equal(new Set(Object.values(CONTROL_RECUSA_LABEL)).size, recusas.length)
+  })
+
+  it('o rotulo do modo restrito e legivel, e nao um codigo solto (CTL-015/RL-014)', () => {
+    assert.ok(CONTROL_RECUSA_LABEL['MODO_RESTRITO'].includes('Modo restrito ativo'))
+    assert.ok(CONTROL_RECUSA_LABEL['MODO_RESTRITO'].toLowerCase().includes('recusa'))
+  })
+
+  it('a sessao expirada tem mensagem legivel no JavaScript do painel, nao um erro mudo', () => {
+    // O 401 e O MESMO do gate (sem oraculo novo); a legibilidade e a traducao
+    // que o painel faz do status para o dono.
+    assert.ok(pagina.includes('sessão expirada — entre outra vez'))
+  })
+
+  it('o painel nao revela a URL do tunel: a pagina autenticada, com estado READY, nao a contem', () => {
+    assert.ok(!pagina.includes(URL_DO_TUNEL))
+    assert.ok(!pagina.includes('trycloudflare'))
+  })
+
+  it('o liga e de duas etapas: a pagina pede o nonce ao host antes do POST final', () => {
+    // O POST final leva o nonce no corpo; a emissao e uma rota propria.
+    assert.ok(pagina.includes("'/__guard/api/tunnel/start/nonce'"))
+    assert.ok(pagina.includes("'/__guard/api/tunnel/start'"))
+    assert.ok(pagina.includes("'/__guard/api/tunnel/stop'"))
+    assert.ok(pagina.includes('Confirmação: '))
+    assert.ok(pagina.includes('Vale 60 s e uma única vez'))
   })
 })

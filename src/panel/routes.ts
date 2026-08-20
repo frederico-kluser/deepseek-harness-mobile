@@ -40,6 +40,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { AuditSink, Identity, SecretStore } from '../contracts/auth.ts'
+import type { ConfirmService, ControlIntent, ControlResultado } from '../contracts/control.ts'
 import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
 import type { FailureTracker } from '../ratelimit/tracker.ts'
@@ -59,6 +60,9 @@ import {
   createLoginHandler,
   createPanelPageHandler,
   createStateHandler,
+  createTunnelNonceHandler,
+  createTunnelStartHandler,
+  createTunnelStopHandler,
   emptyFields,
   FORBIDDEN_RESPONSE,
   INTERNAL_ERROR_RESPONSE,
@@ -83,6 +87,9 @@ export const PANEL_PATH_STATE = '/__guard/api/state'
 export const PANEL_PATH_LOGIN = '/__guard/api/login'
 export const PANEL_PATH_MAGIC = '/__guard/magic'
 export const PANEL_PATH_SECRET = '/__guard/secret'
+export const PANEL_PATH_TUNNEL_START = '/__guard/api/tunnel/start'
+export const PANEL_PATH_TUNNEL_STOP = '/__guard/api/tunnel/stop'
+export const PANEL_PATH_TUNNEL_START_NONCE = '/__guard/api/tunnel/start/nonce'
 
 /**
  * `'publica'` = fora do gate, com o controlo que a substitui escrito na tabela.
@@ -128,6 +135,9 @@ export function routeKeyOf(method: string, path: string): string {
 const TABELA_DE_POLITICA: ReadonlyArray<readonly [string, PanelPolicy]> = [
   [routeKeyOf('GET', PANEL_PATH_ROOT), 'exige-sessao'],
   [routeKeyOf('GET', PANEL_PATH_STATE), 'exige-sessao'],
+  [routeKeyOf('POST', PANEL_PATH_TUNNEL_START), 'exige-sessao'],
+  [routeKeyOf('POST', PANEL_PATH_TUNNEL_STOP), 'exige-sessao'],
+  [routeKeyOf('POST', PANEL_PATH_TUNNEL_START_NONCE), 'exige-sessao'],
   [routeKeyOf('POST', PANEL_PATH_LOGIN), 'publica'],
   [routeKeyOf('GET', PANEL_PATH_MAGIC), 'publica'],
   [routeKeyOf('POST', PANEL_PATH_MAGIC), 'publica'],
@@ -202,6 +212,18 @@ export interface PanelDeps {
    * janela de rajada testavel sem esperar cinco minutos.
    */
   readonly clock: { now(): number }
+  /**
+   * >>> A COSTURA COM T5.1, OBRIGATORIA E SEM VALOR POR OMISSAO. <<<
+   *
+   * O painel e SUPERFICIE (`03-ONDAS.md` 10): nunca chama o supervisor de
+   * tunel. Toda acao vira `ControlIntent` despachada pelo controlador unico
+   * de T5.1, e o estado que o painel projeta carrega o `seq` do broadcast
+   * dele. Os tres campos sao o que T5.1 fia em `src/index.ts` -- obrigatorios
+   * para que o `tsc` RECUSE uma composicao que se esqueca deles.
+   */
+  readonly seq: () => number
+  readonly confirm: Pick<ConfirmService, 'issue'>
+  readonly dispatch: (intent: ControlIntent) => ControlResultado | Promise<ControlResultado>
   /** Espera do limitador. Injetada em teste; nunca se espera tempo real. */
   readonly wait?: (ms: number) => Promise<void>
   /** Ver {@link defaultIdentify}. */
@@ -281,7 +303,7 @@ export function panelRoutes(deps: PanelDeps, audit: AuditGate): readonly PanelRo
     {
       method: 'GET',
       path: PANEL_PATH_STATE,
-      handler: createStateHandler({ snapshot: deps.snapshot }),
+      handler: createStateHandler({ snapshot: deps.snapshot, seq: deps.seq }),
     },
     {
       method: 'POST',
@@ -292,6 +314,36 @@ export function panelRoutes(deps: PanelDeps, audit: AuditGate): readonly PanelRo
         limiter: deps.limiter,
         wait,
         audit,
+        log: deps.log,
+      }),
+    },
+    {
+      method: 'POST',
+      path: PANEL_PATH_TUNNEL_START_NONCE,
+      handler: createTunnelNonceHandler({
+        confirm: deps.confirm,
+        dispatch: deps.dispatch,
+        clock: deps.clock,
+        log: deps.log,
+      }),
+    },
+    {
+      method: 'POST',
+      path: PANEL_PATH_TUNNEL_START,
+      handler: createTunnelStartHandler({
+        confirm: deps.confirm,
+        dispatch: deps.dispatch,
+        clock: deps.clock,
+        log: deps.log,
+      }),
+    },
+    {
+      method: 'POST',
+      path: PANEL_PATH_TUNNEL_STOP,
+      handler: createTunnelStopHandler({
+        confirm: deps.confirm,
+        dispatch: deps.dispatch,
+        clock: deps.clock,
         log: deps.log,
       }),
     },

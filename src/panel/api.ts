@@ -64,6 +64,11 @@
 import type { IncomingMessage } from 'node:http'
 
 import type { AuditEvent, AuditSink, Identity, SecretStore } from '../contracts/auth.ts'
+import type {
+  ConfirmService,
+  ControlIntent,
+  ControlResultado,
+} from '../contracts/control.ts'
 import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
 import type { FailureTracker } from '../ratelimit/tracker.ts'
@@ -75,6 +80,7 @@ import { NOT_FOUND_BODY, TEXT_REFUSAL_HEADERS } from '../http/responses.ts'
 import { runThrottledAttempt } from '../ratelimit/tracker.ts'
 import { assertTrustworthyOrigin, serializeSessionCookie } from '../session/cookie.ts'
 import { newNonce, panelHtmlHeaders, renderPanelPage } from './html.ts'
+import { newUlid } from './ulid.ts'
 
 /* ========================================================================== */
 /* 1. Envelope                                                                */
@@ -510,6 +516,18 @@ export function createPanelPageHandler(deps: PanelPageDeps): PanelHandler {
 
 export interface StateDeps {
   readonly snapshot: () => TunnelSnapshot
+  /**
+   * A SEQUENCIA MONOTONICA DO CONTROLADOR (T5.1) -- a costura de CTL-016/017/019.
+   *
+   * O painel e PROJECCAO: nao mantem estado proprio alem do ultimo `seq` que
+   * viu, e e o `seq` que lhe permite nao re-renderizar um estado repetido e
+   * que o teste de paridade (CTL-040) usa para comparar o painel com o bot.
+   *
+   * OBRIGATORIA, E SEM VALOR POR OMISSAO: sem ela o `tsc` recusa a composicao
+   * de T5.1 que se esquecer de a fiar. O snapshot (`TunnelSnapshot`, contrato
+   * congelado) nao a carrega -- ela e do controlador, e vem por este campo.
+   */
+  readonly seq: () => number
 }
 
 /**
@@ -562,7 +580,7 @@ export function createStateHandler(deps: StateDeps): PanelHandler {
   return async (): Promise<PanelResponse> => ({
     status: 200,
     headers: JSON_HEADERS,
-    body: `${JSON.stringify(projectSnapshot(deps.snapshot()))}\n`,
+    body: `${JSON.stringify({ ...projectSnapshot(deps.snapshot()), seq: deps.seq() })}\n`,
   })
 }
 
@@ -639,5 +657,146 @@ export function createLoginHandler(deps: LoginDeps): PanelHandler {
     })
 
     return { ...OK_JSON_RESPONSE, setCookie: emitted.setCookie }
+  }
+}
+
+/* ========================================================================== */
+/* 7. `POST /__guard/api/tunnel/*` -- a superficie de liga/desliga (T5.3)     */
+/* ========================================================================== */
+
+/**
+ * O painel e SUPERFICIE, nunca dono do estado (`03-ONDAS.md` 10): estes tres
+ * tratadores NAO falam com o supervisor de tunel -- montam um `ControlIntent`
+ * (contrato congelado, `src/contracts/control.ts`) e entregam-no ao
+ * `dispatch` que T5.1 fia. E o controlador, e so ele, que valida o nonce
+ * (CTL-021/022/023), recusa em modo restrito (CTL-015) e mexe no processo.
+ */
+
+/** Nome do campo do corpo que transporta o nonce de confirmacao (opaco). */
+export const TUNNEL_NONCE_FIELD_NAME = 'nonce'
+
+/**
+ * Estado HTTP de uma recusa do controlador.
+ *
+ * 409 e NAO 200-com-erro de proposito: uma recusa e um CONFLITO com o estado
+ * corrente (CTL-007 `SHUTDOWN_IN_PROGRESS`, CTL-015 `MODO_RESTRITO`, CTL-011
+ * `TERMINAL_SEM_RESET`, CTL-021/022 nonce) e o corpo traz o codigo de recusa
+ * fechado -- o rotulo em portugues vive em `html.ts` (D7), nunca aqui.
+ */
+export const TUNNEL_ACTION_REFUSAL_STATUS = 409
+
+export interface TunnelActionDeps {
+  /**
+   * O emissor do nonce (`ConfirmService.issue`). O CONSUMO (`consume`) e do
+   * controlador durante o despacho -- esta superficie emite e transporta o
+   * valor OPACO e nunca decide sobre ele (CTL-021/022 sao recusas de
+   * despacho). O `Pick` e deliberado: so a metade da costura que esta
+   * superficie consome.
+   */
+  readonly confirm: Pick<ConfirmService, 'issue'>
+  /**
+   * O despacho do controlador unico. ACEITA SINCRONO OU ASSINCRONO de
+   * proposito: a costura com T5.1 nao depende de a fila do controlador ser
+   * `async` ou nao -- `await` funciona nos dois.
+   */
+  readonly dispatch: (intent: ControlIntent) => ControlResultado | Promise<ControlResultado>
+  /** Relogio injetado (04-TESTES.md 8.1): `at` do intent, nunca `Date.now`. */
+  readonly clock: { now(): number }
+  /** Log do operador. So escreve o ramo inalcancavel (ver os tratadores). */
+  readonly log: GuardLogger
+}
+
+/** Projeta o resultado do despacho para o fio. O vocabulario e o INGLES de D7. */
+function projectControlResult(resultado: ControlResultado): PanelResponse {
+  if (resultado.recusa === undefined) {
+    return {
+      status: 200,
+      headers: JSON_HEADERS,
+      body: `${JSON.stringify({ ok: true, estado: resultado.estado })}\n`,
+    }
+  }
+  return {
+    status: TUNNEL_ACTION_REFUSAL_STATUS,
+    headers: JSON_HEADERS,
+    body: `${JSON.stringify({ ok: false, recusa: resultado.recusa, estado: resultado.estado })}\n`,
+  }
+}
+
+/**
+ * `POST /__guard/api/tunnel/start/nonce` -- o PASSO 1 do liga em duas etapas.
+ *
+ * Emite um nonce de confirmacao (TTL 60 s, uso unico, server-side no host) e
+ * devolve-o OPACO com a expiracao. A pagina mostra-o como confirmacao e o
+ * reenvia no `POST /__guard/api/tunnel/start` final. Emitir nao e mutar: so o
+ * `POST` final, com o nonce, despacha (CTL-023: sem nonce nao ha `start`).
+ *
+ * Nao usa a sessao para alem do gate do despachante: quem aqui chega ja tem
+ * sessao valida (a rota e `exige-sessao`), e o nonce nao se vincula a ela --
+ * e o `consume` do host que o valida contra a acao.
+ */
+export function createTunnelNonceHandler(deps: TunnelActionDeps): PanelHandler {
+  return async (): Promise<PanelResponse> => {
+    const nonce = deps.confirm.issue('start')
+    return {
+      status: 200,
+      headers: JSON_HEADERS,
+      body: `${JSON.stringify({ nonce: nonce.valor, expiresAt: nonce.expiresAt })}\n`,
+    }
+  }
+}
+
+/**
+ * `POST /__guard/api/tunnel/start` -- o PASSO 2 do liga.
+ *
+ * Monta o `ControlIntent` e despacha. `requestedBy` e `panel:<id-hash-da-sessao>`
+ * (o valor que o audit de T5.4 escreve linha a linha), `requestId` e um ULID
+ * NOVO por pedido (a chave de idempotencia de D29) e `at` vem do relogio
+ * injetado. O nonce do corpo atravessa OPACO ate ao controlador -- repetido,
+ * o controlador RECUSA (CTL-021); o painel nao guarda memoria de nonces.
+ */
+export function createTunnelStartHandler(deps: TunnelActionDeps): PanelHandler {
+  return async (exchange: PanelExchange): Promise<PanelResponse> => {
+    // Inalcancavel: a tabela marca a rota `exige-sessao` e o despachante ja
+    // recusou. Se chegar aqui, fechamos em vez de despachar sem origem — e
+    // o log acusa, porque despachar sem origem era uma transicao anonima
+    // (CTL-031).
+    if (exchange.session === null) {
+      deps.log.error('[painel] POST /__guard/api/tunnel/start alcancado sem sessao: politica e despacho divergiram')
+      return INTERNAL_ERROR_RESPONSE
+    }
+
+    const nonce = exchange.fields.get(TUNNEL_NONCE_FIELD_NAME) ?? ''
+    const intent: ControlIntent = {
+      action: 'start',
+      requestedBy: `panel:${exchange.session.idHash}`,
+      requestId: newUlid(deps.clock.now()),
+      nonce: nonce === '' ? undefined : nonce,
+      at: deps.clock.now(),
+    }
+    return projectControlResult(await deps.dispatch(intent))
+  }
+}
+
+/**
+ * `POST /__guard/api/tunnel/stop` -- o desliga.
+ *
+ * A acao que REDUZ exposicao NAO exige nonce (CTL-024: em panico, tem de
+ * funcionar de primeira); a confirmacao e de INTERFACE, no painel, e o token
+ * anti-CSRF vem do despachante para TODOS os `POST` (NIST SP 800-63B-4 5.1.1).
+ */
+export function createTunnelStopHandler(deps: TunnelActionDeps): PanelHandler {
+  return async (exchange: PanelExchange): Promise<PanelResponse> => {
+    if (exchange.session === null) {
+      deps.log.error('[painel] POST /__guard/api/tunnel/stop alcancado sem sessao: politica e despacho divergiram')
+      return INTERNAL_ERROR_RESPONSE
+    }
+
+    const intent: ControlIntent = {
+      action: 'stop',
+      requestedBy: `panel:${exchange.session.idHash}`,
+      requestId: newUlid(deps.clock.now()),
+      at: deps.clock.now(),
+    }
+    return projectControlResult(await deps.dispatch(intent))
   }
 }
