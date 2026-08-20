@@ -54,6 +54,20 @@
  * 429 do Telegram e tratado no WORKER (grammY, `worker/lib/auto-retry.ts`):
  * aqui nunca ha retry cego — um envio falho nao se repete, o proximo evento
  * viaja.
+ *
+ * ===========================================================================
+ * PENDENTES DE FIACAO (declaradas — a mesma honestidade de
+ * `auth_falha_primeira_janela` em `src/audit/events.ts`)
+ * ===========================================================================
+ * `comporTextoTTLExpirado`, `comporTextoModoRestrito` e `comporTextoMagicSuspeito`
+ * estao prontas e testadas, mas NENHUM chamador as fia hoje. O TTL notifica
+ * pelo caminho antigo `ownerExpiryMessage` (`src/tunnel/ttl.ts`); o
+ * `session-auth` (modo restrito) e o `magic.ts` (magic suspeito) nao tem
+ * canal de notificacao fiado. O emissor/ligacao e divida registada da costura,
+ * e nenhuma documentacao deste modulo afirma o contrario. A UNICA composicao
+ * fiada e o toggle: o controlador de T5.1 (`src/control/controller.ts`,
+ * Frente 2 da Onda 6) notifica todo toggle PERMITIDO com
+ * `comporTextoTunelToggle`, sempre DEPOIS do append (a regra de ouro).
  */
 
 import { IPC_PROTOCOL_VERSION } from '../contracts/ipc.ts'

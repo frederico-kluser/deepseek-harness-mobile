@@ -1,12 +1,21 @@
 /**
- * `newUlid` -- o gerador do `requestId` do `ControlIntent` (D29).
+ * O ULID do painel — o `requestId` do `ControlIntent` (D29).
  *
- * O QUE ESTA SUITE FALSIFICA:
+ * Onda 6 (Frente 3): UMA implementacao em `src/` para o `requestId` — a
+ * MONOTONICA `createUlidFactory`, que vive em `src/ulid.ts` e e
+ * re-exportada daqui (o `newUlid` one-shot delega nela). O que esta suite
+ * falsifica:
  *  - a FORMA: 26 caracteres do alfabeto Crockford (sem I, L, O, U);
  *  - o CARIMBO: os primeiros 10 caracteres codificam os 48 bits do relogio
- *    injetado, redondo -- o `requestId` carrega o instante da intencao;
- *  - a UNICIDADE: a parte aleatoria e a dos 80 bits de CSPRNG, e o `random`
- *    injetavel prova que a funcao NAO esconde um `Date.now` proprio;
+ *    injetado — o `requestId` carrega o instante da intencao;
+ *  - a MONOTONICIDADE (regra "monotonic ULID"): a mesma rajada do mesmo
+ *    milissegundo incrementa a parte aleatoria — ordem lexicografica estrita
+ *    com relogio parado ou a avancar. A implementacao NAO-monotonica (a que
+ *    a Frente 3 removeu) morre neste teste;
+ *  - a IDENTIDADE com a superficie de UI nativa: o painel e o ui-contrib
+ *    IMPORTAM A MESMA fabrica — duplicar a implementacao morre aqui;
+ *  - a UNICIDADE: 80 bits de CSPRNG, com o `random` injetavel a provar o
+ *    determinismo;
  *  - a barreira: aleatoriedade curta demais LANCA em vez de produzir lixo.
  *
  * E a chave de idempotencia de D29: `requestId` repetido devolve o resultado
@@ -17,7 +26,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { newUlid } from '../../../src/panel/ulid.ts'
+import { createUlidFactory, newUlid } from '../../../src/panel/ulid.ts'
+import { createUlidFactory as criarDaUiContrib } from '../../../src/ui-contrib/ulid.ts'
+import { FakeClock } from '../../support/clock.ts'
 
 /** Alfabeto Crockford, a copia do codigo de producao so para DECODIFICAR. */
 const ALFABETO = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -36,38 +47,99 @@ function decodificar(ulid: string): { ts: bigint; aleatorio: bigint } {
   return { ts, aleatorio }
 }
 
-describe('newUlid', () => {
-  it('tem a forma de ULID: 26 caracteres Crockford', () => {
-    const ulid = newUlid(1_700_000_000_000)
-    assert.match(ulid, FORMA)
-    assert.equal(ulid.length, 26)
+describe('o ULID do painel (fabricas partilhada e one-shot)', () => {
+  it('Frente 3: o painel e a UI nativa importam A MESMA fabrica — nao ha duplicacao em src/', () => {
+    // Duplicar a implementacao em ui-contrib (em vez de re-exportar) morre aqui.
+    assert.equal(createUlidFactory, criarDaUiContrib)
+  })
+
+  it('a fabrica produz 26 caracteres Crockford', () => {
+    const ulid = createUlidFactory(() => 1_700_000_000_000)
+    for (let i = 0; i < 100; i += 1) {
+      const id = ulid()
+      assert.match(id, FORMA, `id gerado invalido: ${id}`)
+      assert.equal(id.length, 26)
+    }
   })
 
   it('os primeiros 10 caracteres codificam os 48 bits do relogio injetado', () => {
-    const agora = 1_700_000_123_456
-    assert.equal(decodificar(newUlid(agora)).ts, BigInt(agora))
-    assert.equal(decodificar(newUlid(agora + 37)).ts, BigInt(agora + 37))
+    const clock = new FakeClock(1_700_000_123_456)
+    const ulid = createUlidFactory(() => clock.now())
+    assert.equal(decodificar(ulid()).ts, BigInt(1_700_000_123_456))
+    clock.advance(37)
+    assert.equal(decodificar(ulid()).ts, BigInt(1_700_000_123_493))
   })
 
-  it('com aleatoriedade FIXA, o mesmo relogio produz o MESMO ulid', () => {
-    assert.equal(newUlid(1_700_000_000_000, fixo), newUlid(1_700_000_000_000, fixo))
+  it('MUTACAO dirigida: e monotonico com relogio CONGELADO — a nao-monotonica morre aqui', () => {
+    const clock = new FakeClock(7)
+    const ulid = createUlidFactory(() => clock.now())
+    let anterior = ulid()
+    for (let i = 0; i < 200; i += 1) {
+      const atual = ulid()
+      assert.ok(atual > anterior, `ordem violada com relogio parado: ${atual} <= ${anterior}`)
+      anterior = atual
+    }
   })
 
-  it('dois ulids do mesmo instante diferem na parte aleatoria -- D29 nao colide', () => {
-    const a = decodificar(newUlid(1_700_000_000_000))
-    const b = decodificar(newUlid(1_700_000_000_000))
+  it('e monotonico quando o relogio avanca (ordem lexicografica)', () => {
+    const clock = new FakeClock(1_700_000_000_000)
+    const ulid = createUlidFactory(() => clock.now())
+    let anterior = ulid()
+    for (let i = 0; i < 500; i += 1) {
+      clock.advance(1)
+      const atual = ulid()
+      assert.ok(atual > anterior, `ordem violada: ${atual} <= ${anterior}`)
+      anterior = atual
+    }
+  })
+
+  it('nao repete timestamp quando o relogio anda para tras', () => {
+    const clock = new FakeClock(1_000)
+    const ulid = createUlidFactory(() => clock.now())
+    const primeiro = ulid()
+    clock.advance(5)
+    ulid()
+    clock.set(1_000) // relogio voltou
+    const depoisDoRecuo = ulid()
+    assert.ok(depoisDoRecuo > primeiro, `o recuo do relogio repetiu timestamp: ${depoisDoRecuo}`)
+  })
+
+  it('com aleatoriedade FIXA, o mesmo relogio e o MESMO instante produzem o MESMO ulid', () => {
+    const a = createUlidFactory(() => 1_700_000_000_000, fixo)
+    const b = createUlidFactory(() => 1_700_000_000_000, fixo)
+    assert.equal(a(), b())
+  })
+
+  it('dois ulids do mesmo instante diferem na parte aleatoria — D29 nao colide', () => {
+    const clock = new FakeClock(1_700_000_000_000)
+    const ulid = createUlidFactory(() => clock.now())
+    const a = decodificar(ulid())
+    const b = decodificar(ulid())
     assert.equal(a.ts, b.ts)
     assert.notEqual(a.aleatorio, b.aleatorio)
   })
 
   it('instantes diferentes diferem no carimbo, mesmo com a mesma sorte', () => {
-    const a = newUlid(1_700_000_000_000, fixo)
-    const b = newUlid(1_700_000_000_001, fixo)
-    assert.notEqual(a, b)
-    assert.equal(decodificar(a).ts + 1n, decodificar(b).ts)
+    const a = createUlidFactory(() => 1_700_000_000_000, fixo)
+    const b = createUlidFactory(() => 1_700_000_000_001, fixo)
+    const idA = a()
+    const idB = b()
+    assert.notEqual(idA, idB)
+    assert.equal(decodificar(idA).ts + 1n, decodificar(idB).ts)
   })
 
   it('aleatoriedade curta demais LANCA em vez de produzir lixo', () => {
-    assert.throws(() => newUlid(1_700_000_000_000, () => new Uint8Array(9)), /curta demais/u)
+    const ulid = createUlidFactory(() => 1_700_000_000_000, () => new Uint8Array(9))
+    assert.throws(() => ulid(), /curta demais/u)
+  })
+
+  it('newUlid (one-shot do painel) delega na fabrica canonica: forma, carimbo e barreira', () => {
+    const agora = 1_700_000_123_456
+    const id = newUlid(agora)
+    assert.match(id, FORMA)
+    assert.equal(id.length, 26)
+    assert.equal(decodificar(id).ts, BigInt(agora))
+    assert.equal(newUlid(agora, fixo), newUlid(agora, fixo), 'mesmo instante + mesma sorte = mesmo id')
+    assert.throws(() => newUlid(agora, () => new Uint8Array(9)), /curta demais/u)
   })
 })

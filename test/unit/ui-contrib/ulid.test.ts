@@ -5,18 +5,30 @@
  * produziriam idempotencia fantasma — o segundo clique pareceria aceite sem
  * ter acontecido. E por isso que a unicidade e a monotonicidade sao testadas,
  * nao assumidas.
+ *
+ * Onda 6 (Frente 3): a fabrica NAO e implementada aqui — e re-exportada de
+ * `src/ulid.ts` — e este teste prende a paridade com o painel: os
+ * dois importam a MESMA funcao (identidade), e a monotonicidade da fabrica
+ * canonica e exigida nos DOIS lados (a nao-monotonica morre aqui e no
+ * `test/unit/panel/ulid.test.ts`).
  */
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { createUlidFactory } from '../../../src/ui-contrib/ulid.ts'
+import { createUlidFactory as criarDoPainel } from '../../../src/panel/ulid.ts'
 import { FakeClock } from '../../support/clock.ts'
 
 /** Base32 de Crockford — o alfabeto da especificacao ULID. */
 const FORMA_ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/u
 
 describe('ulid da superficie', () => {
+  it('Frente 3: a UI nativa e o painel importam A MESMA fabrica — nao ha duplicacao em src/', () => {
+    // Duplicar a implementacao em panel (em vez de re-exportar) morre aqui.
+    assert.equal(createUlidFactory, criarDoPainel)
+  })
+
   it('tem 26 caracteres do alfabeto de Crockford (especificacao ULID)', () => {
     const clock = new FakeClock(1_700_000_000_000)
     const ulid = createUlidFactory(() => clock.now())

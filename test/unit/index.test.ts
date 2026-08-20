@@ -507,6 +507,55 @@ describe('8(b): o /emergencia NAO reinicia o worker — o supervisor e disposto'
     }
   })
 })
+describe('T5.4 fiada (Frente 2): o toggle do tunel notifica o worker pelo canal notify', () => {
+  it('o /emergencia em STOPPED (noop permitido) entrega o notify de "tunel desligado" ao worker', async () => {
+    // A fiacao da Onda 6 liga o canal de notificacao do controlador ao IPC
+    // host -> worker: todo toggle PERMITIDO notifica DEPOIS do append (T5.4).
+    // Este teste prova a COSTURA na composicao: o texto composto pelo
+    // controlador chega ao worker como mensagem `notify`.
+    const casa = join(tmpdir(), `dsh-guard-f2-${process.pid}`)
+    const dir = join(casa, 'guarded-bot')
+    mkdirSync(dir, { recursive: true })
+    chmodSync(dir, 0o700)
+    writeFileSync(
+      join(dir, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        desiredState: 'STOPPED',
+        pairing: { ownerUserId: 123, ownerChatId: 456, pairedAt: 1_000 },
+      }),
+      { mode: 0o600 },
+    )
+    process.env.DSH_HOME = casa
+    try {
+      const { ctx } = install({
+        exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false },
+        tunnel: { mode: 'quick', ttlMinutes: 60 },
+      })
+      const filho = ctx.subprocess.lastChild()
+
+      // O dono manda /emergencia: o stop em STOPPED e um noop PERMITIDO e
+      // o controlador notifica "Tunel desligado" (origem telegram:123).
+      filho.stdout.write(
+        JSON.stringify({ v: 1, type: 'intent', intent: 'emergency', requestId: 'emerg-f2', from: 123, chat: 456 }) + '\n',
+      )
+      await flush()
+      await flush()
+
+      const notificacoes = filho.stdinLines
+        .map((linha) => JSON.parse(linha) as Record<string, unknown>)
+        .filter((mensagem) => mensagem['type'] === 'notify')
+      const toggle = notificacoes.find((n) => (n['texto'] as string).startsWith('alerta:tunel-desligado'))
+      assert.ok(toggle !== undefined, 'o toggle permitido notificou o dono (T5.4 fiada na Onda 6)')
+      assert.ok((toggle['texto'] as string).includes('origem: telegram:123'), 'a origem viaja no texto')
+
+      for (const disposer of ctx.effects) disposer()
+    } finally {
+      delete process.env.DSH_HOME
+      rmSync(casa, { recursive: true, force: true })
+    }
+  })
+})
 describe('8(c): no boot com dono persistido, o HOST envia pairing.owner ao worker', () => {
   it('state.json com pairing -> a primeira mensagem do canal e o dono reaprendido', async () => {
     const casa = join(tmpdir(), `dsh-guard-8c-${process.pid}`)

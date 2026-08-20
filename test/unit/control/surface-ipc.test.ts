@@ -615,3 +615,114 @@ describe('secret.rotate: a cadeia INTERNAL com cada peca ausente isolada', () =>
     assert.equal((resposta as { code?: string }).code, 'INTERNAL')
   })
 })
+
+/* ========================================================================= */
+/* Frente 4 (Onda 6): o /emergencia nunca derruba o processo por uma         */
+/* promise derivada sem catch, e o despacho SINCRONO avariado vira ack de    */
+/* erro — nunca escapa (o "ack sempre emitido" e o contrato do canal, Q-5).  */
+/* ========================================================================= */
+
+describe('Frente 4 (Onda 6): emergency sem unhandled rejection', () => {
+  it('(a) aposEmergencia a LANCAR: o ack sai e a rejeicao da promise derivada e tratada (log, sem unhandled rejection)', async () => {
+    const h = fazerBancada()
+    const servico = createFakeLogger()
+    const responder = criarRespondedorIpc({
+      controller: h.controlador,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: servico('ctl'),
+      agora: () => h.clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => {
+        throw new Error('invalidacao de sessoes avariada')
+      },
+    })
+
+    const resposta = responder(intent({ intent: 'emergency', requestId: 'req-f4-apos' }))
+
+    assert.equal(resposta.type, 'ack', 'o ack sai ANTES da promise derivada')
+    await flush()
+    // Com o .catch, a rejeicao e logada e o processo segue; sem o .catch,
+    // o node:test morre com unhandled rejection — a mutacao mata-se sozinha.
+    assert.equal(servico.has('error', 'falha no /emergencia apos o ack'), true)
+  })
+
+  it('(b) o despacho SINCRONO que LANCA (persistirIntencao a rebentar no stop) vira ack de erro — nada escapa', async () => {
+    const clock = new FakeClock(1_000)
+    const scheduler = new FakeScheduler()
+    const supervisor = new SupervisorDuble()
+    const servico = createFakeLogger()
+    const controlador = createTunnelController({
+      log: servico('ctl'),
+      supervisor,
+      confirm: createConfirmService({
+        now: () => clock.now(),
+        randomBytes: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+      }),
+      agora: () => clock.now(),
+      scheduler,
+      restritoAtivo: () => false,
+      segredoForte: () => true,
+      requerConfirmacao: true,
+      audit: { append: () => undefined },
+      broadcast: () => undefined,
+      persistirIntencao: (alvo) => {
+        // Sobe ate READY (READY e persistido sem problema) e rebenta SO no
+        // stop do emergency (STOPPED) — o cenario real de um disco a falhar
+        // no instante da paragem.
+        if (alvo === 'STOPPED') throw new Error('nao foi possivel persistir a intencao (disco)')
+      },
+    })
+    // Ate READY: o start persiste READY e funciona; o repasse promove.
+    await controlador.despachar({ action: 'start', requestedBy: 'telegram:1', requestId: 'up-f4', nonce: controlador.emitirNonce('start').valor, at: 1_000 })
+    supervisor.definirObservado({
+      state: 'READY',
+      info: { url: 'https://x.trycloudflare.com', startedAt: 1_000, mode: 'quick' },
+      attempts: 0,
+      expiresAt: 5_000,
+    })
+    scheduler.runLast()
+    assert.equal(controlador.snapshot().state, 'READY')
+
+    const responder = criarRespondedorIpc({
+      controller: controlador,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: servico('ctl'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    const resposta = responder(intent({ intent: 'emergency', requestId: 'req-f4-sync' }))
+
+    assert.equal(resposta.type, 'error', 'o throw sincrono vira ack de erro, nunca escapa')
+    assert.equal((resposta as { code?: string }).code, 'INTERNAL')
+    assert.equal((resposta as { requestId?: string }).requestId, 'req-f4-sync')
+    assert.equal(servico.has('error', 'falha ao despachar o /emergencia'), true)
+  })
+
+  it('(b2) sem tunel (loopback): um aposEmergencia que LANCA nao impede o ack', () => {
+    const servico = createFakeLogger()
+    const responder = criarRespondedorIpc({
+      controller: undefined,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: servico('ctl'),
+      agora: () => 1_000,
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => {
+        throw new Error('invalidacao avariada no loopback')
+      },
+    })
+
+    const resposta = responder(intent({ intent: 'emergency', requestId: 'req-f4-loop' }))
+
+    assert.equal(resposta.type, 'ack')
+    assert.equal((resposta as { result?: string }).result, 'accepted')
+    assert.equal(servico.has('error', 'falha no /emergencia (sem tunel)'), true)
+  })
+})

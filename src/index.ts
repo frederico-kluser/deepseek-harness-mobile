@@ -925,6 +925,11 @@ export function apply(ctx: Context, config: Config): void {
       },
       requerConfirmacao: resolveControl(config).requireConfirmation,
       audit: { append: (evento) => authStack().audit.append(evento) },
+      // T5.4 fiada (Frente 2, Onda 6): todo toggle PERMITIDO notifica DEPOIS do
+      // append. O canal e LAZY (o workerSupervisor so nasce no efeito seguinte)
+      // e o mesmo padrao do relatorio periodico — o worker em baixo devolve
+      // false e o envio vira aviso no log do operador.
+      canalNotificacao: { send: (message) => workerSupervisor?.send(message) ?? false },
       broadcast: broadcastControlador,
       persistirIntencao: (alvo) => {
         try {

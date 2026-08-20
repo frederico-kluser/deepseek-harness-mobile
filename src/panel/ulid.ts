@@ -1,71 +1,43 @@
 /**
- * ULID -- o formato do `requestId` do `ControlIntent` (`09-DECISOES-CANONICAS.md`
+ * ULID — o formato do `requestId` do `ControlIntent` (`09-DECISOES-CANONICAS.md`
  * D29; `src/contracts/control.ts`).
  *
- * DONO: T5.3.
+ * DONO: T5.3 -> Onda 6 (Frente 3).
  *
  * ---------------------------------------------------------------------------
- * PORQUE UM GERADOR PROPRIO, E NAO UMA DEPENDENCIA
+ * UMA SO IMPLEMENTACAO EM SRC/ — A MONOTONICA
  * ---------------------------------------------------------------------------
- * A Onda 5 corre com zero dependencias novas. Um ULID sao 26 caracteres
- * Crockford-base32: 48 bits de relogio + 80 bits de aleatoriedade. O nucleo
- * cabe em 30 linhas e o teste falsifica a forma, o carimbo e a unicidade; uma
- * dependencia de terceiros para isto acrescentaria um `node_modules` inteiro a
- * troco de uma funcao que quem revisa nao pode inspecionar.
- *
- * A CHAVE DE IDEMPOTENCIA (D29) depende de o `requestId` ser UNICO por
- * intencao. A unicidade e a dos 80 bits de CSPRNG, e nao a da monoticidade por
- * milissegundo da spec original -- essa nao e implementada de proposito: duas
- * intencoes do mesmo milissegundo sao duas intencoes DISTINTAS, e o controlador
- * (T5.1) trata a repeticao por idempotencia de ESTADO (CTL-002/003) e por
- * `requestId` literal -- nunca por ordem de chegada.
+ * A Onda 6 (Frente 3, revisor do diff integrado) colapsou as DUAS fabricas do
+ * `requestId` (esta, nao-monotonica, e a de `src/ui-contrib/ulid.ts`,
+ * monotonica) numa UNICA: `createUlidFactory` vive em `src/ulid.ts` (a folha
+ * partilhada da arvore, visivel a T5.3 e a T5.5) e
+ * este modulo re-exporta-a. O que resta AQUI e o `newUlid` de conveniencia
+ * one-shot — o chamador congelado `src/panel/api.ts` gera um id por pedido com
+ * `newUlid(deps.clock.now())` — que DELEGA na fabrica canonica: a unicidade e
+ * a dos 80 bits de CSPRNG e a forma e a MESMA de toda a superficie. Quem
+ * precisar de ordem cronologica (rajadas do mesmo milissegundo) segura a
+ * fabrica (`createUlidFactory`) com o relogio injetado — e o que a UI nativa
+ * faz; a paridade entre os dois modulos e presa por teste (identidade da
+ * funcao).
  *
  * O `random` injetavel e a costura de teste (04-TESTES.md 8.1): a producao usa
  * CSPRNG (`randomBytes`), e o teste fixa os bytes para provar determinismo.
  */
 
-import { randomBytes } from 'node:crypto'
+import { createUlidFactory } from '../ulid.ts'
 
-/** Alfabeto Crockford do ULID: sem I, L, O e U, de proposito. */
-const ALFABETO = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-
-/** Os 48 bits de relogio cabem em 10 caracteres; os 80 de sorte, em 16. */
-const TIME_CHARS = 10
-const RANDOM_CHARS = 16
-const RANDOM_BYTES = 10
-
-/** Codifica em base 32 Crockford, big-endian, com o numero de caracteres fixo. */
-function encodeCrockford(valor: bigint, caracteres: number): string {
-  let restante = valor
-  let saida = ''
-  for (let i = 0; i < caracteres; i += 1) {
-    saida = ALFABETO[Number(restante & 0x1fn)] + saida
-    restante >>= 5n
-  }
-  return saida
-}
+export { createUlidFactory } from '../ulid.ts'
 
 /**
- * Gera um ULID de 26 caracteres para o instante dado.
+ * Gera UM ULID de 26 caracteres para o instante dado (conveniencia one-shot
+ * do painel; delega na fabrica canonica de `src/ulid.ts`).
  *
- * `now` e epoch ms do relogio INJETADO (nunca `Date.now` aqui dentro -- a
+ * `now` e epoch ms do relogio INJETADO (nunca `Date.now` aqui dentro — a
  * superficie recebe o relogio por dependencia, 04-TESTES.md 8.1).
  */
 export function newUlid(
   now: number,
-  random: () => Uint8Array = () => randomBytes(RANDOM_BYTES),
+  random?: () => Uint8Array,
 ): string {
-  const bytes = random()
-  if (bytes.length < RANDOM_BYTES) {
-    throw new Error(
-      `aleatoriedade do ULID curta demais: ${String(bytes.length)} bytes (minimo ${String(RANDOM_BYTES)})`,
-    )
-  }
-
-  let aleatorio = 0n
-  for (let i = 0; i < RANDOM_BYTES; i += 1) {
-    aleatorio = (aleatorio << 8n) | BigInt(bytes[i] ?? 0)
-  }
-
-  return encodeCrockford(BigInt(Math.floor(now)), TIME_CHARS) + encodeCrockford(aleatorio, RANDOM_CHARS)
+  return createUlidFactory(() => now, random)()
 }

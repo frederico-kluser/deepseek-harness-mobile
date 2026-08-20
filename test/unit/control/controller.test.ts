@@ -14,6 +14,7 @@ import { describe, it } from 'node:test'
 
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
 import type { ControlIntent } from '../../../src/contracts/control.ts'
+import type { IpcNotifyMessage } from '../../../src/contracts/ipc.ts'
 import type { TunnelSnapshot } from '../../../src/contracts/tunnel.ts'
 import { createConfirmService } from '../../../src/control/confirm.ts'
 import {
@@ -131,6 +132,10 @@ interface Bancada {
   difusoes: DifusaoEstado[]
   auditoria: AuditEvent[]
   intencoes: Array<'READY' | 'STOPPED'>
+  /** As mensagens notify entregues pelo canal de T5.4 (Frente 2). */
+  notificacoes: IpcNotifyMessage[]
+  /** A ORDEM append->envio, a regra de ouro (Frente 2). */
+  ordem: string[]
   log: GuardLogger
 }
 
@@ -145,6 +150,9 @@ function fazerBancada(overrides: Partial<ControladorDeps> = {}): Bancada {
   const difusoes: DifusaoEstado[] = []
   const auditoria: AuditEvent[] = []
   const intencoes: Array<'READY' | 'STOPPED'> = []
+  const notificacoes: IpcNotifyMessage[] = []
+  // A ordem append->envio: o canal regista o marcador do texto enviado.
+  const ordem: string[] = []
   // `createFakeLogger()` e um CALLABLE: os metodos `info/warn/error/debug`
   // vivem no objeto que a chamada devolve — e esse que e um `GuardLogger`.
   const log = createFakeLogger()('ctl')
@@ -161,13 +169,37 @@ function fazerBancada(overrides: Partial<ControladorDeps> = {}): Bancada {
     restritoAtivo: () => false,
     segredoForte: () => true,
     requerConfirmacao: true,
-    audit: { append: (evento) => auditoria.push(evento) },
+    audit: {
+      append: (evento) => {
+        ordem.push(`audit:${evento.evento}`)
+        auditoria.push(evento)
+      },
+    },
+    canalNotificacao: {
+      send: (message) => {
+        const texto = (message as IpcNotifyMessage).texto
+        ordem.push(`envio:${texto.split('\n')[0] ?? ''}`)
+        notificacoes.push(message as IpcNotifyMessage)
+        return true
+      },
+    },
     broadcast: (difusao) => difusoes.push(difusao),
     persistirIntencao: (alvo) => intencoes.push(alvo),
     ...overrides,
   })
 
-  return { controlador, supervisor, scheduler, clock, difusoes, auditoria, intencoes, log }
+  return {
+    controlador,
+    supervisor,
+    scheduler,
+    clock,
+    difusoes,
+    auditoria,
+    intencoes,
+    notificacoes,
+    ordem,
+    log,
+  }
 }
 
 /** Dispara o repasse de reconciliacao agendado (um tick do FakeScheduler). */
@@ -1077,5 +1109,95 @@ describe('CTL-021: o nonce desconhecido no momento da EXECUCAO (esperou na fila)
     assert.equal(tardio.recusa, 'NONCE_INVALIDO', 'o nonce ja foi consumido pelo primeiro start')
     assert.equal(tardio.estado, 'STARTING')
     assert.equal(h.supervisor.startCalls, 1, 'UM UNICO spawn: o replay na execucao nao spawna')
+  })
+})
+
+/* ========================================================================= */
+/* T5.4 fiada (Onda 6, Frente 2): todo toggle PERMITIDO notifica DEPOIS do   */
+/* append — "notifica em todo toggle do tunel" (03-ONDAS T5.4, §10).         */
+/* ========================================================================= */
+
+describe('T5.4 fiada (Frente 2): a notificacao de toggle sai pelo canal, DEPOIS do append', () => {
+  it('start de STOPPED: append PRIMEIRO, notificacao com alerta:tunel-ligado e origem', async () => {
+    const h = fazerBancada()
+    const nonce = h.controlador.emitirNonce('start')
+    const resultado = await h.controlador.despachar(intent({ requestedBy: 'telegram:777', nonce: nonce.valor }))
+
+    assert.equal(resultado.estado, 'STARTING')
+    // A REGRA DE OURO: o append corre ANTES do envio (o log e a fonte da verdade).
+    assert.deepEqual(h.ordem, ['audit:tunel_ligar:telegram:777', 'envio:alerta:tunel-ligado'])
+    assert.equal(h.notificacoes.length, 1)
+    const texto = h.notificacoes[0]?.texto ?? ''
+    assert.equal(texto.split('\n')[0], 'alerta:tunel-ligado', 'o marcador fechado que o worker renderiza')
+    assert.ok(texto.includes('origem: telegram:777'), texto)
+    assert.ok(texto.includes('Tunel ligado'), texto)
+  })
+
+  it('stop em READY: alerta:tunel-desligado, sem URL; o reset NAO notifica', async () => {
+    const h = fazerBancada()
+    await subirAteReady(h) // ja notificou o ligar (uma vez)
+    const antes = h.notificacoes.length
+
+    await h.controlador.despachar(intent({ action: 'stop' }))
+
+    assert.equal(h.notificacoes.length, antes + 1, 'o stop notificou')
+    const texto = h.notificacoes.at(-1)?.texto ?? ''
+    assert.equal(texto.split('\n')[0], 'alerta:tunel-desligado')
+    assert.ok(texto.includes('origem: telegram:123'), texto)
+    assert.ok(!texto.includes('URL:'), 'desligar nao tem URL que mostrar')
+  })
+
+  it('noop de stop em STOPPED tambem notifica (todo toggle PERMITIDO, CTL-004)', async () => {
+    const h = fazerBancada()
+
+    const r = await h.controlador.despachar(intent({ action: 'stop' }))
+
+    assert.equal(r.estado, 'STOPPED')
+    assert.equal(h.notificacoes.length, 1, 'o noop permitido e um toggle: notifica')
+    assert.equal(h.notificacoes[0]?.texto.split('\n')[0], 'alerta:tunel-desligado')
+  })
+
+  it('o reset NAO notifica (nao ha composicao de reset em notify.ts — declarado no cabecalho)', async () => {
+    const h = fazerBancada({ supervisor: new FakeSupervisor() })
+    h.supervisor.modoStart = 'imediato-failed'
+    await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+    assert.equal(h.notificacoes.length, 0, 'o start falhado (negado) nao notifica')
+
+    const nonce = h.controlador.emitirNonce('reset')
+    const r = await h.controlador.despachar(intent({ action: 'reset', nonce: nonce.valor }))
+
+    assert.equal(r.estado, 'STOPPED')
+    assert.equal(h.notificacoes.length, 0, 'o reset nunca notifica')
+  })
+
+  it('a recusa (negado) NAO notifica: o texto diria "Tunel ligado" para uma acao que nao aconteceu', async () => {
+    const h = fazerBancada()
+    await subirAteReady(h) // 1 notificacao (ligar)
+    await h.controlador.despachar(intent({ action: 'stop' })) // 2 (desligar)
+    assert.equal(h.controlador.snapshot().state, 'STOPPING')
+    const antes = h.notificacoes.length
+
+    const veredito = h.controlador.decidirSincrono(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+    assert.equal(veredito?.recusa, 'SHUTDOWN_IN_PROGRESS')
+    assert.equal(h.notificacoes.length, antes, 'a recusa negada nao notifica')
+  })
+
+  it('MUTACAO dirigida (fail-closed): append que FALHA SUPRIME a notificacao — sem log, sem notificacao', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({
+      log: servico('ctl'),
+      audit: {
+        append: (): void => {
+          throw new Error('disco cheio')
+        },
+      },
+    })
+
+    const resultado = await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+
+    assert.equal(resultado.estado, 'STARTING', 'o toggle nao e travado pelo disco')
+    assert.equal(h.notificacoes.length, 0, 'append falho => sem notificacao (a regra de ouro)')
+    assert.equal(servico.has('error', 'falha ao registar auditoria de tunel_ligar'), true)
   })
 })

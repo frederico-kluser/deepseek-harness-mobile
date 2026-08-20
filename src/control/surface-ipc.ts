@@ -198,8 +198,15 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
     const controlIntent = controlIntentDe(intent, action, nonce)
     const decidido = deps.controller.decidirSincrono(controlIntent)
     if (decidido === null) {
-      // Trabalho lento: aceita ja, difunde o resto depois (o padrao do IPC).
-      void deps.controller.despachar(controlIntent)
+      // Trabalho lento: aceita ja, difunde o resto depois (o padrao do IPC). O
+      // despacho "nunca rejeita" por contrato, mas um defeito nao pode virar
+      // unhandled rejection — o ack JA saiu (linha acima), o erro e logado e
+      // segue (Frente 4, Onda 6).
+      void deps.controller.despachar(controlIntent).catch((error) => {
+        log.error(
+          `falha no despacho pos-ack de ${action}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
       return ack(intent, 'accepted', estadoAtual())
     }
     const veredito = resultadoDoAck(action, decidido)
@@ -234,10 +241,39 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
       case 'emergency': {
         // Kill switch: sem nonce (CTL-024). Tunel primeiro, sessoes depois.
         if (deps.controller !== undefined) {
-          void deps.controller.despachar(controlIntentDe(intent, 'stop')).then(() => deps.aposEmergencia(intent))
+          // (b) O despacho pode LANCAR DE FORMA SINCRONA (controlador avariado:
+          // persistirIntencao/supervisor a rebentar). O throw vira ack de erro,
+          // nunca escapa — o "ack sempre emitido" e o contrato do canal (Q-5).
+          try {
+            // (a) A promise DERIVADA (despachar + aposEmergencia) tem catch: se
+            // o aposEmergencia (ou o despacho) rejeitar DEPOIS do ack, o erro e
+            // logado e segue — um kill switch falho nunca derruba o processo
+            // por uma promise sem catch (Frente 4, Onda 6).
+            void deps.controller
+              .despachar(controlIntentDe(intent, 'stop'))
+              .then(() => deps.aposEmergencia(intent))
+              .catch((error) => {
+                log.error(
+                  `falha no /emergencia apos o ack: ${error instanceof Error ? error.message : String(error)}`,
+                )
+              })
+          } catch (error) {
+            log.error(
+              `falha ao despachar o /emergencia: ${error instanceof Error ? error.message : String(error)}`,
+            )
+            return erro(intent, 'INTERNAL', 'Nao foi possivel processar o pedido. Tente novamente.')
+          }
         } else {
           // Sem tunel nao ha o que derrubar; a invalidacao continua a valer.
-          deps.aposEmergencia(intent)
+          // Best-effort tambem aqui: um aposEmergencia avariado nao pode
+          // impedir o ack ("ack sempre emitido").
+          try {
+            deps.aposEmergencia(intent)
+          } catch (error) {
+            log.error(
+              `falha no /emergencia (sem tunel): ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
         }
         return ack(intent, 'accepted', estadoAtual())
       }

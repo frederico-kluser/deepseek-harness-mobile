@@ -78,13 +78,15 @@
  * controlador ja esta em `STOPPED` — o reset humano vence.
  */
 
-import { comporEventoReset, comporEventoToggle } from '../audit/events.ts'
+import { comporEventoReset, comporEventoToggle, type TunelToggleEvent } from '../audit/events.ts'
+import { comporTextoTunelToggle, enviarNotificacao } from '../audit/notify.ts'
 import type { AuditSink } from '../contracts/auth.ts'
 import type { ControlAction, ControlIntent, ControlRecusa, ControlResultado, Nonce } from '../contracts/control.ts'
 import type { TunnelSnapshot, TunnelState } from '../contracts/tunnel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
 import type { Scheduler, TimerHandle } from '../proc/scheduler.ts'
 import type { TunnelSupervisor } from '../tunnel/supervisor.ts'
+import type { HostIpcChannel } from '../telegram/ipc.ts'
 import type { ConfirmServiceComVeredito } from './confirm.ts'
 
 /** Intervalo do repasse de reconciliacao. Ver o cabecalho. */
@@ -145,6 +147,16 @@ export interface ControladorDeps {
    * a falha vai ao log do operador.
    */
   readonly audit: Pick<AuditSink, 'append'>
+  /**
+   * O canal da notificacao proativa (T5.4, Frente 2 da Onda 6): a mensagem
+   * `notify` do IPC host -> worker, onde o texto + os botoes chegam ao dono.
+   * Todo toggle PERMITIDO do tunel notifica DEPOIS do append (a regra de ouro:
+   * o log e a fonte da verdade; a notificacao e best-effort e nunca trava o
+   * toggle). O envio e `enviarNotificacao`: canal morto/hostil vira aviso, o
+   * toggle segue. AUSENTE: sem notificacao de toggle (a fiacao ainda nao tem
+   * worker — modo loopback).
+   */
+  readonly canalNotificacao?: Pick<HostIpcChannel, 'send'> | undefined
   /** Difunde uma mudanca de estado com `seq` monotonico (CTL-010). */
   readonly broadcast: (difusao: DifusaoEstado) => void
   /**
@@ -246,6 +258,46 @@ export function createTunnelController(deps: ControladorDeps): TunnelController 
       // BEST-EFFORT, ver o cabecalho: a falha do sink nao pode travar o toggle.
       log.error(
         `falha ao registar auditoria de ${eventoDe(action)} (${requestedBy}): ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      )
+      // REGRA DE OURO (T5.4): sem registo, sem notificacao. O append falhou
+      // (disco cheio, fail-closed) — a notificacao NAO sai.
+      return
+    }
+    // O append correu: a notificacao de toggle pode sair (T5.4 fiada na Onda 6).
+    notificarToggle(action, nome, resultado)
+  }
+
+  /**
+   * T5.4 fiada (Onda 6, Frente 2): todo toggle PERMITIDO do tunel e notificado
+   * DEPOIS do append — "notifica em todo toggle do tunel" (03-ONDAS T5.4, §10).
+   *
+   * O texto e composto com `comporTextoTunelToggle` (marcador
+   * `alerta:tunel-ligado|desligado` + origem do sufixo; a URL entra so em
+   * LIGAR quando ha) e sai pelo canal IPC como `notify` — e o worker quem
+   * renderiza os botoes pela gramatica do marcador (T5.2). Best-effort: um
+   * canal morto ou hostil nunca trava o toggle — o registo ja esta no
+   * AuditSink. Recusas (negado) NAO notificam: o texto diria "Tunel ligado"
+   * para uma acao que nao aconteceu. O reset NAO notifica: nao ha composicao
+   * de reset neste modulo (declarado no cabecalho de notify.ts).
+   */
+  const notificarToggle = (action: ControlAction, nome: string, resultado: 'permitido' | 'negado'): void => {
+    if (action === 'reset' || resultado !== 'permitido') return
+    if (deps.canalNotificacao === undefined) return
+    try {
+      // O nome ja passou a barreira do compositor acima (origem nao vazia); o
+      // try e a rede do best-effort: compor ou enviar nunca lanca para o
+      // chamador (05-QUALIDADE 6.3 — o chamador e o proprio toggle). O guard
+      // acima (`action !== 'reset'`) ja excluiu o reset, cuja forma e
+      // `tunel_reset:<origem>`; para start/stop o nome vem de
+      // comporEventoToggle e a forma e exatamente a de TunelToggleEvent — o
+      // cast documenta esse facto ao tipo.
+      const evento: TunelToggleEvent = { evento: nome as TunelToggleEvent['evento'], resultado: 'permitido' }
+      const texto = comporTextoTunelToggle(evento, deps.agora(), observado.info?.url)
+      enviarNotificacao(deps.canalNotificacao, log, texto)
+    } catch (error) {
+      log.error(
+        `notificacao de ${eventoDe(action)} falhou (best-effort; o audit ja foi escrito): ` +
           `${error instanceof Error ? error.message : String(error)}`,
       )
     }

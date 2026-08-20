@@ -156,6 +156,15 @@ import { PLUGIN_NAME } from '../errors.ts'
  *                                    MESMA regra de origem no sufixo
  *                                    (`src/control/controller.ts`, via
  *                                    `comporEventoReset`).
+ *   - `tunel_emergencia:<origem>`    — EMITIDO: `src/index.ts` (aposEmergencia,
+ *                                    o kill switch /emergencia de 8(b)); origem
+ *                                    `telegram:<id>` no sufixo.
+ *   - `tunel_intent_nao_pareado:<origem>` — EMITIDO: `src/control/surface-ipc.ts`
+ *                                    (a recusa S6 de identidade, CTL-029);
+ *                                    origem `telegram:<id>` no sufixo.
+ *   - `tunel_orfao_derrubado`        — EMITIDO: o boot de `src/index.ts` via
+ *                                    `EVENTO_ORFAO` de `src/tunnel/pidfile.ts`
+ *                                    (varredura de orfao, 02-SEGURANCA 9).
  *
  * ORDEM E CONTRATO (03-ONDAS 10): todo evento deste vocabulario e escrito no
  * AuditSink ANTES de virar notificacao. O consumidor em `src/audit/notify.ts`
@@ -196,6 +205,26 @@ export const EVENTO_TUNEL_DESLIGAR = 'tunel_desligar'
 
 /** Prefixo do reset do estado terminal. EMITIDO: o controlador de T5.1 (costura da Onda 5). */
 export const EVENTO_TUNEL_RESET = 'tunel_reset'
+
+/**
+ * O kill switch `/emergencia` agiu (8(b)). EMITIDO: `src/index.ts`
+ * (aposEmergencia), familia `<origem>` no sufixo — a MESMA regra dos toggles.
+ */
+export const EVENTO_TUNEL_EMERGENCIA = 'tunel_emergencia'
+
+/**
+ * Intent de identidade nao pareada recusada (S6, CTL-029). EMITIDO:
+ * `src/control/surface-ipc.ts` (a constante `EVENTO_NAO_PAREADO` do emissor),
+ * familia `<origem>` no sufixo.
+ */
+export const EVENTO_INTENT_NAO_PAREADO = 'tunel_intent_nao_pareado'
+
+/**
+ * Tunel orfao de uma execucao anterior derrubado no boot (02-SEGURANCA 9).
+ * EMITIDO: `src/index.ts` via `EVENTO_ORFAO` de `src/tunnel/pidfile.ts` — a
+ * paridade entre os dois e presa por teste, como a do TTL.
+ */
+export const EVENTO_ORFAO = 'tunel_orfao_derrubado'
 
 /**
  * O TTL expirou e o tunel foi derrubado (controlo a agir, nao erro).
@@ -373,6 +402,9 @@ export type AuditEventoNome =
   | `tunel_ligar:${string}`
   | `tunel_desligar:${string}`
   | `tunel_reset:${string}`
+  | `tunel_emergencia:${string}`
+  | `tunel_intent_nao_pareado:${string}`
+  | typeof EVENTO_ORFAO
   | typeof EVENTO_TTL_EXPIRADO
   | `tunel_ttl_expirado:${number}min:${TtlDetectedBy}`
   | typeof EVENTO_MODO_RESTRITO
@@ -416,6 +448,7 @@ const NOMES_BASE: ReadonlySet<string> = new Set([
   EVENTO_AUTH_CREDENCIAL,
   EVENTO_AUTH_SEGREDO_INDISPONIVEL,
   EVENTO_AUTH_FALHA_JANELA,
+  EVENTO_ORFAO,
   EVENTO_TTL_EXPIRADO,
   EVENTO_MODO_RESTRITO,
   EVENTO_EXPOSICAO_RESTRITA,
@@ -473,6 +506,14 @@ export function eventoDoVocabulario(nome: string): boolean {
   const sufixoReset = sufixoDe(nome, EVENTO_TUNEL_RESET)
   // A mesma regra dos toggles: `tunel_reset:` (origem vazia) nao designa ninguem.
   if (sufixoReset !== undefined) return nome.length > EVENTO_TUNEL_RESET.length + 1
+
+  // O kill switch e a recusa de identidade seguem a MESMA convencao dos
+  // toggles: origem no sufixo, e `<prefixo>:` (vazio) nao designa ninguem.
+  const sufixoEmergencia = sufixoDe(nome, EVENTO_TUNEL_EMERGENCIA)
+  if (sufixoEmergencia !== undefined) return nome.length > EVENTO_TUNEL_EMERGENCIA.length + 1
+
+  const sufixoNaoPareado = sufixoDe(nome, EVENTO_INTENT_NAO_PAREADO)
+  if (sufixoNaoPareado !== undefined) return nome.length > EVENTO_INTENT_NAO_PAREADO.length + 1
 
   for (const base of [EVENTO_MAGIC_SUSPEITO, EVENTO_PAINEL_SEGREDO_RECUSA_ANONIMA, EVENTO_PAINEL_CSRF_RECUSADO]) {
     const sufixoRajada = sufixoDe(nome, base)

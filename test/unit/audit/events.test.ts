@@ -39,6 +39,8 @@ import { MAGIC_CRAWLER_EVENT } from '../../../src/panel/magic.ts'
 import { CSRF_REJECTION_EVENT } from '../../../src/panel/routes.ts'
 import { SECRET_REJECTION_EVENT } from '../../../src/panel/secret.ts'
 import { EVENTO_DESLIGAR, EVENTO_LIGAR, EVENTO_RESET } from '../../../src/control/controller.ts'
+import { EVENTO_NAO_PAREADO as NAO_PAREADO_DO_EMISSOR } from '../../../src/control/surface-ipc.ts'
+import { EVENTO_ORFAO as ORFAO_DO_EMISSOR } from '../../../src/tunnel/pidfile.ts'
 import {
   comporEventoReset,
   comporEventoToggle,
@@ -49,8 +51,10 @@ import {
   EVENTO_AUTH_SEGREDO_INDISPONIVEL,
   EVENTO_AUTH_SESSAO,
   EVENTO_EXPOSICAO_RESTRITA,
+  EVENTO_INTENT_NAO_PAREADO,
   EVENTO_LACUNA,
   EVENTO_MAGIC_SUSPEITO,
+  EVENTO_ORFAO,
   EVENTO_MODO_RESTRITO,
   EVENTO_PAINEL_CSRF_RECUSADO,
   EVENTO_PAINEL_LOGIN,
@@ -64,6 +68,7 @@ import {
   EVENTO_SESSAO_NOVA,
   EVENTO_TTL_EXPIRADO,
   EVENTO_TUNEL_DESLIGAR,
+  EVENTO_TUNEL_EMERGENCIA,
   EVENTO_TUNEL_LIGAR,
   EVENTO_TUNEL_RESET,
   registerSessaoNovaObserver,
@@ -230,6 +235,9 @@ describe('o vocabulario fechado', () => {
       EVENTO_TUNEL_LIGAR,
       EVENTO_TUNEL_DESLIGAR,
       EVENTO_TUNEL_RESET,
+      EVENTO_TUNEL_EMERGENCIA,
+      EVENTO_INTENT_NAO_PAREADO,
+      EVENTO_ORFAO,
       EVENTO_TTL_EXPIRADO,
       EVENTO_MODO_RESTRITO,
       EVENTO_EXPOSICAO_RESTRITA,
@@ -256,6 +264,7 @@ describe('o vocabulario fechado', () => {
     exigeNome(EVENTO_AUTH_CREDENCIAL)
     exigeNome(EVENTO_AUTH_SEGREDO_INDISPONIVEL)
     exigeNome(EVENTO_AUTH_FALHA_JANELA)
+    exigeNome(EVENTO_ORFAO)
     exigeNome(EVENTO_TTL_EXPIRADO)
     exigeNome(EVENTO_MODO_RESTRITO)
     exigeNome(EVENTO_EXPOSICAO_RESTRITA)
@@ -274,6 +283,9 @@ describe('o vocabulario fechado', () => {
     exigeNome('tunel_ligar:telegram:123')
     exigeNome('tunel_desligar:painel:a1b2c3d4')
     exigeNome('tunel_reset:telegram:123')
+    exigeNome('tunel_emergencia:telegram:123')
+    exigeNome('tunel_intent_nao_pareado:telegram:123')
+    exigeNome('tunel_orfao_derrubado')
     exigeNome('tunel_ttl_expirado:60min:timer')
     exigeNome('tunel_ttl_expirado:480min:boot')
     exigeNome('exposicao_restrita:100')
@@ -305,6 +317,13 @@ describe('o vocabulario fechado', () => {
     assert.equal(EVENTO_TUNEL_LIGAR, EVENTO_LIGAR, 'tunel_ligar: controller.ts (T5.1)')
     assert.equal(EVENTO_TUNEL_DESLIGAR, EVENTO_DESLIGAR, 'tunel_desligar: controller.ts (T5.1)')
     assert.equal(EVENTO_TUNEL_RESET, EVENTO_RESET, 'tunel_reset: controller.ts (T5.1)')
+    // Os tres nomes fechados pela Onda 6 (Frente 1) — a paridade com os
+    // emissores reais: o orfao vive em pidfile.ts (EVENTO_ORFAO) e a recusa de
+    // identidade em surface-ipc.ts (EVENTO_NAO_PAREADO); o emergency nao tem
+    // constante propria no emissor (src/index.ts monta o template literal
+    // inline) — e a lista de literais reais, mais abaixo, que o prende.
+    assert.equal(EVENTO_ORFAO, ORFAO_DO_EMISSOR, 'tunel_orfao_derrubado: pidfile.ts')
+    assert.equal(EVENTO_INTENT_NAO_PAREADO, NAO_PAREADO_DO_EMISSOR, 'tunel_intent_nao_pareado: surface-ipc.ts')
   })
 
   it('PARIDADE com os emissores de LITERAIS — cada nome real emitido e reconhecido (file:line no comentario)', () => {
@@ -357,6 +376,12 @@ describe('o vocabulario fechado', () => {
       ['tunel_ligar:telegram:123', 'controller.ts (auditar, comporEventoToggle)'],
       ['tunel_desligar:painel:a1b2c3d4', 'controller.ts (auditar, comporEventoToggle)'],
       ['tunel_reset:ui:native', 'controller.ts (auditar, comporEventoReset)'],
+      // src/index.ts:829 (aposEmergencia — o kill switch /emergencia de 8(b))
+      ['tunel_emergencia:telegram:123', 'index.ts:829'],
+      // src/control/surface-ipc.ts:217 (recusa S6 de identidade, CTL-029)
+      ['tunel_intent_nao_pareado:telegram:123', 'surface-ipc.ts:217'],
+      // src/tunnel/pidfile.ts:322 (EVENTO_ORFAO) consumido em src/index.ts:304
+      ['tunel_orfao_derrubado', 'pidfile.ts:322 -> index.ts:304'],
     ]
     for (const [nome, emissor] of reais) {
       assert.equal(eventoDoVocabulario(nome), true, `${nome} e emitido em ${emissor} e tem de ser reconhecido`)
@@ -416,6 +441,14 @@ describe('o vocabulario fechado', () => {
       ['EVENTO_DESLIGAR', 'src/control/controller.ts (constante do emissor)'],
       ['tunel_reset', 'src/control/controller.ts (EVENTO_RESET + comporEventoReset)'],
       ['EVENTO_RESET', 'src/control/controller.ts (constante do emissor)'],
+      // Frente 1 (Onda 6): os tres nomes que a producao ja emitia e o
+      // vocabulario ainda nao declarava. O EMITIDO tem emissor real fora do
+      // vocabulario — a lista abaixo enumera cada um com file:line.
+      ['tunel_emergencia', 'src/index.ts:829 (aposEmergencia, template literal)'],
+      ['tunel_intent_nao_pareado', 'src/control/surface-ipc.ts:54/217 (EVENTO_NAO_PAREADO + sufixo)'],
+      ['EVENTO_NAO_PAREADO', 'src/control/surface-ipc.ts:54 (constante do emissor)'],
+      ['tunel_orfao_derrubado', 'src/tunnel/pidfile.ts:322 (EVENTO_ORFAO) -> src/index.ts:304'],
+      ['EVENTO_ORFAO', 'src/tunnel/pidfile.ts:322 (constante do emissor)'],
     ]
     let encontrado = false
     for (const raiz of ['../../../src', '../../../worker']) {
@@ -493,6 +526,9 @@ describe('o vocabulario fechado', () => {
       'tunel_ligar:telegram:123',
       'tunel_desligar:painel:a1b2c3d4',
       'tunel_reset:ui:native',
+      'tunel_emergencia:telegram:123',
+      'tunel_intent_nao_pareado:telegram:123',
+      'tunel_orfao_derrubado',
     ]) {
       assert.equal(eventoDoVocabulario(nome), true, `${nome} pertence ao vocabulario`)
     }
@@ -506,6 +542,10 @@ describe('o vocabulario fechado', () => {
       'tunel_ligar:', // origem vazia (A5): nao designa ninguem
       'tunel_desligar:',
       'tunel_reset:',
+      'tunel_emergencia', // o prefixo SEM sufixo nao designa ninguem
+      'tunel_emergencia:', // origem vazia: nao designa ninguem
+      'tunel_intent_nao_pareado',
+      'tunel_intent_nao_pareado:',
       'auth_falha', // nome incompleto do vocabulario
       'login_ok',
       'auditoria_lacuna_extra:1',
