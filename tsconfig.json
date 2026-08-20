@@ -36,7 +36,7 @@
        `declare module '@deepseek-ai/cordis' { interface Events { ... } }`:
        o especificador tem de ser resolvivel pelo compilador.
 
-       LINHA DE VERSAO: tudo pinado em `0.1.0-rc.8` -- a linha que o harness
+       LINHA DE VERSAO: tudo pinado em `0.1.0-rc.7` -- a linha que o harness
        `@deepseek-ai/dsh` (latest `0.1.0-rc.7`) de facto resolve via
        `^0.1.0-rc.7`. A tag `latest` dos subpacotes esta estagnada em
        `0.0.1-rc.*` e mede uma API que nenhuma composicao executa. O cordis e
@@ -61,6 +61,6 @@
       "@deepseek-ai/dsh-home-paths/invariant": ["./types/dsh-home-paths/invariant.d.ts"]
     }
   },
-  "include": ["src/**/*", "types/**/*", "test/**/*"],
+  "include": ["src/**/*", "types/**/*", "test/**/*", "worker/**/*", "bin/**/*"],
   "exclude": ["node_modules", "dist"]
 }

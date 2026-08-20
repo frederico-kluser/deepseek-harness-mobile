@@ -28,6 +28,6 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "worker/**/*"],
   "exclude": ["node_modules", "dist", "test", "types/__smoke__.ts"]
 }
