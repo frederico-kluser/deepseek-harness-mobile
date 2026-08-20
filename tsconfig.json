@@ -22,16 +22,43 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
 
-    /* Os pacotes @deepseek-ai/* sao "vendored" no monorepo do DSH e NAO existem
-       no npm publico. Resolvemos os seus tipos a partir de types/ neste repo.
-       Isto e o que torna possivel o module augmentation
-       `declare module '@deepseek-ai/cordis' { interface Events { ... } }`
-       feito em src/index.ts: o especificador tem de ser resolvivel pelo compilador. */
+    /* PORQUE `paths` E NAO SO `node_modules`
+       ----------------------------------------------------------------------
+       Os `.d.ts` sob `types/**` sao ESPELHO LITERAL dos tarballs npm reais
+       (regerados por `pnpm types:fetch`, cada um com o seu `sha256` no
+       cabecalho e em `docs/spikes/api-dsh.md`). Apontar o compilador para o
+       espelho -- e nao para `node_modules` -- e o que torna o espelho
+       verificavel: `test/contract/dsh-types.test.ts` (CONTRACT-001..009)
+       compara byte-a-byte o espelho com o `.d.ts` do pacote instalado e falha
+       no dia em que a montante divergir.
+
+       E tambem a condicao para o *module augmentation*
+       `declare module '@deepseek-ai/cordis' { interface Events { ... } }`:
+       o especificador tem de ser resolvivel pelo compilador.
+
+       LINHA DE VERSAO: tudo pinado em `0.1.0-rc.8` -- a linha que o harness
+       `@deepseek-ai/dsh` (latest `0.1.0-rc.7`) de facto resolve via
+       `^0.1.0-rc.7`. A tag `latest` dos subpacotes esta estagnada em
+       `0.0.1-rc.*` e mede uma API que nenhuma composicao executa. O cordis e
+       a excecao: `4.0.1` e `latest` E o que o harness pede. Ver
+       `docs/spikes/api-dsh.md` seccao 1.
+
+       NAO existe entrada para `@deepseek-ai/dsh-host-subprocess`: esse pacote
+       da 404 no registry (erro E1 catalogado; CONTRACT-004 assere-o). O nome
+       real do assento de subprocessos e `@deepseek-ai/dsh-subprocess`
+       (+ `-local` para a implementacao). */
     "baseUrl": ".",
     "paths": {
       "@deepseek-ai/cordis": ["./types/cordis/index.d.ts"],
       "@deepseek-ai/dsh-host-webserver": ["./types/dsh-host-webserver/index.d.ts"],
-      "@deepseek-ai/dsh-host-subprocess": ["./types/dsh-host-subprocess/index.d.ts"]
+      "@deepseek-ai/dsh-host-webserver/invariant": ["./types/dsh-host-webserver/invariant.d.ts"],
+      "@deepseek-ai/dsh-subprocess": ["./types/dsh-subprocess/index.d.ts"],
+      "@deepseek-ai/dsh-subprocess/invariant": ["./types/dsh-subprocess/invariant.d.ts"],
+      "@deepseek-ai/dsh-subprocess-local": ["./types/dsh-subprocess-local/index.d.ts"],
+      "@deepseek-ai/dsh-host-frontend-static": ["./types/dsh-host-frontend-static/index.d.ts"],
+      "@deepseek-ai/dsh-host-frontend-static/invariant": ["./types/dsh-host-frontend-static/invariant.d.ts"],
+      "@deepseek-ai/dsh-home-paths": ["./types/dsh-home-paths/index.d.ts"],
+      "@deepseek-ai/dsh-home-paths/invariant": ["./types/dsh-home-paths/invariant.d.ts"]
     }
   },
   "include": ["src/**/*", "types/**/*", "test/**/*"],

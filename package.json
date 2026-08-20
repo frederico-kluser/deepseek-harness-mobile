@@ -27,7 +27,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "test": "node --test 'test/**/*.test.ts' 'test/**/*.test.js'"
+    "test": "node --test 'test/**/*.test.ts' 'test/**/*.test.js'",
+    "test:contract": "node --test 'test/contract/**/*.test.ts'",
+    "types:fetch": "node scripts/fetch-dsh-types.mjs"
   },
   "//dsh": "SEM `dsh.bundle.patch`, de proposito. O `cordis.patch.yml` deste repositorio entra EXCLUSIVAMENTE como Camada 2 (Profile), copiado para $DSH_HOME/profiles/<perfil>/cordis.patch.yml. Declarar `dsh.bundle.patch` registaria o MESMO ficheiro como Camada 1 (Bundle, a de prioridade minima), aplicando as mesmas entradas numa segunda camada de precedencia e criando duas verdades sobre onde este manifesto entra. Ver README.md, seccao 'Onde colocar o cordis.patch.yml'.",
   "keywords": [
@@ -37,7 +39,24 @@
     "cordis-plugin"
   ],
   "devDependencies": {
-    "@types/node": "^24.13.3",
-    "typescript": "^5.9.3"
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/cosmokit": "1.8.2",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-host-frontend-static": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-invariants": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.7",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@standard-schema/spec": "1.1.0",
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0 <5"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
   }
 }
