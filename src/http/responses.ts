@@ -63,6 +63,10 @@ export function denyUpgrade(socket: Duplex, status: 401 | 403, realm: string): v
 
   try {
     socket.write(`${headers.join('\r\n')}\r\n\r\n`)
+    // Engolir aqui e um dos casos legitimos de 05-QUALIDADE-CODIGO.md §6.3; o
+    // comentario do corpo explica porque. O selector `body.body.length=0`
+    // conta statements e nao ve comentarios, entao a excecao vai explicita.
+    // eslint-disable-next-line no-restricted-syntax
   } catch {
     // Socket ja fechado pelo par: nao ha nada a recuperar, e destruir a seguir
     // continua a ser correto.

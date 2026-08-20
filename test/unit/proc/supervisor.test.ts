@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../../src/config/schema.ts'
-import { createWorkerSupervisor, type WorkerSupervisor } from '../../../src/proc/supervisor.ts'
+import { createWorkerSupervisor } from '../../../src/proc/supervisor.ts'
 import { FakeContext } from '../_duble-ctx.ts'
 import { FakeScheduler, makeSupervisorDeps } from '../_duble-filho.ts'
 import { flush, makeConfig, WORKER_CWD } from '../_fixturas.ts'

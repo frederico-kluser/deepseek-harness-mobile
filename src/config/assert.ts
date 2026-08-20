@@ -52,6 +52,10 @@ import { resolveWorkerCwd, type Config } from './schema.ts'
  *
  * Espacos SAO permitidos -- 'Secure DSH Interface' e um realm legitimo.
  */
+// Os controlos U+0000..U+001F e U+007F sao o ALVO desta validacao (CR/LF =
+// injecao de cabecalho), nao um acidente: e o caso legitimo que a propria doc
+// do `no-control-regex` preve. Desativacao escopada a ESTA linha.
+// oxlint-disable-next-line no-control-regex
 const UNSAFE_REALM_PATTERN = /["\\\u0000-\u001f\u007f]|[^\u0000-\u00ff]/u
 
 /**

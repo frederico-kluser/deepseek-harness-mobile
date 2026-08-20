@@ -95,6 +95,10 @@ export function treeKill(target: KillableProcess, deps: TreeKillDeps): void {
 
   try {
     deps.kill(-pid, 'SIGKILL')
+    // ESRCH e o caso #1 nomeado em 05-QUALIDADE-CODIGO.md §6.3; o comentario
+    // do corpo explica porque. O selector `body.body.length=0` conta
+    // statements e nao ve comentarios, entao a excecao vai explicita.
+    // eslint-disable-next-line no-restricted-syntax
   } catch {
     // ESRCH: o processo (ou o grupo) ja nao existe na tabela. Excecao mitigada
     // de proposito -- o objetivo ja esta cumprido.
