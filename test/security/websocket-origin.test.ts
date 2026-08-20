@@ -205,6 +205,22 @@ describe('o handshake e guardado POR INTEIRO', () => {
   })
 })
 
+  it('M-20: origem forjada num caminho FORA de guardedPrefixes e recusada na mesma', async () => {
+    // ADV-043: a superficie de upgrade e guardada INTEIRA, e a allowlist de
+    // origem NAO depende de guardedPrefixes. Um mutante que restrinja a
+    // validacao de Origin aos guardedPrefixes deixaria este handshake
+    // passar (a credencial e valida) -- e este teste morre.
+    const b = abrir({ comSegredo: true })
+    const socket = await handshake(
+      b,
+      pedido({
+        url: '/rota-fora-do-prefixo',
+        headers: { origin: 'https://evil.example', authorization: 'Basic ' + VALID_CREDENTIAL },
+      }),
+    )
+    assert.equal(status(socket), 403, 'fora de guardedPrefixes NAO dispensa a allowlist de origem')
+    assert.equal(socket.destroyed, true)
+  })
 describe('a origem do tunel entra em READY e SAI quando cai', () => {
   it('a mesma origem passa com o tunel de pe e e recusada depois da queda', async () => {
     const b = abrir({ tunnelReady: true })
@@ -286,6 +302,63 @@ describe('`Origin` REPETIDO nao pode saltar a verificacao', () => {
   })
 })
 
+describe('ADV-047..049 -- o handshake nao pode nem morrer a meio nem vazar detalhe (T6.3)', () => {
+  it('ADV-047: excecao dentro do avaliador de upgrade -> socket DESTRUIDO, nunca handshake aprovado', async () => {
+    const b = abrir({ comSegredo: true })
+    const socket = new FakeSocket()
+    // Injeta um erro no caminho de decisao: a thunk `auth` lanca.
+    const quebrado = { ...b.gate, auth: (): never => { throw new Error('evaluador partido') } }
+    const handlerQuebrado = createGuardedUpgradeHandler(
+      quebrado,
+      (): Promise<void> => Promise.resolve(),
+      'adv:047',
+    )
+    await handlerQuebrado(
+      pedido({ url: '/api/events.mux', headers: { origin: 'http://127.0.0.1:3080' } }),
+      socket.asDuplex() as never,
+      Buffer.alloc(0),
+    )
+    assert.equal(socket.destroyed, true, 'o socket TEM de ser destruido (fail-closed)')
+    assert.equal(socket.written.includes('101 Switching Protocols'), false, 'o handshake nunca pode subir')
+  })
+
+  it('ADV-048: a resposta de negacao nao vaza corpo, versao nem detalhe do erro', async () => {
+    const b = abrir({ comSegredo: true })
+    const forjado = await handshake(
+      b,
+      pedido({
+        url: '/api/events.mux',
+        headers: { origin: 'https://evil.example', authorization: 'Basic ' + VALID_CREDENTIAL },
+      }),
+    )
+    assert.equal(status(forjado), 403)
+    assert.match(forjado.written, /Content-Length: 0/u)
+    assert.equal(forjado.written.includes('evil'), false, 'a origem recusada nao pode ecoar no corpo')
+    assert.equal(forjado.written.includes('dsh-guarded-bot'), false, 'o nome do plugin nao pode sair')
+    assert.equal(/\bv?\d+\.\d+\.\d+\b/u.test(forjado.written), false, 'nenhuma versao no fio')
+    assert.equal(forjado.written.includes('WWW-Authenticate'), false)
+  })
+
+  it('ADV-049: meia-conexao -- apos a negacao o socket e destruido e o cliente nao fica pendurado', async () => {
+    const b = abrir({ comSegredo: true })
+    const semCredencial = await handshake(
+      b,
+      pedido({ url: '/api/events.mux', headers: { origin: 'http://127.0.0.1:3080' } }),
+    )
+    assert.equal(status(semCredencial), 401)
+    assert.equal(semCredencial.destroyed, true, 'destruido = o par nao fica a espera do 101 que nunca vem')
+
+    const origemForjada = await handshake(
+      b,
+      pedido({
+        url: '/api/events.mux',
+        headers: { origin: 'https://evil.example', authorization: 'Basic ' + VALID_CREDENTIAL },
+      }),
+    )
+    assert.equal(status(origemForjada), 403)
+    assert.equal(origemForjada.destroyed, true)
+  })
+})
 describe('L2.6 tambem corre no handshake', () => {
   it('rota de CANAL LOCAL APENAS pelo tunel: recusada, e com o 401 UNIVERSAL', async () => {
     // A invariante escrita em `loopbackOnlyPrefixes` dizia "vale para rotas
