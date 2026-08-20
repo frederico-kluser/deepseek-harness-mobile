@@ -74,6 +74,10 @@ function fazerBancada(overrides: {
   controller?: ReturnType<typeof createTunnelController> | undefined
   modoTunel?: boolean
   pareado?: boolean
+  /** Modo restrito do controlador interno (CTL-015 mapeado no canal). */
+  restritoAtivo?: boolean | undefined
+  /** Segredo forte do controlador interno (CTL-009 mapeado no canal). */
+  segredoForte?: boolean | undefined
 } = {}): Bancada {
   const clock = new FakeClock(1_000)
   const scheduler = new FakeScheduler()
@@ -93,8 +97,8 @@ function fazerBancada(overrides: {
     }),
     agora: () => clock.now(),
     scheduler,
-    restritoAtivo: () => false,
-    segredoForte: () => true,
+    restritoAtivo: () => overrides.restritoAtivo ?? false,
+    segredoForte: () => overrides.segredoForte ?? true,
     requerConfirmacao: true,
     audit: { append: (evento) => auditoria.push(evento) },
     broadcast: () => {},
@@ -483,5 +487,131 @@ describe('8(d): pareamento de GRUPO — o host revalida os DOIS eixos (from E ch
       assert.equal(evento.resultado, 'negado')
       assert.match(evento.evento, /tunel_intent_nao_pareado:telegram:/u)
     }
+  })
+})
+
+/* ========================================================================= */
+/* Bordas que faltavam: reset->noop em resultadoDoAck, requestId no erro,    */
+/* mapeamento de recusas pelo canal real, secret.rotate sem secretos,        */
+/* identidade nao pareada com requestId ecoado                               */
+/* ========================================================================= */
+
+describe('resultadoDoAck: o reset e a derivacao que faltava', () => {
+  it('reset com estado STOPPED e accepted; com qualquer outro estado e noop', () => {
+    assert.deepEqual(resultadoDoAck('reset', { estado: 'STOPPED', idempotente: false }), { result: 'accepted' })
+    assert.deepEqual(resultadoDoAck('reset', { estado: 'READY', idempotente: false }), { result: 'noop' })
+    assert.deepEqual(resultadoDoAck('reset', { estado: 'STARTING', idempotente: false }), { result: 'noop' })
+  })
+
+  it('stop com estado FAILED (sem recusa) e noop — a derivacao nao inventa rejected', () => {
+    assert.deepEqual(resultadoDoAck('stop', { estado: 'FAILED', idempotente: false }), { result: 'noop' })
+  })
+})
+
+describe('a resposta de erro ecoa o requestId da intent (correlacao no canal)', () => {
+  it('EXPOSURE_DISABLED carrega o requestId', () => {
+    const h = fazerBancada({ controller: undefined })
+    const resposta = h.responder(intent({ requestId: 'req-erro-eco', nonce: 'x' }))
+    assert.equal(resposta.type, 'error')
+    assert.equal((resposta as { requestId?: string }).requestId, 'req-erro-eco')
+    assert.equal((resposta as { code?: string }).code, 'EXPOSURE_DISABLED')
+  })
+
+  it('NOT_PAIRED carrega o requestId da intent rejeitada', () => {
+    const h = fazerBancada({ pareado: false })
+    const resposta = h.responder(intent({ requestId: 'req-nao-pareado' }))
+    assert.equal(resposta.type, 'error')
+    assert.equal((resposta as { requestId?: string }).requestId, 'req-nao-pareado')
+    assert.equal((resposta as { code?: string }).code, 'NOT_PAIRED')
+  })
+})
+
+describe('recusas do controlador mapeadas no canal real (ack com code)', () => {
+  it('start com o controlador em FAILED: rejected TUNNEL_FAILED (CTL-011)', async () => {
+    const h = fazerBancada()
+    await h.controlador.despachar({ action: 'start', requestedBy: 'telegram:1', requestId: 'falha-1', nonce: h.emitirNonce('start'), at: 1_000 })
+    // O repasse converge para o snapshot FAILED que o teste define.
+    h.supervisor.definirObservado({
+      state: 'FAILED',
+      failure: { code: 'PROBE_FAILED', message: 'o gate nao esta armado', retryable: false, probe: 'spa-fallback' },
+      attempts: 0,
+    })
+    h.scheduler.runLast()
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+
+    const resposta = h.responder(intent({ requestId: 'req-failed' }))
+    assert.deepEqual(resposta, {
+      v: 1,
+      type: 'ack',
+      requestId: 'req-failed',
+      result: 'rejected',
+      state: 'FAILED',
+      code: 'TUNNEL_FAILED',
+    })
+  })
+
+  it('start com modo restrito ativo: rejected RESTRICTED_MODE (CTL-015)', () => {
+    const h = fazerBancada({ restritoAtivo: true })
+    const resposta = h.responder(intent({ requestId: 'req-restrito', nonce: 'x' }))
+    assert.deepEqual(resposta, {
+      v: 1,
+      type: 'ack',
+      requestId: 'req-restrito',
+      result: 'rejected',
+      state: 'STOPPED',
+      code: 'RESTRICTED_MODE',
+    })
+  })
+
+  it('start sem segredo forte: rejected INTERNAL — o motivo fica no audit, nao no canal', () => {
+    const h = fazerBancada({ segredoForte: false })
+    const resposta = h.responder(intent({ requestId: 'req-sem-segredo' }))
+    assert.equal(resposta.type, 'ack')
+    assert.equal((resposta as { code?: string }).code, 'INTERNAL')
+    assert.equal((resposta as { result?: string }).result, 'rejected')
+    // O motivo NAO denuncia topologia: SEM_SEGREDO_FORTE nao tem codigo IPC.
+    assert.equal(h.auditoria.some((e) => e.evento.includes('tunel_ligar') && e.resultado === 'negado'), true)
+  })
+})
+
+describe('secret.rotate: a cadeia INTERNAL com cada peca ausente isolada', () => {
+  it('secretos ausente (mesmo com confirm e notificarDono presentes) -> INTERNAL', () => {
+    const clock = new FakeClock(1_000)
+    const confirm = createConfirmService({ now: () => clock.now() })
+    const responder = criarRespondedorIpc({
+      controller: undefined,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+      confirm,
+      notificarDono: () => undefined,
+    })
+    const resposta = responder(intent({ intent: 'secret.rotate', requestId: 'req-sem-secretos' }))
+    assert.equal(resposta.type, 'error')
+    assert.equal((resposta as { code?: string }).code, 'INTERNAL')
+    assert.equal((resposta as { requestId?: string }).requestId, 'req-sem-secretos')
+  })
+
+  it('confirm ausente (mesmo com secretos e notificarDono presentes) -> INTERNAL', () => {
+    const clock = new FakeClock(1_000)
+    const responder = criarRespondedorIpc({
+      controller: undefined,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+      secretos: { rotate: () => ({ display: 'x' }) },
+      notificarDono: () => undefined,
+    })
+    const resposta = responder(intent({ intent: 'secret.rotate', requestId: 'req-sem-confirm' }))
+    assert.equal(resposta.type, 'error')
+    assert.equal((resposta as { code?: string }).code, 'INTERNAL')
   })
 })

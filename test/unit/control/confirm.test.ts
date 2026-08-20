@@ -117,3 +117,24 @@ describe('teto de nonces vivos', () => {
     assert.equal(servico.consume(ultimo.valor, 'start'), true)
   })
 })
+
+describe('consumo — bordas da tabela de nonces', () => {
+  it('consumirComVeredito de um nonce VAZIO e desconhecido (nunca existiu na tabela)', () => {
+    const { servico } = fazerServico()
+    assert.equal(servico.consumirComVeredito('', 'start'), 'desconhecido')
+    assert.equal(servico.consume('', 'reset'), false)
+    // A cadeia de autorizacao nunca trata '' como ausencia: a decisao de exigir
+    // o nonce e do controlador (CTL-023) — este modulo so conhece a tabela.
+    assert.equal(servico.consumirComVeredito('', 'stop'), 'desconhecido')
+  })
+
+  it('um nonce expirado sai da tabela e o ESPACO volta a existir (a expiracao limpa)', () => {
+    const { servico, clock } = fazerServico()
+    const nonce = servico.issue('start')
+    clock.advance(NONCE_TTL_MS + 1)
+    assert.equal(servico.consumirComVeredito(nonce.valor, 'start'), 'expirado')
+    // O consumo repetido apos a limpeza e DESCONHECIDO, nao expirado: a
+    // entrada ja nao existe para distinguir.
+    assert.equal(servico.consumirComVeredito(nonce.valor, 'start'), 'desconhecido')
+  })
+})

@@ -38,12 +38,17 @@ class FakeSupervisor implements TunnelSupervisor {
   startCalls = 0
   stopCalls = 0
   disposed = false
-  /** `'imediato-starting'`: start resolve logo com STARTING; `'manual'`: espera o teste. */
-  modoStart: 'imediato-starting' | 'imediato-failed' | 'manual' = 'imediato-starting'
+  /** `'imediato-starting'`: start resolve logo com STARTING; `'manual'`: espera o teste; `'lanca'`: start() lanca sincronamente (defeito). */
+  modoStart: 'imediato-starting' | 'imediato-failed' | 'manual' | 'lanca' = 'imediato-starting'
   private pendentes: Array<(snap: TunnelSnapshot) => void> = []
 
   start(): Promise<TunnelSnapshot> {
     this.startCalls += 1
+    if (this.modoStart === 'lanca') {
+      // O contrato do supervisor diz que start() nunca rejeita — mas um defeito
+      // nao pode derrubar a fila: o catch de executarStart e o objeto deste modo.
+      throw new Error('supervisor avariado: o probe rebentou')
+    }
     if (this.modoStart === 'manual') {
       return new Promise((resolve) => {
         this.pendentes.push(resolve)
@@ -73,7 +78,10 @@ class FakeSupervisor implements TunnelSupervisor {
     this.snapshotAtual = { state: 'STOPPED', attempts: this.snapshotAtual.attempts }
   }
 
+  disposeCalls = 0
+
   dispose(): void {
+    this.disposeCalls += 1
     this.disposed = true
     this.snapshotAtual = { state: 'STOPPED', attempts: 0 }
   }
@@ -744,6 +752,330 @@ describe('origem no audit (CTL-031) e ciclo de vida', () => {
 
     assert.equal(resultado, undefined, 'Q-2: disposer sincrono')
     assert.equal(h.supervisor.disposed, true)
+    assert.equal(h.supervisor.disposeCalls, 1, 'o segundo dispose NAO volta a derrubar o supervisor (idempotente)')
     assert.equal(h.scheduler.pending.length, 0, 'nenhum temporizador vivo apos o dispose')
+  })
+})
+/* ========================================================================= */
+/* Falhas e redes de seguranca — a cobertura dos ramos nao-nominais          */
+/* (analise estatica da Onda 5: catch de executarStart, auditoria a lancar,  */
+/* disposed, reconciliacao defensiva, janela cheia, nonce expirado sincrono) */
+/* ========================================================================= */
+
+describe('executarStart: supervisor.start() LANCA — a fila nunca quebra', () => {
+  it('catch: log.error + auditoria negado + FAILED a partir de STOPPED', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({ supervisor: new FakeSupervisor(), log: servico('ctl') })
+    h.supervisor.modoStart = 'lanca'
+
+    const resultado = await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+
+    assert.equal(resultado.estado, 'FAILED')
+    assert.equal(resultado.recusa, undefined, 'nao e recusa: e o estado terminal do defeito')
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+    assert.deepEqual(h.difusoes.map((d) => d.estado), ['FAILED'], 'uma so difusao, sem STARTING (CTL-013)')
+    assert.equal(h.controlador.snapshot().seq, 1)
+    assert.deepEqual(h.intencoes, ['STOPPED'], 'a intencao persistida fecha o tunel apos o defeito')
+    assert.equal(h.auditoria.some((e) => e.evento === 'tunel_ligar:telegram:123' && e.resultado === 'negado'), true)
+    assert.equal(servico.has('error', 'falha inesperada ao subir o tunel'), true)
+  })
+
+  it('a cadeia da fila continua viva apos o catch (uma intent seguinte ainda processa)', async () => {
+    const h = fazerBancada({ supervisor: new FakeSupervisor() })
+    h.supervisor.modoStart = 'lanca'
+    await h.controlador.despachar(intent({ requestId: 'lanca-1', nonce: h.controlador.emitirNonce('start').valor }))
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+
+    // O stop em FAILED e um noop; a fila nao fica presa por causa do lanca.
+    const seguinte = await h.controlador.despachar(intent({ action: 'stop', requestId: 'lanca-2' }))
+    assert.equal(seguinte.estado, 'FAILED')
+    assert.equal(seguinte.idempotente, false)
+  })
+})
+
+describe('auditar: a composicao do evento LANCA com origem vazia — falha alto, sem linha anonima', () => {
+  it('start com origem vazia: log.error RECUSADA e NENHUMA linha de auditoria, o spawn corre', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({ log: servico('ctl') })
+
+    const resultado = await h.controlador.despachar(
+      intent({ requestedBy: '', nonce: h.controlador.emitirNonce('start').valor }),
+    )
+
+    assert.equal(resultado.estado, 'STARTING', 'a auditoria e best-effort da FORMA, nao da acao')
+    assert.equal(h.auditoria.length, 0, 'um tunel_ligar: nao designa ninguem e nao entra no log')
+    assert.equal(servico.has('error', 'auditoria de tunel_ligar RECUSADA (origem vazia)'), true)
+    assert.equal(servico.has('error', 'auditoria de tunel_desligar RECUSADA (origem vazia)'), false)
+  })
+
+  it('stop com origem vazia em READY: a paragem corre, a linha e recusada', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({ log: servico('ctl') })
+    await subirAteReady(h)
+
+    const resultado = await h.controlador.despachar(intent({ action: 'stop', requestedBy: '' }))
+
+    assert.equal(resultado.estado, 'STOPPING')
+    assert.equal(h.supervisor.stopCalls, 1)
+    assert.equal(
+      h.auditoria.filter((e) => e.evento.startsWith('tunel_desligar')).length,
+      0,
+      'a linha anonima do stop nao entra no audit (a subida anterior ja registou a dela)',
+    )
+    assert.equal(servico.has('error', 'auditoria de tunel_desligar RECUSADA (origem vazia)'), true)
+  })
+
+  it('reset com origem vazia em FAILED: a saida do terminal corre, a linha e recusada', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({ supervisor: new FakeSupervisor(), log: servico('ctl') })
+    h.supervisor.modoStart = 'imediato-failed'
+    await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+
+    const resultado = await h.controlador.despachar(
+      intent({ action: 'reset', requestedBy: '', nonce: h.controlador.emitirNonce('reset').valor }),
+    )
+
+    assert.equal(resultado.estado, 'STOPPED')
+    assert.equal(
+      h.auditoria.filter((e) => e.evento.startsWith('tunel_reset')).length,
+      0,
+      'a linha anonima do reset nao entra no audit (a subida falhada ja registou a dela)',
+    )
+    assert.equal(servico.has('error', 'auditoria de tunel_reset RECUSADA (origem vazia)'), true)
+  })
+})
+
+describe('auditar: o AuditSink LANCA — best-effort, o toggle nunca e travado pelo disco', () => {
+  it('start: a falha do append vai ao log do operador e o spawn acontece', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({
+      log: servico('ctl'),
+      audit: {
+        append: (): void => {
+          throw new Error('disco cheio')
+        },
+      },
+    })
+
+    const resultado = await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+
+    assert.equal(resultado.estado, 'STARTING')
+    assert.equal(h.supervisor.startCalls, 1)
+    assert.equal(servico.has('error', 'falha ao registar auditoria de tunel_ligar'), true)
+  })
+
+  it('stop em READY: a paragem nao pode ser bloqueada por um disco cheio', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({
+      log: servico('ctl'),
+      audit: {
+        append: (): void => {
+          throw new Error('disco cheio')
+        },
+      },
+    })
+    await subirAteReady(h)
+
+    const resultado = await h.controlador.despachar(intent({ action: 'stop' }))
+
+    assert.equal(resultado.estado, 'STOPPING')
+    assert.equal(h.supervisor.stopCalls, 1)
+    assert.equal(servico.has('error', 'falha ao registar auditoria de tunel_desligar'), true)
+  })
+
+  it('reset em FAILED: a saida do terminal nao e bloqueada pela falha do append', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({
+      supervisor: new FakeSupervisor(),
+      log: servico('ctl'),
+      audit: {
+        append: (): void => {
+          throw new Error('disco cheio')
+        },
+      },
+    })
+    h.supervisor.modoStart = 'imediato-failed'
+    await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+
+    const resultado = await h.controlador.despachar(
+      intent({ action: 'reset', nonce: h.controlador.emitirNonce('reset').valor }),
+    )
+
+    assert.equal(resultado.estado, 'STOPPED')
+    assert.equal(servico.has('error', 'falha ao registar auditoria de tunel_reset'), true)
+  })
+})
+
+describe('controlador disposto: nenhuma intent tem efeito (sincrono e fila)', () => {
+  it('decidirSincrono apos dispose: warn + { STOPPED, idempotente: false }, sem tocar no supervisor', () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({ log: servico('ctl') })
+    h.controlador.dispose()
+
+    const veredito = h.controlador.decidirSincrono(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+
+    assert.deepEqual(veredito, { estado: 'STOPPED', idempotente: false })
+    assert.equal(h.supervisor.startCalls, 0)
+    assert.equal(h.supervisor.stopCalls, 0)
+    assert.equal(servico.has('warn', 'intent recebida com o controlador ja disposto'), true)
+  })
+
+  it('despachar apos dispose: resolve STOPPED sem entrar na fila', async () => {
+    const servico = createFakeLogger()
+    const h = fazerBancada({ log: servico('ctl') })
+    h.controlador.dispose()
+
+    const resultado = await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+
+    assert.deepEqual(resultado, { estado: 'STOPPED', idempotente: false })
+    assert.equal(h.supervisor.startCalls, 0, 'o spawn nunca acontece num controlador disposto')
+    assert.equal(servico.has('warn', 'intent recebida com o controlador ja disposto'), true)
+  })
+})
+
+describe('reconciliacao defensiva: estados que o supervisor nunca expoe na vida real', () => {
+  it('supervisor a expor STARTING com o controlador em STOPPING: rede de seguranca sem acao', async () => {
+    const h = fazerBancada()
+    const nonce = h.controlador.emitirNonce('start')
+    await h.controlador.despachar(intent({ nonce: nonce.valor }))
+    await h.controlador.despachar(intent({ action: 'stop' }))
+    assert.equal(h.controlador.snapshot().state, 'STOPPING')
+    const seqAntes = h.controlador.snapshot().seq
+
+    // O processo ainda reporta STARTING enquanto o controlador ja esta em
+    // STOPPING (o teardown sincrono do duble ainda nao aterrou): o repasse
+    // nao pode convergir para um estado que o controlador nao pediu.
+    h.supervisor.definirObservado({ state: 'STARTING', attempts: 0 })
+    rodarRepasse(h)
+
+    assert.equal(h.controlador.snapshot().state, 'STOPPING', 'sem transicao: STARTING so e promovido do STOPPED')
+    assert.equal(h.controlador.snapshot().seq, seqAntes)
+    assert.equal(h.scheduler.pending.length, 1, 'STOPPING nao e terminal: o repasse continua')
+
+    // A convergencia real segue a funcionar depois.
+    h.supervisor.definirObservado({ state: 'STOPPED', attempts: 0 })
+    rodarRepasse(h)
+    assert.equal(h.controlador.snapshot().state, 'STOPPED')
+  })
+
+  it('supervisor a expor STOPPING com o controlador em READY: sem acao, seq inalterado', async () => {
+    const h = fazerBancada()
+    await subirAteReady(h)
+    const seqAntes = h.controlador.snapshot().seq
+
+    h.supervisor.definirObservado({ state: 'STOPPING', attempts: 0 })
+    rodarRepasse(h)
+
+    assert.equal(h.controlador.snapshot().state, 'READY', 'o STOPPING observado espera o STOPPED — sem acao')
+    assert.equal(h.controlador.snapshot().seq, seqAntes)
+    assert.equal(h.scheduler.pending.length, 1, 'READY nao e terminal: o repasse continua')
+  })
+})
+
+describe('CTL-020: a janela de idempotencia expulsa o mais antigo no teto', () => {
+  it('apos 128 requestIds, o mais antigo sai da janela e volta a executar', async () => {
+    const h = fazerBancada()
+    // 130 noops de stop em STOPPED: cada um e registado na janela (CTL-020).
+    for (let i = 0; i < 130; i += 1) {
+      await h.controlador.despachar(intent({ action: 'stop', requestId: 'evict-' + String(i) }))
+    }
+
+    const repetido = await h.controlador.despachar(intent({ action: 'stop', requestId: 'evict-0' }))
+    assert.equal(repetido.idempotente, false, 'o mais antigo foi expulso: volta a executar')
+
+    const recente = await h.controlador.despachar(intent({ action: 'stop', requestId: 'evict-129' }))
+    assert.equal(recente.idempotente, true, 'o mais recente continua na janela')
+  })
+})
+
+describe('CTL-022: NONCE_EXPIRADO tambem no caminho SINCRONO (verificarNonce)', () => {
+  it('start em READY com nonce expirado: recusa sem tocar no supervisor', async () => {
+    const h = fazerBancada()
+    await subirAteReady(h)
+    const nonce = h.controlador.emitirNonce('start')
+    h.clock.advance(60_001)
+
+    const resultado = await h.controlador.despachar(intent({ nonce: nonce.valor }))
+
+    assert.equal(resultado.recusa, 'NONCE_EXPIRADO')
+    assert.equal(resultado.estado, 'READY')
+    assert.equal(h.supervisor.startCalls, 1, 'o no-op expirado nao spawna')
+    assert.equal(h.controlador.snapshot().seq, 2, 'nenhuma transicao')
+  })
+
+  it('reset em FAILED com nonce expirado: recusa — o FAILED continua terminal', async () => {
+    const h = fazerBancada({ supervisor: new FakeSupervisor() })
+    h.supervisor.modoStart = 'imediato-failed'
+    await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+    const nonce = h.controlador.emitirNonce('reset')
+    h.clock.advance(60_001)
+
+    const resultado = await h.controlador.despachar(intent({ action: 'reset', nonce: nonce.valor }))
+
+    assert.equal(resultado.recusa, 'NONCE_EXPIRADO')
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+  })
+})
+
+describe('CTL-007: um start enfileirado ATRAZ de um stop executa contra o STOPPING (D29 na fila)', () => {
+  it('o start que esperava na fila e rejeitado SHUTDOWN_IN_PROGRESS pelo estado que o stop produziu', async () => {
+    const h = fazerBancada()
+    h.supervisor.modoStart = 'manual'
+
+    const up = h.controlador.despachar(intent({ requestId: 'fila-up', nonce: h.controlador.emitirNonce('start').valor }))
+    const down = h.controlador.despachar(intent({ action: 'stop', requestId: 'fila-down' }))
+    // Chega QUANDO o up ainda esta no probe (estado STOPPED): D29 nao se aplica
+    // na chegada — a intent entra na fila e e avaliada contra o que o stop VAI
+    // produzir. E o mesmo principio de 9.3 aplicado a um start tardio.
+    const up2 = h.controlador.despachar(intent({ requestId: 'fila-up2', nonce: h.controlador.emitirNonce('start').valor }))
+
+    await flush()
+    h.supervisor.resolverStartCom({ state: 'STARTING', attempts: 0 })
+
+    assert.equal((await up).estado, 'STARTING')
+    assert.equal((await down).estado, 'STOPPING')
+    const tardio = await up2
+    assert.equal(tardio.recusa, 'SHUTDOWN_IN_PROGRESS')
+    assert.equal(tardio.estado, 'STOPPING')
+    assert.equal(h.supervisor.startCalls, 1, 'UM UNICO spawn: o start rejeitado nao spawna')
+    assert.equal(h.supervisor.stopCalls, 1)
+  })
+})
+
+describe('CTL-011/9.2: stop em FAILED e noop — nao ha o que derrubar', () => {
+  it('o stop nao toca no supervisor nem sai do terminal', async () => {
+    const h = fazerBancada({ supervisor: new FakeSupervisor() })
+    h.supervisor.modoStart = 'imediato-failed'
+    await h.controlador.despachar(intent({ nonce: h.controlador.emitirNonce('start').valor }))
+    assert.equal(h.controlador.snapshot().state, 'FAILED')
+    const stopsAntes = h.supervisor.stopCalls
+
+    const resultado = await h.controlador.despachar(intent({ action: 'stop' }))
+
+    assert.equal(resultado.estado, 'FAILED')
+    assert.equal(resultado.idempotente, false)
+    assert.equal(h.supervisor.stopCalls, stopsAntes, 'stop em FAILED nao chama o supervisor')
+  })
+})
+
+describe('CTL-021: o nonce desconhecido no momento da EXECUCAO (esperou na fila) e recusado', () => {
+  it('o mesmo nonce em dois starts serializados: o segundo encontra o nonce ja consumido', async () => {
+    const h = fazerBancada()
+    h.supervisor.modoStart = 'manual'
+    const nonce = h.controlador.emitirNonce('start')
+    const primeiro = h.controlador.despachar(intent({ requestId: 'nonce-fila-1', nonce: nonce.valor }))
+    // Chega em STOPPED: a DECISAO so verifica a presenca (o consumo corre na
+    // execucao); a intent serializa atras do primeiro start com o MESMO nonce.
+    const segundo = h.controlador.despachar(intent({ requestId: 'nonce-fila-2', nonce: nonce.valor }))
+
+    await flush()
+    h.supervisor.resolverStartCom({ state: 'STARTING', attempts: 0 })
+
+    assert.equal((await primeiro).estado, 'STARTING')
+    const tardio = await segundo
+    assert.equal(tardio.recusa, 'NONCE_INVALIDO', 'o nonce ja foi consumido pelo primeiro start')
+    assert.equal(tardio.estado, 'STARTING')
+    assert.equal(h.supervisor.startCalls, 1, 'UM UNICO spawn: o replay na execucao nao spawna')
   })
 })

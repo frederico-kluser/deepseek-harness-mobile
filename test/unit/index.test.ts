@@ -9,10 +9,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 
+import type { IncomingMessage } from 'node:http'
 import type { TunnelSnapshot } from '../../src/contracts/tunnel.ts'
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
 import { apply, criarFanoutDeEstado, inject, name, type Config } from '../../src/index.ts'
@@ -541,6 +543,257 @@ describe('8(c): no boot com dono persistido, o HOST envia pairing.owner ao worke
     } finally {
       delete process.env.DSH_HOME
       rmSync(casa, { recursive: true, force: true })
+    }
+  })
+})
+
+/* ========================================================================= */
+/* Onda 5, lacunas de cobertura da raiz: ouvinte auth-check, reemitirEstado, */
+/* pareado com leitura a falhar, persistencia da intencao a falhar, orfao    */
+/* derrubado no boot em loopback, aviso de trustEdgeHeaders                  */
+/* ========================================================================= */
+
+describe('ouvinte http/auth-check: veto estrutural de quem nao apresenta credencial', () => {
+  it('sem Authorization e sem cookie de sessao: false, sem next()', async () => {
+    const { ctx } = install()
+    let nextCalled = false
+
+    const semCredencial = { headers: {} } as unknown as IncomingMessage
+    const result = await ctx
+      .asContext()
+      .waterfall('http/auth-check', semCredencial, async () => {
+        nextCalled = true
+        return true
+      })
+
+    assert.equal(result, false, 'sem credencial nenhuma a cascata curto-circuita')
+    assert.equal(nextCalled, false)
+  })
+
+  it('com Authorization: delega em next()', async () => {
+    const { ctx } = install()
+    let nextCalled = false
+
+    const comAutorizacao = { headers: { authorization: 'Basic abc' } } as unknown as IncomingMessage
+    const result = await ctx
+      .asContext()
+      .waterfall('http/auth-check', comAutorizacao, async () => {
+        nextCalled = true
+        return true
+      })
+
+    assert.equal(result, true)
+    assert.equal(nextCalled, true)
+  })
+
+  it('com cookie de sessao valido: delega em next() (a sessao e credencial)', async () => {
+    const { ctx } = install()
+    let nextCalled = false
+    // 22-256 chars de base64url: o formato que readSessionCookie aceita.
+    const cookie = 'A'.repeat(32)
+
+    const comCookie = { headers: { cookie: '__Host-dsh_sid=' + cookie } } as unknown as IncomingMessage
+    const result = await ctx
+      .asContext()
+      .waterfall('http/auth-check', comCookie, async () => {
+        nextCalled = true
+        return true
+      })
+
+    assert.equal(result, true)
+    assert.equal(nextCalled, true)
+  })
+})
+
+describe('aviso de arranque: trustEdgeHeaders=true com borda (modo tunnel)', () => {
+  it('a decisao mais perigosa do ficheiro e dita em voz alta', () => {
+    const { ctx } = install({
+      exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: true },
+      tunnel: { mode: 'quick', ttlMinutes: 60 },
+    })
+    assert.equal(ctx.logger.has('warn', 'config.exposure.trustEdgeHeaders=true'), true)
+    for (const disposer of ctx.effects) disposer()
+  })
+})
+
+/* ========================================================================= */
+/* Boot e canal: reemitirEstado nos dois ramos (CTL-027)                     */
+/* ========================================================================= */
+
+function comEstadoComCaminho(
+  desejado: 'READY' | 'STOPPED',
+  restrito: boolean,
+  pairing?: { ownerUserId: number; ownerChatId: number; pairedAt: number },
+  tunnelRecord?: { pid: number; startedAt: number; mode: 'quick' | 'named' },
+): { dir: string; limpar: () => void } {
+  const casa = join(tmpdir(), 'dsh-guard-falha-' + process.pid + '-' + Math.random().toString(36).slice(2))
+  const dir = join(casa, 'guarded-bot')
+  mkdirSync(dir, { recursive: true })
+  chmodSync(dir, 0o700)
+  const estado: Record<string, unknown> = { version: 1, desiredState: desejado, secretDigest: 'ab'.repeat(32) }
+  if (restrito) estado['restricted'] = { since: 1, reason: 'brute-force-ceiling' }
+  if (pairing !== undefined) estado['pairing'] = pairing
+  if (tunnelRecord !== undefined) estado['tunnel'] = tunnelRecord
+  writeFileSync(join(dir, 'state.json'), JSON.stringify(estado), { mode: 0o600 })
+  process.env.DSH_HOME = casa
+  return {
+    dir,
+    limpar: (): void => {
+      delete process.env.DSH_HOME
+      rmSync(casa, { recursive: true, force: true })
+    },
+  }
+}
+
+function configTunelCom(autoStart: boolean): Partial<Config> {
+  return {
+    exposure: { mode: 'tunnel', autoStart, trustEdgeHeaders: false },
+    tunnel: { mode: 'quick', ttlMinutes: 60 },
+  }
+}
+
+describe('reemitirEstado: o estado COMPLETO ao worker (CTL-027)', () => {
+  it('sem controlador (loopback) e INERTE: nao ha estado a reemitir, nenhum crash', async () => {
+    const { limpar } = comEstadoComCaminho('STOPPED', false, { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 })
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install().ctx
+      const filho = ctx.subprocess.lastChild()
+      filho.stdout.write(
+        JSON.stringify({ v: 1, type: 'intent', intent: 'tunnel.status', requestId: 'st-loopback', from: 42, chat: -1001234567890 }) + '\n',
+      )
+      await flush()
+      const linhas = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>)
+      const ack = linhas.find((mensagem) => mensagem['type'] === 'ack')
+      assert.equal(ack?.['result'], 'noop')
+      assert.equal(ack?.['state'], 'STOPPED')
+      // Sem controlador nao ha estado para difundir — nenhuma mensagem 'state'.
+      assert.equal(linhas.some((mensagem) => mensagem['type'] === 'state'), false)
+    } finally {
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+
+  it('com controlador (tunnel): reenvia o estado corrente com seq pelo canal', async () => {
+    const { limpar } = comEstadoComCaminho('STOPPED', false, { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 })
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunelCom(false)).ctx
+      const filho = ctx.subprocess.lastChild()
+      filho.stdout.write(
+        JSON.stringify({ v: 1, type: 'intent', intent: 'tunnel.status', requestId: 'st-tunel', from: 42, chat: -1001234567890 }) + '\n',
+      )
+      await flush()
+      const linhas = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>)
+      const estado = linhas.find((mensagem) => mensagem['type'] === 'state')
+      assert.ok(estado !== undefined, 'o estado COMPLETO saiu pelo canal')
+      assert.equal(estado['state'], 'STOPPED')
+      assert.equal(typeof estado['seq'], 'number')
+    } finally {
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+})
+
+describe('S6: o pareamento ilegivel fecha a intencao (fail-closed, CTL-029)', () => {
+  it('state.json ilegivel no momento da decisao: NOT_PAIRED e o erro vai ao log', async () => {
+    const { dir, limpar } = comEstadoComCaminho('STOPPED', false, { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 })
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunelCom(false)).ctx
+      // A pilha de autenticacao e LAZY: nasce no primeiro pedido que decide.
+      // Tornar o ficheiro ilegivel ANTES desse pedido simula o disco a falhar
+      // na hora H — a leitura lanca e a intencao fecha.
+      chmodSync(join(dir, 'state.json'), 0o000)
+      const filho = ctx.subprocess.lastChild()
+      filho.stdout.write(
+        JSON.stringify({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'par-ilegivel', from: 42, chat: -1001234567890 }) + '\n',
+      )
+      await flush()
+      const linhas = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>)
+      const erro = linhas.find((mensagem) => mensagem['type'] === 'error')
+      assert.equal(erro?.['code'], 'NOT_PAIRED')
+      assert.equal(erro?.['requestId'], 'par-ilegivel')
+      assert.equal(ctx.logger.has('error', 'nao foi possivel ler o pareamento persistido'), true)
+    } finally {
+      chmodSync(join(dir, 'state.json'), 0o600)
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+})
+
+describe('CTL-009 fail-closed: o segredo ilegivel no instante do start fecha a intencao', () => {
+  it('a pilha de autenticacao nasceu legivel, o ficheiro fica ilegivel, e o start de boot e recusado', async () => {
+    const { dir, limpar } = comEstadoComCaminho('READY', false)
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install(configTunelCom(true)).ctx
+      // A avaliacao do start de boot corre em duas camadas: a primeira (na
+      // chegada, dentro do apply) le a pilha que acaba de nascer — legivel; a
+      // segunda (na fila, em microtask) re-avalia com a pilha MEMOIZADA. Entre
+      // as duas, o ficheiro fica ilegivel: o segredo nao se le e a intencao
+      // fecha (fail-closed) — o spawn nunca acontece.
+      chmodSync(join(dir, 'state.json'), 0o000)
+      await esperarAte(() => ctx!.logger.has('error', 'segredo ilegivel; start recusado (fail-closed)'))
+      assert.equal(ctx.subprocess.calls.length, 1, 'so o worker: o start de boot nao spawna')
+      assert.equal(ctx.logger.has('info', 'boot: intencao persistida e READY com autoStart ativo; a subir o tunel.'), true)
+    } finally {
+      chmodSync(join(dir, 'state.json'), 0o600)
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
+    }
+  })
+})
+
+describe('boot em loopback: um orfao VIVO e derrubado antes de qualquer inicializacao (02-SEGURANCA 9)', () => {
+  it('outcome killed: sessoes revogadas, EVENTO_ORFAO no audit, aviso ao dono, processo morto', async () => {
+    // Um filho REAL cujo argv[0] (via `argv0` do spawn, deterministico no
+    // /proc/<pid>/cmdline — sem corrida com o exec da shell) e 'cloudflared':
+    // a varredura reconhece-o como o nosso tunel e derruba a arvore. Sem
+    // /proc (macOS), a identificacao e null e a politica matou na mesma — a
+    // URL publica pesa mais que a ignorancia. `detached: true` faz o filho
+    // lider do seu proprio GRUPO: o tree-kill alveja `-pid`, e sem grupo
+    // proprio o `kill(-pid, SIGKILL)` devolveria ESRCH e o orfao sobreviveria.
+    const filhoOrfao = spawn('/bin/sh', ['-c', 'sleep 60'], { argv0: 'cloudflared', detached: true })
+    filhoOrfao.unref()
+    const pid = filhoOrfao.pid
+    assert.ok(pid !== undefined)
+    const { dir, limpar } = comEstadoComCaminho('STOPPED', false, undefined, { pid, startedAt: Date.now(), mode: 'quick' })
+    let ctx: FakeContext | undefined
+    try {
+      ctx = install().ctx
+      assert.equal(ctx.logger.has('warn', 'tunel orfao de uma execucao anterior encontrado VIVO'), true)
+
+      // O orfao morreu (SIGTERM+SIGKILL ao grupo/arvore).
+      const deadline = Date.now() + 2000
+      let morto = false
+      while (Date.now() < deadline) {
+        try {
+          process.kill(pid, 0)
+        } catch {
+          morto = true
+          break
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(morto, true, 'o cloudflared orfao foi derrubado no boot')
+
+      // A auditoria do orfao foi escrita (EVENTO_ORFAO, resultado permitido).
+      const auditText = readFileSync(join(dir, 'audit.log'), 'utf8')
+      assert.ok(auditText.includes('tunel_orfao_derrubado'), 'o evento do orfao entrou no audit')
+    } finally {
+      try {
+        process.kill(pid, 0)
+        process.kill(pid, 'SIGKILL')
+      } catch (error) {
+        // Ja morto: o objetivo ja esta cumprido (o mesmo rito do tree-kill).
+        void error
+      }
+      if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
+      limpar()
     }
   })
 })
