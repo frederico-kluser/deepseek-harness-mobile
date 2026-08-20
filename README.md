@@ -16,9 +16,40 @@ Plugin Cordis para o **DeepSeek Harness (DSH) v0.1**. Faz duas coisas:
 2. **Orquestra um worker de long-polling.** Mantém um subprocesso de longa duração
    (bot do Telegram) sob `ctx.effect()`, com disposer LIFO, tree-kill garantido e
    recuo exponencial contra crash-loops. O worker recebe um ambiente **construído a
-   partir de uma allowlist** — nunca `process.env` inteiro — para que `ADMIN_USER` e
-   `ADMIN_PASS` do plano de controlo nunca cheguem a um binário de terceiros que consome
-   input da Internet.
+   partir de uma allowlist** — nunca `process.env` inteiro — para que a credencial do
+   plano de controlo nunca chegue a um binário de terceiros que consome input da
+   Internet.
+
+## Estado atual — leia antes de instalar
+
+Este repositório está em reconstrução ativa e **o plugin ainda não funciona ponta a
+ponta**. O que este README descreve é o desenho e as invariantes já decididas, não um
+produto acabado. Hoje:
+
+- a superfície real da API do DSH foi levantada lendo os `.d.ts` dos tarballs publicados
+  no npm, versão a versão, e o código está a ser migrado para ela;
+- o portão de autenticação, o supervisor de subprocessos e o manifesto existem como
+  desenho e como código em migração;
+- **túnel, bot do Telegram e liga/desliga remoto ainda não são funcionalidade entregue.**
+
+Não instale isto à espera de aceder ao DSH pelo telemóvel hoje. Se o que quer é apenas
+autenticação na Web UI do DSH, **agora**, existe pelo menos um plugin dedicado só a isso
+no ecossistema (`dsh-webui-auth`) e ele resolve esse problema sem esperar por este.
+
+Três invariantes de desenho que não vão mudar, e que vale a pena saber já:
+
+- **O bind continua em `127.0.0.1`.** Nenhuma funcionalidade futura alarga o socket local.
+- **A senha nunca é enviada pelo Telegram.** Conversa com bot é *cloud chat*: não é
+  ponta-a-ponta, o histórico fica nos servidores da Telegram e **não existe
+  autodestruição para bots**. A senha aparece no terminal local, e só lá.
+- **A URL de um túnel não é segredo.** Hostnames efémeros de túnel são descobríveis por
+  amostragem pública — uma amostragem real devolveu dezenas de hostnames vivos. Quem
+  protege é a credencial, não a obscuridade do endereço.
+
+Compatibilidade: a linha do DSH contra a qual este trabalho é feito é **`0.1.0-rc.7`**
+(faixa verificada `rc.7`–`rc.9`). Cuidado com a tag `latest` dos subpacotes
+`@deepseek-ai/dsh-*`: ela aponta para a publicação **mais antiga**, não para a mais
+recente. Fixe a versão explicitamente.
 
 ## Requisitos de instalação segura (leia antes de aplicar)
 
@@ -31,15 +62,15 @@ ficam documentadas aqui.
 `ctx.intercept` só envolve os registos feitos **depois** do `apply()` deste plugin. Se o
 pacote que regista `/api` (ou o `dsh-host-frontend-static`, que monta o fallback da SPA)
 correr **antes**, essas superfícies respondem **sem credencial**. Não é hipótese remota:
-`/api` e a SPA vêm da **Camada 1 (Bundle)** e este plugin da **Camada 2 (Profile)**.
-Reproduzido em laboratório — com o registo antes do `apply`, um `POST` sem credencial
-para `/api/commands/execute` devolveu **200** e a RPC executou.
+`/api` e a SPA são registados pelo bundle base da instalação, e a ordem de resolução do
+grafo não é garantida a seu favor por nenhuma camada. Reproduzido em laboratório — com o
+registo antes do `apply`, um `POST` sem credencial para `/api/commands/execute` devolveu
+**200** e a RPC executou.
 
-**Como garantir a ordem:** a entrada `guarded-bot-orchestrator` do `cordis.patch.yml`
-tem de ser **resolvida antes** das entradas que registam `/api` e o fallback da SPA — na
-prática, colocá-la como **primeira entrada de plugin** do `insert` (a seguir apenas à
-reescrita do servidor web) e confirmar que nenhuma camada superior (Home, `--patch`)
-reordena ou reinsere aquelas entradas depois desta.
+**Como garantir a ordem:** a entrada `guarded-bot-orchestrator` tem de ser **resolvida
+antes** das entradas que registam `/api` e o fallback da SPA — na prática, ficar como
+**primeira entrada de plugin** do `insert` e confirmar que nenhuma camada superior
+(Profile, Home, `--patch`) reordena ou reinsere aquelas entradas depois desta.
 
 **Como verificar que correu bem:** um `curl` sem credencial a `/api` tem de devolver
 `401`. Se devolver `200`, a ordem está errada.
@@ -88,31 +119,23 @@ do DSH (verificada em `0.1.0-rc.6`): com o servidor ligado a `0.0.0.0`, as rotas
 `/api` respondem a sockets sem qualquer credencial, e `commands/execute` consegue injetar
 `/permission danger-full-access`, derrubando o confinamento `workspace-write` do Sandbox.
 
-O `cordis.patch.yml` deste repositório fixa o bind em `127.0.0.1` e ativa o plugin.
-Exposição à rede faz-se **sempre** por proxy reverso TLS autenticado à frente do
-loopback — nunca alargando o bind.
+O manifesto de **Bundle** deste pacote ativa o plugin; o exemplo de **Profile** que o
+acompanha fixa o bind em `127.0.0.1` (ver «Como o manifesto entra: duas camadas»).
+Exposição à rede faz-se **sempre** por uma camada autenticada à frente do loopback —
+nunca alargando o bind.
 
-## Variáveis de ambiente exigidas
+## Credencial e segredos
 
-Têm de estar presentes no processo que arranca o `dsh` (são lidas em tempo de arranque
-pela tag `!!js`, avaliada por `@deepseek-ai/cordis-plugin-include`; nenhum segredo é
-escrito em ficheiro):
+**A credencial do plano de controlo não vem do ambiente.** Não há `ADMIN_USER` nem
+`ADMIN_PASS` para exportar, e não existe forma de fixar a senha por variável de ambiente:
+o utilizador do Basic Auth é fixo e a senha é **gerada pelo próprio plugin** com um
+gerador criptograficamente seguro, mostrada **uma única vez** no terminal, no arranque.
+Em disco fica apenas um **digest** — nunca a senha.
 
-| Variável | Uso |
-| --- | --- |
-| `ADMIN_USER` | Utilizador do Basic Auth que guarda `/api` e a SPA. |
-| `ADMIN_PASS` | Senha correspondente. |
-| `TELEGRAM_BOT_TOKEN` | Token do bot, passado ao worker de long-polling. |
-
-### O que acontece se faltar alguma
-
-**O processo não arranca.** Cada expressão `!!js` do `cordis.patch.yml` é um IIFE que
-valida o ambiente e **lança no carregamento** (*fail loud at load*). Não há arranque
-degradado, não há credencial de recurso — o `dsh` aborta com uma mensagem que nomeia a
-variável em falta. Uma variável presente mas **vazia** conta como ausente.
-
-Isto é fail-closed **porque falha ruidosamente**, e não porque "arranca com credencial
-inválida e recusa tudo". A distinção é a diferença entre uma porta fechada e um buraco:
+Isto corrige um desenho anterior deste repositório, que derivava a credencial de
+`ADMIN_USER`/`ADMIN_PASS` lidos do ambiente. O motivo de a mudança ser estrutural, e não
+cosmética: um template literal **não rebenta** quando `process.env.X` está ausente —
+interpola a string `"undefined"`.
 
 ```console
 $ # a forma INGÉNUA — a que este repositório NÃO usa:
@@ -121,53 +144,148 @@ $ node -e 'console.log(Buffer.from(`${process.env.ADMIN_USER}:${process.env.ADMI
 dW5kZWZpbmVkOnVuZGVmaW5lZA==     # -> descodifica para  undefined:undefined
 ```
 
-Um template literal **não rebenta** com `process.env.X` ausente: interpola a string
-`"undefined"`. O resultado não é uma credencial inválida — é uma credencial **válida,
-fixa e derivável por qualquer pessoa**, que abriria exactamente a barreira erguida para
-mitigar a RCE não autenticada da #853. Daí a guarda explícita em cada uma das três
-expressões `!!js` do manifesto.
+O resultado não é uma credencial inválida: é uma credencial **válida, fixa e derivável
+por qualquer pessoa**, que abriria exactamente a barreira erguida para mitigar a RCE não
+autenticada da #853. Tirar a credencial do ambiente elimina a classe de erro inteira, em
+vez de a vigiar com uma verificação a mais.
 
-## Onde colocar o `cordis.patch.yml`
+O princípio que fica é o mesmo: **falha ruidosa no carregamento** (*fail loud at load*).
+Configuração inválida ou segredo em falta aborta o arranque com uma mensagem que nomeia o
+que falta. Não há arranque degradado, não há credencial de recurso, e um valor presente
+mas **vazio** conta como ausente.
 
-Ele pertence à **Camada 2 (Profile)** da topologia de 4 camadas
-(Bundle → Profile → Home → Overlay/CLI):
+> Isto vale para o que **este plugin** valida no seu próprio `apply()`. **Não** vale para
+> a resolução de patches do host, que é silenciosa — ver «A camada de Profile é opcional».
+> Não confunda as duas: o plugin grita, o motor de patches não.
+
+### Variáveis de ambiente
+
+Uma só, e apenas quando o worker do bot estiver em uso:
+
+| Variável | Uso |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Token do bot, entregue ao worker de long-polling pelo ambiente construído por allowlist. Vai **por ambiente, nunca por `argv`**: `/proc/<pid>/cmdline` é legível por qualquer processo local. |
+
+## Como o manifesto entra: duas camadas
+
+O DSH resolve configuração em quatro camadas, por precedência crescente:
+**Bundle → Profile → Home → Overlay/CLI**. Este pacote usa as duas primeiras, com papéis
+distintos:
+
+| Camada | Ficheiro | Papel | Precisa de ação sua? |
+| --- | --- | --- | --- |
+| **1 — Bundle** | `cordis.patch.yml`, distribuído dentro do pacote | Regista **o próprio plugin**, e nada mais. É um *insert* puro: não alveja entrada nenhuma já existente e por isso **não tem `id`**. | **Não.** Entra com a instalação. |
+| **2 — Profile** | `cordis.profile.patch.example.yml`, um **exemplo** que acompanha o pacote | Endurecimento **opcional** da instalação — nomeadamente fixar o *bind* do servidor web em `127.0.0.1`. Alveja uma entrada que já existe, logo depende de um `id` específico da sua instalação. | **Só se quiser** esse endurecimento. |
+
+**Não copie ficheiro nenhum à mão para ativar o plugin.** A instalação pelo caminho
+oficial já ativa a camada de Bundle:
 
 ```sh
-cp cordis.patch.yml "$DSH_HOME/profiles/<nome_do_perfil>/cordis.patch.yml"
-# ex.: $DSH_HOME/profiles/web/cordis.patch.yml
+dsh plugin --profile <nome_do_perfil> add dsh-guarded-bot-orchestrator
 ```
 
-Esta é a **única** camada por onde este ficheiro entra. O `package.json` deste pacote
-**não** declara `dsh.bundle.patch` de propósito: essa chave registaria o mesmo manifesto
-como **Camada 1 (Bundle)**, a de prioridade mínima, aplicando as mesmas entradas uma
-segunda vez noutra camada e criando duas verdades sobre onde o ficheiro entra. O
-artefacto entregue é o patch de Profile.
+Este README trazia antes uma instrução para copiar o `cordis.patch.yml` para
+`$DSH_HOME/profiles/<perfil>/`. **Ela foi removida**: com o manifesto de Bundle a entrar
+pela instalação, a cópia manual aplicaria as mesmas entradas uma segunda vez, noutra
+camada de precedência, criando duas verdades sobre onde este ficheiro entra.
 
-O ficheiro está inteiramente comentado — leia-o antes de aplicar. O ponto que mais
-surpreende: o DSH resolve patches por **substituição absoluta da entrada** do `id`
-atingido (*whole-entry replace*), **não** por deep merge. Ao alvejar um `id` existente,
-toda chave irmã omitida é **apagada**, não herdada. Por isso a entrada do servidor web
-reescreve `name` e `port` explicitamente só para poder mudar `host`.
+### A camada de Profile é opcional — e é onde mora o `id`
 
-### Obrigatório antes de aplicar: confirmar o `id` do servidor web
+O ficheiro de exemplo está inteiramente comentado; leia-o antes de aplicar. As três
+propriedades abaixo foram lidas no motor de patches real — `applyEntryPatches` em
+`@deepseek-ai/dsh-app-boot@0.1.0-rc.7`, `lib/index.js:57-106` — e não em documentação em
+prosa. Se atualizar de `rc`, vale reconfirmar.
 
-A primeira entrada do manifesto traz o `id` como **placeholder**
-(`'<ID-DA-ENTRADA-DO-SERVIDOR-WEB-NESTA-INSTALACAO>'`) e tem de ser substituído. Esse
-`id` é **específico da instalação** — é o que o bundle `@deepseek-ai/dsh-base` declarou
-na versão instalada — e **não está publicado na documentação do DSH**, que também **não
-documenta qualquer comando para listar entradas do grafo**: os únicos subcomandos de
-`dsh plugin` documentados são de instalação (`dsh plugin --profile <perfil> add
-<pacote>`). Se a sua versão da CLI oferecer um comando de listagem, use-o; caso
-contrário, a descoberta é por **inspecção**: abra o `cordis.patch.yml` do bundle
-`@deepseek-ai/dsh-base` como está instalado no perfil e procure a entrada cujo
-`name` é `'@deepseek-ai/dsh-host-webserver'` — o `id` dessa entrada é o valor a usar.
+**1. A aplicação de um patch é *shallow merge* das chaves de topo, não substituição da
+entrada.** O motor faz, em `:100-103`:
 
-Errar o `id` **não é inócuo**. Como a resolução é whole-entry replace *por `id`*, um
-`id` que não case com nenhuma entrada inferior **deixa de ser um replace e passa a ser um
-insert**: nasce uma segunda instância do servidor web enquanto a original continua viva
-no bind anterior, as duas disputam a mesma rota/porta e o motor rejeita o arranque por
-conflito de rota (*fail loud at load*). O bind de loopback — a razão de ser deste patch —
-nunca chega a ser aplicado.
+```js
+for (const [key, value] of Object.entries(overrides)) {
+  if (key === "id") continue;
+  target[key] = value;
+}
+```
+
+Chave irmã **omitida é preservada**, não apagada — não é preciso reescrever `port` só
+para mudar `host`. A exceção que importa é o `config`: ele é uma chave de topo como as
+outras, logo, **se o fornecer, substitui o objeto `config` inteiro**. Para mudar só o
+`host` sem perder o `port`, o `config` que escrever tem de trazer os dois.
+
+**2. `name` no patch é uma *asserção*, não um valor a aplicar.** Ele é retirado do objeto
+de overrides antes do merge (`:69`) e usado como guarda em `:96-99`: se o `name` que
+escreveu não bater com o `name` da entrada que o `id` encontrou, o patch é **descartado**.
+Vale a pena incluí-lo — é o que impede um `id` errado de patchar em silêncio a linha
+errada.
+
+**3. Errar o `id` falha em SILÊNCIO — e é o ponto mais perigoso desta página.** O motor
+faz, em `:91-95`:
+
+```js
+const target = entryMap.get(id);
+if (!target) {
+  warn("patch: entry %C not found", id);
+  continue;
+}
+```
+
+`warn` e `continue`. **Não há um único `throw` em todo o `applyEntryPatches`.** O arranque
+segue, o processo sai com código 0, e o seu patch é simplesmente **descartado**. Um
+`replace` também **nunca** se converte em `insert`: `insert` é uma chave distinta,
+testada em `:70`, **antes** de qualquer resolução de `id` — não nasce segunda instância do
+servidor web nem conflito de rota.
+
+> **Versões anteriores deste README diziam o contrário** — que um `id` errado provocava
+> conflito de rota e *fail loud at load*. Era **falso**, e falso na direção pior possível:
+> o que fica por aplicar é justamente o endurecimento do *bind*. A entrada de origem
+> (`@deepseek-ai/dsh-web-app/cordis.patch.yml:119`) traz
+> `host: !!js ctx.webStartup.host ?? '127.0.0.1'`, ou seja, **honra o `--host` da linha de
+> comandos**. Com o patch descartado em silêncio, um `dsh web --host 0.0.0.0` mantém o
+> socket aberto para a rede e **nada** no arranque o avisa. Não procure um erro que não
+> vai aparecer: procure a linha de `warn`, e confirme o efeito.
+
+**Como confirmar que o patch pegou** — nesta ordem, do mais barato ao mais fiável:
+
+1. **Procure a linha de aviso** no stderr do arranque: `patch: entry <id> not found`. Se
+   ela aparecer, o seu patch não foi aplicado.
+2. **Confirme o `id` real** com o diagnóstico de recuperação da CLI, que compõe as linhas
+   dos bundles e as imprime em YAML:
+
+   ```console
+   $ dsh --profile web --dump-default-config | grep -B1 dsh-host-webserver
+   ```
+
+   Esse mesmo comando reporta, pelo `warn`, os patches que não casaram com linha nenhuma,
+   com o rótulo da camada — é o sítio onde um `id` errado fica visível.
+3. **Verifique o efeito, não a configuração.** É a única prova que não depende de ler
+   YAML: confirme em que endereço o servidor está de facto a escutar (`ss -ltnp`,
+   `lsof -iTCP -sTCP:LISTEN`) e que um `curl` sem credencial a `/api` devolve `401`.
+
+**O `id` do servidor web.** No perfil `web` — cujo template é
+`["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]` (`dsh-app-boot`, `lib/index.js:323`)
+— a entrada vive no **segundo** bundle:
+
+```yaml
+# @deepseek-ai/dsh-web-app/cordis.patch.yml:115  (0.1.0-rc.7)
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  inject: [webStartup]
+  config:
+    host: !!js ctx.webStartup.host ?? '127.0.0.1'
+    port: !!js ctx.webStartup.port ?? 3080
+```
+
+O `id` é literalmente **`webserver`**. Não está em `@deepseek-ai/dsh-base` — `grep`
+por `webserver` nesse ficheiro devolve **zero**. Ainda assim, **confirme na sua
+instalação** antes de aplicar, com o comando do ponto 2: o valor acima foi lido na
+`0.1.0-rc.7` e nada garante que uma `rc` posterior o mantenha.
+
+É por isto que este `id` **não** vive na camada de Bundle, que é automática: uma camada
+que depende de um `id` específico da instalação, e que falha em silêncio quando ele não
+casa, tem de ser uma escolha explícita de quem instala.
+
+**O que não medimos:** não corremos o `dsh` ponta a ponta contra uma instalação real
+neste trabalho. O que está acima vem da leitura do código publicado nos tarballs de
+`0.1.0-rc.7`; a verificação de comportamento é o passo 3 da lista acima, do seu lado.
 
 ## Instalação do plugin
 
@@ -190,8 +308,9 @@ ignorado pelo Git (é derivado) mas vai no pacote publicado — `main`, `types` 
 apontam para lá, porque o Node não carrega `.ts` a partir de `node_modules`
 (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`).
 
-No `cordis.patch.yml`, o `name` da entrada passa a ser o caminho absoluto do diretório
-(o manifesto já traz uma entrada a demonstrar essa forma).
+Nessa forma de distribuição, o `name` da entrada que regista o plugin passa a ser o
+caminho absoluto do diretório, e a entrada entra pela camada de **Profile** — os
+manifestos que acompanham o pacote trazem uma entrada a demonstrar essa forma.
 
 ### Aviso: `pnpm` ≥ 10 bloqueia scripts `prepare`
 
@@ -258,5 +377,18 @@ Fiber. Em vez de inventar API inexistente, implementa-se o que a superfície per
   arranque. Invocações concorrentes (`dsh --profile web "A" & dsh --profile web "B" &`)
   podem ler um ficheiro truncado. Serialize os arranques com `flock`.
 - **Precedência.** Um patch em `$DSH_HOME/cordis.patch.yml` (Camada 3) ou um
-  `--patch` na CLI (Camada 4) sobrepõem-se a este ficheiro — inclusive ao bind de
-  loopback. Audite as camadas superiores.
+  `--patch` na CLI (Camada 4) sobrepõem-se aos manifestos deste pacote — inclusive ao
+  bind de loopback. Audite as camadas superiores.
+
+## Segurança, contribuição e licença
+
+- **Encontrou uma vulnerabilidade?** Não abra issue pública: leia [`SECURITY.md`](SECURITY.md)
+  e use o canal privado descrito lá. Esse ficheiro traz também a lista explícita do que
+  **não** é tratado como vulnerabilidade neste projeto — a URL do túnel não ser segredo, o
+  TLS terminar na borda, prompt injection ser risco aceite — para que ninguém gaste tempo
+  a reportar uma decisão de desenho.
+- **Quer contribuir?** [`CONTRIBUTING.md`](CONTRIBUTING.md) tem o ambiente em quatro
+  comandos, os níveis de teste, e — mais importante — a lista do que **nunca** é aceite
+  num PR.
+- **Código de conduta:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1).
+- **Licença:** MIT — ver [`LICENSE`](LICENSE). O DeepSeek Harness a montante também é MIT.

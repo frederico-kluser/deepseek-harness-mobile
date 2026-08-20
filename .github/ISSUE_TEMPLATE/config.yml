@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Encontrou uma vulnerabilidade? Não é aqui.
+    url: https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator/security/advisories/new
+    about: >-
+      Relato de segurança vai por canal privado (Security → Report a vulnerability), nunca
+      por issue pública. Leia SECURITY.md antes. Se o botão não aparecer, o e-mail do
+      mantenedor está no SECURITY.md.
+  - name: Dúvida de uso, instalação ou configuração
+    url: https://github.com/frederico-kluser/dsh-guarded-bot-orchestrator/discussions
+    about: >-
+      Pergunta sobre como usar vai em Discussions. Issues são para defeito reproduzível,
+      quebra de compatibilidade e proposta de funcionalidade.
+  - name: O problema é do DeepSeek Harness, não deste plugin
+    url: https://github.com/deepseek-ai/deepseek-harness/discussions
+    about: >-
+      Se o DSH falha sem este plugin carregado, reporte a montante. Avise-nos por cortesia
+      se achar que nos afeta.

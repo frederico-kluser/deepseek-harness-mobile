@@ -1,0 +1,55 @@
+name: Proposta de funcionalidade
+description: Uma ideia para o plugin. O campo de impacto de segurança é obrigatório.
+title: "[feat] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Este plugin é o controlo de acesso de um agente que executa código na máquina de quem o
+        instala. Toda funcionalidade nova é superfície nova. O campo de impacto de segurança não
+        é burocracia: propostas sem ele não são avaliadas.
+
+        Vale a pena ler antes: a secção «o que nunca é aceite» do `CONTRIBUTING.md`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Que problema real isto resolve
+      description: "Descreva a situação concreta, não a solução. Se não houve situação concreta, provavelmente não vale a superfície."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposta
+    validations:
+      required: true
+  - type: textarea
+    id: security-impact
+    attributes:
+      label: Impacto de segurança desta proposta
+      description: >-
+        Obrigatório. Responda: amplia a superfície exposta? mexe no caminho de autenticação, na
+        política de bind, no ciclo de vida dos subprocessos ou no que vai para log? cria um novo
+        lugar onde um segredo pode existir? Se a resposta a todas for «não», explique por quê.
+    validations:
+      required: true
+  - type: checkboxes
+    id: red-lines
+    attributes:
+      label: Linhas vermelhas
+      description: "Marque para confirmar. Uma proposta que viole qualquer destes pontos é recusada por princípio."
+      options:
+        - label: A proposta NÃO alarga o bind para além do loopback.
+          required: true
+        - label: A proposta NÃO remove nem torna opcional a autenticação.
+          required: true
+        - label: A proposta NÃO faz um segredo trafegar pelo Telegram nem por `argv`.
+          required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: "Inclua «não fazer nada» como alternativa e diga por que ela perde."
+    validations:
+      required: false

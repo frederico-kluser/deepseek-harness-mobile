@@ -1,0 +1,92 @@
+name: Defeito (bug)
+description: Algo não funciona como documentado, e você consegue reproduzir.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Antes de continuar:** se o defeito é uma falha de segurança — qualquer caminho que
+        devolva `200` sem credencial, vazamento de segredo, escape do supervisor de processos —
+        **feche esta página** e siga o `SECURITY.md`. Relato de segurança vai por canal privado.
+
+        **Redija o log antes de colar.** Retire token do bot do Telegram, senha, cabeçalho
+        `Authorization`, cookies e a URL do túnel.
+  - type: checkboxes
+    id: pre
+    attributes:
+      label: Verificações prévias
+      options:
+        - label: Não é uma falha de segurança (essa vai por `SECURITY.md`, em privado).
+          required: true
+        - label: Procurei nas issues abertas e fechadas e não encontrei duplicado.
+          required: true
+        - label: Reproduzi com o plugin como distribuído, sem alterações locais no código.
+          required: false
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Versão do plugin
+      description: "Versão publicada, ou o SHA do commit se instalou por Git."
+      placeholder: "0.1.0 — ou 1a2b3c4"
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: Versão do DeepSeek Harness
+      description: "Saída de `npx @deepseek-ai/dsh --version`."
+      placeholder: "0.1.0-rc.7"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Versão do Node
+      description: "Saída de `node --version`. O pacote exige Node >= 24."
+      placeholder: "v24.13.3"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Sistema operativo
+      placeholder: "Ubuntu 24.04 / macOS 15.3 (arm64)"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que deveria acontecer
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: O que aconteceu
+      description: "Códigos de estado HTTP exatos, se for o caso. `401` esperado versus `200` obtido é o relato mais útil possível."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Passos para reproduzir
+      description: "Comandos exatos, na ordem. Um `curl` vale mais do que três parágrafos."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log relevante (REDIGIDO)
+      description: "SEM TOKEN, SEM SENHA, SEM `Authorization`, SEM COOKIE, SEM URL DE TÚNEL."
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuração aplicada
+      description: "O trecho relevante do manifesto Cordis, com segredos removidos. Diga também em que camada o aplicou."
+      render: yaml
+    validations:
+      required: false
