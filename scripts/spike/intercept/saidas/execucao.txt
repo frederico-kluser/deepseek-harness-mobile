@@ -1,0 +1,219 @@
+### node v24.15.0 | webserver 0.1.0-rc.8 | cordis 4.0.1
+
+servidor real em http://127.0.0.1:39485
+tabelas de rota enumeradas (campos `private` so no TypeScript):
+  {"exact":["/__dsh_invariant_probe__"],"prefix":["/api","/plugins"],"upgrade":["/api/events.mux","/api/events.host"],"indexTaps":1,"fallbackClaimed":true}
+
+FASE A — sem barreira (linha de base)
+  PASS  A register prefix  (/api — dsh-client-connection)          -> 200
+  PASS  A register prefix  (/plugins — dsh-client-modules)         -> 200
+  PASS  A register exact   (sonda de invariante)                   -> 200
+  PASS  A registerFallback (frontend-static, index)                -> 200
+  PASS  A registerFallback (frontend-static, SPA)                  -> 200
+  PASS  A registerUpgrade  (WebSocket mux)                         -> upgrade
+  PASS  A registerUpgrade  (WebSocket host)                        -> upgrade
+  PASS  A applyIndexTaps aplicado ao index                         -> true
+
+FASE B — barreira instalada DEPOIS de todos os registos, sem credencial
+  PASS  B register prefix  (/api — dsh-client-connection)          -> 401
+  PASS  B register prefix  (/plugins — dsh-client-modules)         -> 401
+  PASS  B register exact   (sonda de invariante)                   -> 401
+  PASS  B registerFallback (frontend-static, index)                -> 401
+  PASS  B registerFallback (frontend-static, SPA)                  -> 401
+  PASS  B cabecalho WWW-Authenticate presente                      -> true
+  PASS  B registerUpgrade  (WebSocket mux)                         -> resposta:401
+  PASS  B registerUpgrade  (WebSocket host)                        -> resposta:401
+
+FASE B2 — rota registada DEPOIS da barreira ja instalada
+  PASS  B2 register prefix registado APOS a barreira               -> 401
+  PASS  B2 registerUpgrade registado APOS a barreira               -> resposta:401
+  PASS  B2 mesma rota com credencial valida                        -> 200
+
+FASE C — barreira instalada, COM credencial valida
+  PASS  C register prefix  (/api — dsh-client-connection)          -> 200
+  PASS  C register prefix  (/plugins — dsh-client-modules)         -> 200
+  PASS  C register exact   (sonda de invariante)                   -> 200
+  PASS  C registerFallback (frontend-static, index)                -> 200
+  PASS  C registerFallback (frontend-static, SPA)                  -> 200
+  PASS  C registerUpgrade  (WebSocket mux)                         -> upgrade
+  PASS  C registerUpgrade  (WebSocket host)                        -> upgrade
+  PASS  C applyIndexTaps continua a correr sob a barreira          -> true
+
+FASE D — disposer sincrono executado; sem credencial de novo
+  PASS  D register prefix  (/api — dsh-client-connection)          -> 200
+  PASS  D register prefix  (/plugins — dsh-client-modules)         -> 200
+  PASS  D register exact   (sonda de invariante)                   -> 200
+  PASS  D registerFallback (frontend-static, index)                -> 200
+  PASS  D registerFallback (frontend-static, SPA)                  -> 200
+  PASS  D registerUpgrade  (WebSocket mux)                         -> upgrade
+  PASS  D registerUpgrade  (WebSocket host)                        -> upgrade
+  PASS  D applyIndexTaps intacto apos reversao                     -> true
+
+RESULTADO: TODAS AS ASSERCOES PASSARAM
+
+
+==============================================================================
+Q1 / OPCAO ZERO — `ctx.intercept('webServer', ...)` faz alguma coisa?
+==============================================================================
+  `intercept` aceitou config arbitraria sem lancar:       true
+  `register` do alvo cru mudou de identidade?             false
+  o contexto devolvido e o mesmo objeto?                  false
+  onde a config foi parar (Context[symbols.intercept]):   ["register","authBarrier"]
+  o WebServer chega a LER config de intercept?            resolveConfig herdado=true, ocorrencias no lib/index.js publicado=0
+  plugin abaixo do intercept recebe o MESMO servico?      true
+  GET /api/state depois do intercept -> 200 (barreira NAO instalada)
+
+==============================================================================
+OPCAO (b) — rota `{kind:'prefix', path:'/'}` : o que ela captura mesmo?
+==============================================================================
+  `register({kind:"prefix", path:"/"})` lancou? NAO
+  o assento de fallback continua do frontend-static? true
+  GET /                        -> 401 (capturado)
+  GET /rota-spa                -> 200 (PASSOU AO LADO)
+  GET /api/state               -> 200 (PASSOU AO LADO)
+  GET /plugins/x/client.js     -> 200 (PASSOU AO LADO)
+  GET /__dsh_invariant_probe__ -> 200 (PASSOU AO LADO)
+  causa medida — lib/index.js:198-200: `pathname !== prefix && !pathname.startsWith(`${prefix}/`)`
+    para prefix "/" o teste vira startsWith("//"), logo so o proprio "/" casa.
+
+==============================================================================
+OPCAO (c) — tomar o assento de fallback
+==============================================================================
+  c.1 — assento JA tomado pelo frontend-static, guarda tenta reclamar:
+    lancou: Error: webserver: fallback already registered
+  c.2 — guarda toma o assento PRIMEIRO; o frontend-static entra depois:
+    fiber do frontend-static: state=3 erro=webserver: fallback already registered
+    GET / -> 401 "guarda"  (a SPA morreu; so a guarda responde)
+
+==============================================================================
+OPCAO (a) — monkey-patch de register/registerFallback/registerUpgrade
+==============================================================================
+  a.1 — guarda carregada ANTES de quem regista (ordem respeitada):
+    GET /api/state -> 401 (guardado)
+    apos disposer  -> 401 (rota JA registada continua envolvida? SIM — reversao INCOMPLETA)
+  a.2 — guarda carregada DEPOIS de quem regista (ordem violada):
+    GET /api/state               -> 200 (PASSOU AO LADO — rota registada antes da guarda)
+    GET /                        -> 200 (PASSOU AO LADO — rota registada antes da guarda)
+    GET /__dsh_invariant_probe__ -> 200 (PASSOU AO LADO — rota registada antes da guarda)
+
+==============================================================================
+OPCAO (e2) — reescrever as TABELAS de rota (acoplamento a 5 campos `private`)
+==============================================================================
+  GET /api/state               -> 401 (guardado)
+  GET /                        -> 401 (guardado)
+  GET /__dsh_invariant_probe__ -> 401 (guardado)
+  GET /tardia/x (registada APOS a instalacao) -> 200 (PASSOU AO LADO — buraco de janela)
+  apos disposer: GET /api/state -> 200
+  campos `private` tocados: exact, prefixes, upgrades, fallback (4) + leitura de indexTaps
+
+==============================================================================
+Q4 — ordem de activacao entre plugins irmaos que injectam o mesmo servico
+==============================================================================
+  linhas registadas A,B,C ANTES do webServer; activacao observada: A,B,C
+  linhas registadas DEPOIS do webServer; activacao observada:   X,Y
+  => a ordem segue a ordem de registo no registry, que e a ordem das linhas do patch.
+  => MAS dsh-base/cordis.patch.yml:12-13 declara: "Row order carries no load semantics"
+     (activation is service-availability driven) — logo isto e comportamento observado,
+     NAO contrato. Nenhum campo de prioridade/insert-before existe nas linhas do patch.
+
+==============================================================================
+Q3 — precondicao unica do mecanismo recomendado: `server` ja existe quando injectamos?
+==============================================================================
+  no momento em que `inject:["webServer"]` activa:
+    {"temServer":true,"ehHttpServer":"Server","aEscutar":true,"listenersRequest":1,"listenersUpgrade":1,"propsVisiveisNoProxy":11}
+  falha-alto quando o servidor ainda nao existe (servico fabricado sem `server`):
+    BarreiraIndisponivel: barreira: nenhum node:http.Server encontrado no servico webServer (campos: nada)
+
+
+==============================================================================
+M1 — empilhar duas barreiras e revertê-las fora de ordem LIFO
+==============================================================================
+  M1.a — o PERIGO, reproduzido com a versao ingenua (sem marca de posse):
+    apos instalar A e B: listenerCount(request)=1
+    apos a() (nao-LIFO):  listenerCount(request)=2 <- despacho DUPLICADO
+    apos b():             listenerCount(request)=2
+    GET /api/state -> 200 (BARREIRA DESAPARECEU)
+    excecoes nao capturadas no processo: ["ERR_HTTP_HEADERS_SENT"] <- dupla escrita no mesmo res
+  M1.b — a versao endurecida RECUSA o empilhamento na instalacao:
+    marca de posse no listener instalado? true
+    BarreiraIndisponivel: barreira: ja existe uma barreira instalada neste servidor.
+    listenerCount(request)=1 (inalterado)
+    apos reversao: listenerCount(request)=1, GET /api/state -> 200
+  M1.c — perda de posse por terceiro: a reversao NAO restaura por cima, falha alto:
+    BarreiraIndisponivel: barreira: o despacho ja nao e nosso no momento da reversao
+    listenerCount(request)=1 (so o terceiro; sem duplicacao)
+    GET /api/state -> 418 (o terceiro responde, nada duplicado)
+
+==============================================================================
+M2 — Node 24: servidor com ZERO listeners de `upgrade` NAO fecha a ligacao
+==============================================================================
+  listenerCount('upgrade') = 0
+  pedido com Connection: Upgrade -> {"resultado":"resposta","status":200}
+  com 1 listener de upgrade      -> {"resultado":"upgrade","status":101}
+  => por isso a barreira SO instala listener de `upgrade` se ja existia algum:
+     sem originais, o trafego de upgrade cai no caminho `request`, que ja esta guardado.
+
+
+==============================================================================
+B1 — `{kind:"prefix", path:""}` : o catch-all público que eu tinha descartado
+==============================================================================
+  register({kind:"prefix", path:""}) lançou? NAO
+  o assento de fallback continua do frontend-static? true
+  GET /                          -> 401 (CAPTURADO)
+  GET /rota-spa                  -> 401 (CAPTURADO)
+  GET /assets/app.js             -> 401 (CAPTURADO)
+  GET /api/state                 -> 200 (passou ao lado)
+  GET /plugins/x/client.js       -> 200 (passou ao lado)
+  GET /__dsh_invariant_probe__   -> 200 (passou ao lado)
+  UPGRADE /api/events.mux            -> upgrade (o prefix "" nao ve upgrades)
+
+==============================================================================
+B2 — o preço escondido do `prefix ""`: delegar ao dono do fallback
+==============================================================================
+  GET / sem credencial -> 302 location=/login
+  GET / com credencial -> 200, applyIndexTaps preservado? true
+  => a delegacao exigiu ler `ws.fallback` (campo `private`): a opcao (b) NAO e 100% API publica.
+
+==============================================================================
+B3 — o modelo de cobertura do dsh-webui-auth replicado: o que fica de fora
+==============================================================================
+  tabela `exact` foi varrida pelo modelo? NAO — PROTECTED_PREFIXES so tem prefixos
+  GET /api/state                 -> 401 (guardado)
+  GET /plugins/x/client.js       -> 401 (guardado)
+  GET /__dsh_invariant_probe__   -> 200 (DESCOBERTO — rota exact fora do modelo)
+
+==============================================================================
+B4 — `loopbackDeputy`: medido contra o `isTrustedApiRequest` REAL, executado verbatim
+==============================================================================
+  fonte: @deepseek-ai/dsh-client-connection/lib/index.js linhas 100..198 (sha256[0:16]=4f9d13d1d2891009)
+  corpo executado, colado do pacote publicado:
+    | function isTrustedApiRequest(request, trustedHosts) {
+    | 	const host = header(request.headers, "host");
+    | 	if (host === void 0) return false;
+    | 	const hostUrl = parseAuthority(host);
+    | 	if (hostUrl === void 0) return false;
+    | 	if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false;
+    | 	if (header(request.headers, "sec-fetch-site") === "cross-site") return false;
+    | 	const origin = header(request.headers, "origin");
+    | 	if (origin === void 0) return true;
+    | 	try {
+    | 		return new URL(origin).host === hostUrl.host;
+    | 	} catch {
+    | 		return false;
+    | 	}
+    | }
+  tunel cru: Host publico + Origin publico               -> RECUSADO (403)
+  so Host reescrito para loopback, Origin mantido        -> RECUSADO (403)
+  Host loopback COM porta + Origin reescrito SEM porta   -> RECUSADO (403)
+  loopbackDeputy: Host loopback + Origin/sec-fetch APAGADOS -> PASSA (a rota responderia)
+  sec-fetch-site: cross-site, resto loopback             -> RECUSADO (403)
+  => confirma o comentario de dsh-webui-auth index.js:713-719: reescrever so o Origin nao basta,
+     porque `new URL(origin).host` ("127.0.0.1") nao iguala `hostUrl.host` ("127.0.0.1:3080").
+
+==============================================================================
+B5 — a janela que o rescan mitiga mas NAO fecha (o proprio README admite: "≤10s")
+==============================================================================
+  apos o scan inicial: GET /api/state -> 401
+  objeto de rota substituido (remonta de fiber), ANTES do proximo rescan:
+    GET /api/state -> 200 (janela aberta ate ao proximo scan)
+  depois do rescan: GET /api/state -> 401
