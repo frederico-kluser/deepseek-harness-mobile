@@ -254,3 +254,43 @@ describe('o ack do /desligar edita o teclado in-place (TG-028)', () => {
     assert.match(edicao.texto, /A desligar o túnel/u)
   })
 })
+
+/* ========================================================================== */
+/* O teto defensivo do mapa de tokens de /desligar (MAX_TOKENS_DESLIGAR)       */
+/* ========================================================================== */
+
+describe('MAX_TOKENS_DESLIGAR: o mapa de tokens nao cresce sem limite', () => {
+  it('17 teclados seguidos: o token mais antigo e expulso (FIFO) e o clique dele morre em silencio', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(pairCommand(OWNER, '123456'))
+
+    // 17 /desligar — o teto e 16; o PRIMEIRO token e expulso.
+    const dados: string[] = []
+    for (let i = 0; i < 17; i += 1) {
+      await bancada.tratar(dmMessage(OWNER, '/desligar'))
+      dados.push(botaoDaMensagem(bancada))
+    }
+
+    const antes = bancada.ipc.intents.length
+    // O clique do PRIMEIRO token (o expulso): resposta SEM texto (teclado
+    // desconhecido) e nenhum intent — o oraculo de TG-025 continua fechado.
+    await bancada.tratar(callbackQuery({ from: OWNER, chat: OWNER, data: dados[0] ?? '' }))
+    assert.equal(bancada.ipc.intents.length, antes, 'o token expulso nao executa')
+    const respostaDoExpulso = bancada.api.respostas.at(-1)
+    assert.ok(respostaDoExpulso !== undefined)
+    assert.equal(respostaDoExpulso.outras, undefined, 'silencio de conteudo para o token expulso')
+
+    // O ULTIMO token continua vivo: o clique executa (usa uma vez e morre).
+    const ultimo = dados.at(-1)
+    assert.ok(ultimo !== undefined)
+    await bancada.tratar(callbackQuery({ from: OWNER, chat: OWNER, data: ultimo }))
+    assert.equal(bancada.ipc.intents.length, antes + 1, 'o token mais novo executa')
+    const intent = bancada.ipc.intents.at(-1)
+    assert.equal(intent?.intent, 'tunnel.down')
+
+    // E o ultimo, ja usado, NAO executa outra vez (uso unico).
+    await bancada.tratar(callbackQuery({ from: OWNER, chat: OWNER, data: ultimo }))
+    assert.equal(bancada.ipc.intents.length, antes + 1, 'replay do token usado: nada')
+  })
+})
+

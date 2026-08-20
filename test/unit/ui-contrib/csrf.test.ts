@@ -89,6 +89,13 @@ describe('csrf da superficie', () => {
     assert.throws(() => criarGuard(clock, new Uint8Array(8)), /curta demais/u)
   })
 
+  it('ttlMs invalido ou nao positivo falha alto no arranque (fail loud, nao na primeira verificacao)', () => {
+    const clock = new FakeClock(1_000)
+    assert.throws(() => createCsrfGuard({ clock, ttlMs: 0 }), /ttlMs/u)
+    assert.throws(() => createCsrfGuard({ clock, ttlMs: Number.NaN }), /ttlMs/u)
+    assert.throws(() => createCsrfGuard({ clock, ttlMs: -1 }), /ttlMs/u)
+  })
+
   it('o cabecalho e o campo de corpo tem os nomes da convencao', () => {
     assert.equal(CSRF_HEADER_NAME, 'x-dsh-csrf')
     assert.equal(CSRF_FIELD_NAME, 'csrf')

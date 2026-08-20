@@ -711,3 +711,94 @@ describe('A2: /acessar nao substitui o painel de estado (aceite e recusa)', () =
     assert.equal(bancada.api.mensagens[indiceDoPainel]?.texto, textoDoPainel, 'o painel intacto')
   })
 })
+
+/* ========================================================================== */
+/* A ponte de nonce — os cantos (EMENDA-COSTURA-5)                             */
+/* ========================================================================== */
+
+describe('a ponte de nonce — cantos do transporte', () => {
+  it('acao que NAO pede nonce (ou desconhecida): aviso e undefined, sem pedido ao canal', async () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    let enviadas = 0
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: () => { enviadas += 1; return true }, log: () => undefined, dispose: () => undefined },
+    })
+    assert.equal(await ponte.emitir('tunnel.down'), undefined)
+    assert.equal(await ponte.emitir('emergency'), undefined)
+    assert.equal(enviadas, 0, 'nenhum nonce.request para acao que dispensa nonce (CTL-024)')
+    assert.match(log.all(), /acao sem nonce/u)
+  })
+
+  it('nonce.issued de um pedido JA resolvido (orfa): consumido em silencio, sem log do valor', async () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: () => true, log: () => undefined, dispose: () => undefined },
+    })
+    const consumido = ponte.onMessage({
+      v: 1,
+      type: 'nonce.issued',
+      acao: 'start',
+      requestId: 'nunca-pedido',
+      nonce: 'valor-opaco-que-nao-deve-sair',
+      expiresAt: time.now() + 60_000,
+    })
+    assert.equal(consumido, true, 'a resposta orfa e consumida pela ponte')
+    assert.ok(!log.all().includes('valor-opaco-que-nao-deve-sair'), 'S3: o valor nao vai ao log')
+  })
+
+  it('mensagem de outro tipo nao e da ponte: devolve false e segue o despacho', () => {
+    const time = new FakeTime()
+    const log = captureLog()
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: () => true, log: () => undefined, dispose: () => undefined },
+    })
+    assert.equal(
+      ponte.onMessage({ v: 1, type: 'state', state: 'STOPPED', seq: 1 }),
+      false,
+      'o state nao interessa a ponte',
+    )
+  })
+
+  it('criarDespachoDoCanal com a ponte: nonce.issued e consumido antes do roteador, e o error de um pedido de nonce tambem', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(pairCommand(OWNER, '123456'))
+    const time = new FakeTime()
+    const log = captureLog()
+    const ponte = criarPonteDeNonce({
+      log: log.logger,
+      time,
+      ipc: { send: () => true, log: () => undefined, dispose: () => undefined },
+    })
+    const despacho = criarDespachoDoCanal(bancada.roteador, ponte)
+
+    // Um nonce.issued orfa passa pela ponte e NAO chega ao roteador (que nao
+    // sabe renderizar um nonce).
+    const antes = bancada.api.mensagens.length
+    despacho['nonce.issued']({
+      v: 1,
+      type: 'nonce.issued',
+      acao: 'start',
+      requestId: 'orfa',
+      nonce: 'valor-opaco',
+      expiresAt: time.now() + 60_000,
+    })
+    await tick()
+    assert.equal(bancada.api.mensagens.length, antes, 'o nonce.issued nao renderiza nada')
+
+    // O error de um pedido de nonce pendente NAO vai ao roteador — a ponte
+    // consome-o antes (nao ha intent por tras; mostra-lo seria duplicar a
+    // mensagem de confirmacao indisponivel).
+    despacho.error({ v: 1, type: 'error', requestId: 'pedido-de-nonce', code: 'EXPOSURE_DISABLED', message: 'exposicao desativada' })
+    await tick()
+    assert.equal(bancada.api.mensagens.length, antes, 'o error do pedido de nonce nao renderiza nada')
+  })
+})
+

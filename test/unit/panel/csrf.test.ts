@@ -117,6 +117,12 @@ describe('a primitiva do token', () => {
       /chave de CSRF curta demais/u,
     )
   })
+
+  it('ttlMs invalido ou nao positivo falha ALTO no arranque', () => {
+    assert.throws(() => createCsrfGuard({ clock: new FakeClock(0), ttlMs: 0 }), /ttlMs/u)
+    assert.throws(() => createCsrfGuard({ clock: new FakeClock(0), ttlMs: -5 }), /ttlMs/u)
+    assert.throws(() => createCsrfGuard({ clock: new FakeClock(0), ttlMs: Number.NaN }), /ttlMs/u)
+  })
 })
 
 describe('o despachante exige o token em TODO POST', () => {

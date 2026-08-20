@@ -24,6 +24,7 @@ import {
   policyForRoute,
   routeKeyOf,
 } from '../../../src/panel/routes.ts'
+import { CSRF_HEADER_NAME } from '../../../src/panel/csrf.ts'
 import { criarBancada, pedir, type Bancada } from './harness.ts'
 
 describe('a tabela de politica e enumerada e fecha por omissao', () => {
@@ -187,5 +188,101 @@ describe('as rotas guardadas antes do login', () => {
     // NAO deixa `/__guard/x/../api/state` escapar ao gate.
     const escapatoria = await pedir(port, '/__guard/x/../api/state')
     assert.equal(escapatoria.status, 401)
+  })
+})
+
+/* ========================================================================== */
+/* defaultWait — a espera de producao (sem deps.wait injetado)                 */
+/* ========================================================================== */
+
+describe('defaultWait — o fallback de producao quando nao ha relogio injetado', () => {
+  it('espera de 0 ms resolve de imediato (o login feliz nao atrasa)', async () => {
+    // `wait: undefined` deliberado: o fallback de producao (defaultWait) entra.
+    const bancada = criarBancada({ comSegredo: true, deps: { wait: undefined as never } })
+    const port = await bancada.servir()
+    try {
+      const token = bancada.csrf.issue(routeKeyOf('POST', PANEL_PATH_LOGIN))
+      const resposta = await pedir(port, PANEL_PATH_LOGIN, {
+        method: 'POST',
+        headers: { [CSRF_HEADER_NAME]: token },
+        body: new URLSearchParams({ segredo: String(bancada.segredo) }).toString(),
+      })
+      assert.equal(resposta.status, 200, 'login com segredo certo e de imediato (sem espera real)')
+    } finally {
+      await bancada.fechar()
+    }
+  })
+
+  it('com falhas suficientes, a espera REAL do setTimeout corre (castigo do limitador)', async () => {
+    // `wait: undefined` deliberado: o fallback de producao (defaultWait) entra.
+    const bancada = criarBancada({ comSegredo: true, deps: { wait: undefined as never } })
+    const port = await bancada.servir()
+    try {
+      const token = bancada.csrf.issue(routeKeyOf('POST', PANEL_PATH_LOGIN))
+      const falhar: () => ReturnType<typeof pedir> = () =>
+        pedir(port, PANEL_PATH_LOGIN, {
+          method: 'POST',
+          headers: { [CSRF_HEADER_NAME]: token },
+          body: new URLSearchParams({ segredo: 'senha-errada' }).toString(),
+        })
+      // As quatro primeiras saem imediatas (freeFailures); a sexta ja espera
+      // o atraso real (>= 500 ms com o full jitter da bancada).
+      for (let i = 0; i < 6; i += 1) {
+        const resposta = await falhar()
+        assert.equal(resposta.status, 401, 'tentativa ' + String(i + 1))
+      }
+      assert.ok(bancada.esperas.length === 0, 'o wait injetado nao foi usado (e o default real)')
+    } finally {
+      await bancada.fechar()
+    }
+  })
+})
+
+/* ========================================================================== */
+/* O despachante — o catch de topo fecha com 500 (nunca um meio-painel)        */
+/* ========================================================================== */
+
+describe('o catch do despachante — nenhum caminho de erro termina em "deixa passar"', () => {
+  it('um handler que LANCA vira 500 generico, com log do operador (S4)', async () => {
+    const bancada = criarBancada()
+    const logsAntes = bancada.logs.length
+    const port = await bancada.servir((_d, _g) => [
+      {
+        method: 'GET',
+        path: '/__guard/bomba',
+        handler: async () => {
+          throw new Error('detalhe interno do handler')
+        },
+      },
+    ])
+    try {
+      const id = bancada.sessions.create()
+      const resposta = await pedir(port, '/__guard/bomba', { cookie: '__Host-dsh_sid=' + id })
+
+      assert.equal(resposta.status, 500)
+      assert.ok(!resposta.body.includes('detalhe interno'), 'o detalhe interno nao sai no corpo')
+      assert.ok(bancada.logs.slice(logsAntes).some((l) => l.includes('excecao ao servir')))
+    } finally {
+      await bancada.fechar()
+    }
+  })
+
+  it('a mesma rota intrusa continua GUARDADA para o anonimo (o 500 nao vira rota publica)', async () => {
+    const bancada = criarBancada()
+    const port = await bancada.servir((_d, _g) => [
+      {
+        method: 'GET',
+        path: '/__guard/bomba',
+        handler: async () => {
+          throw new Error('boom')
+        },
+      },
+    ])
+    try {
+      const resposta = await pedir(port, '/__guard/bomba')
+      assert.equal(resposta.status, 401, 'sem sessao: o gate corre ANTES do handler')
+    } finally {
+      await bancada.fechar()
+    }
   })
 })
