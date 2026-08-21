@@ -74,7 +74,7 @@ linha correspondente em 08-PESQUISA-E-FONTES §8 com URL e data.
 
 | Número/afirmação | Fonte (§8 = 08-PESQUISA-E-FONTES.md) | Confiança |
 | --- | --- | --- |
-| 60 commits no repo | git rev-list --count HEAD (2026-08-21, worktree) | Alta (medido) |
+| 66 commits no repo | git rev-list --count HEAD (2026-08-21, worktree) | Alta (medido) |
 | Repo criado em 2026-08-19 | git log --reverse (commit 3bb53ad) | Alta (medido) |
 | ≥10 commits e ≥1 dia (reprovação automática) | §8:44 — MIN_AGE_DAYS=1, MIN_COMMITS=10 em check-submission.mjs L21-22 | Alta |
 | Formato canônico dsh plugin --profile web add <pkg-npm> | §8:43 — contributing.md | Alta |

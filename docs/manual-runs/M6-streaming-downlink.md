@@ -1,8 +1,8 @@
 # M6 — Streaming e canal de downlink (5 min)
 
 **Objetivo:** validar o streaming de token pelo túnel e identificar o canal de downlink.
-Existe por causa de uma alegação **refutada** pela pesquisa — "quick tunnel não suporta SSE" —
-que não pode ser aceite nem descartada de papel. Fonte: [`docs/plano/04-TESTES.md §9`](../plano/04-TESTES.md) linhas 1763-1774.
+Existe por causa de uma alegação **refutada** pela pesquisa sobre a falta de suporte de SSE no túnel (detalhe e refutação: [`docs/plano/04-TESTES.md §9`](../plano/04-TESTES.md) linhas 1763-1774) —
+que não pode ser aceite nem descartada de papel.
 
 | # | Passo | Critério | Resultado | O que anotar |
 | --- | --- | --- | --- | --- |
