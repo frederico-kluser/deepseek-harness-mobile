@@ -40,8 +40,10 @@ const REGISTRY = 'https://registry.npmjs.org'
 const NET_TIMEOUT_MS = 15_000
 
 /** Versoes de `dsh-*` aceites por `06-REPO-E-CI.md` ("Versoes suportadas").
- * N = 0.1.1-rc.* (linha viva) e N-1 = 0.1.0-rc.* (revisao 2026-08-21). */
-const SUPPORTED_DSH = /^0\.1\.(0|1)-rc\./
+ * N = 0.1.1-rc.* (linha viva) e N-1 = 0.1.0-rc.* com PISO rc.7 (SUPPORTED_RANGE
+ * em `scripts/fetch-dsh-types.mjs`: 0.1.0-rc.7 .. 0.1.1-rc.1). Uma regex que
+ * casasse 0.1.0-rc.1 aprovaria um pino abaixo do piso documentado. */
+const SUPPORTED_DSH = /^0\.1\.(?:0-rc\.(?:[7-9]|[1-9][0-9]+)|1-rc\.[0-9]+)/
 
 /** Pinos EXATOS (D18). O `sha256` e o do tarball de onde o espelho foi extraido. */
 const PINS = {
