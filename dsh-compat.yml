@@ -1,0 +1,61 @@
+# =============================================================================
+# dsh-compat.yml — FONTE DE VERDADE da tabela de compatibilidade do plugin
+# =============================================================================
+#
+# Este ficheiro é lido por `scripts/gen-compat-table.mjs`, que REGENERA
+# `docs/COMPATIBILITY.md`. NUNCA edite `docs/COMPATIBILITY.md` à mão — edite
+# este ficheiro e re-corra o gerador.
+#
+#   pnpm --silent node scripts/gen-compat-table.mjs
+#
+# REGRA DE FONTE PARA O ESQUEMA (06-REPO-E-CI.md §11.2): tabela
+# "versão do plugin × faixa de rc do DSH × status". O upstream
+# (`@deepseek-ai/dsh`) está em developer preview (0.x rc). A política de
+# suporte é N/N-1: a linha de release corrente do upstream + a linha anterior.
+#
+# O gerador implementa um subconjunto YAML propositadamente rígido (sem
+# dependência externa). Manter este ficheiro DENTRO desse subconjunto:
+#   1. comentários começam por `#`;
+#   2. chaves de topo têm indentação 0: `chave: valor`;
+#   3. `rows` é uma lista de itens `- ` indentados por 2 espaços;
+#   4. cada sub-chave de um item tem indentação de 4 espaços;
+#   5. escalares vão entre aspas duplas quando tiverem `$`{OPENBRACE}, `:` ou `#`;
+#   6. valor multilinha opcional com `|` e as linhas seguintes indentadas.
+# -----------------------------------------------------------------------------
+package: "@deepseek-ai/dsh"
+plugin: dsh-guarded-bot-orchestrator
+
+# Faixa global suportada (concisa, para o REGO do README e do SECURITY.md).
+supported-range: "0.1.0-rc.7 .. 0.1.1-rc.1"
+
+# Política N/N-1 (06-REPO-E-CI.md §11.2). Mais que duas linhas de rc vira
+# matriz insustentável para um projeto de um mantenedor.
+policy: "N/N-1 rc lines"
+
+# Uma entrada por linha de compatibilidade do upstream. Cada linha mostra com
+# que versão do PLUGIN a compatibilidade é entregue.
+rows:
+  - version: "0.1.1-rc.1"
+    label: "N"
+    status: supported
+    plugin: "0.1.0"
+    note: |
+      Linha corrente. `types/` regenerados byte-exact contra os tarballs npm
+      publicados (w6-fix-upstream-011rc); CONTRACT-001/008 atualizados.
+
+  - version: "0.1.0-rc.*"
+    label: "N-1"
+    status: supported
+    plugin: "0.1.0"
+    note: |
+      Linha anterior, mantida por política N/N-1. É a mínima da faixa
+      `supported-range` (ex.: `0.1.0-rc.7`, tarball da verificação E1–E4).
+
+  - version: "0.1.0-rc.0 .. 0.1.0-rc.6"
+    label: "anterior"
+    status: deprecated
+    plugin: "—"
+    note: |
+      Fora da faixa testada. Atualize: a discussão #853 (RCE não autenticada
+      do plano de controlo) foi verificada em 0.1.0-rc.6; a faixa sobre a qual
+      o teste de segurança roda é a `supported-range`.
