@@ -1,0 +1,153 @@
+# ============================================================================
+# RELEASE — Changesets + Trusted Publishing (OIDC) para o npm.
+#
+# Referencia: docs/plano/06-REPO-E-CI.md secao 8.2 (esqueleto) + 7.2/7.3.
+#
+# O QUE ESTE WORKFLOW FAZ (e em que ordem):
+#  1. num PUSH para a trunk, abre/atualiza o PR "Version Packages" quando ha
+#     changesets pendentes; no merge desse PR, publica no npm versao nova.
+#  2. num PULL_REQUEST, reprova PR sem .changeset/*.md (job changeset-gate).
+#
+# TRES PRINCIPIOS (iguais ao ci.yml):
+#  1. `permissions: {}` no TOPO. O GITHUB_TOKEN nasce sem nenhuma permissao e
+#     cada job pede exatamente a que precisa (Scorecard: Token-Permissions).
+#  2. Actions PINADAS POR SHA, nunca por tag. Cada SHA foi lido da API de tags
+#     do GitHub em 2026-08-20; o comentario diz a que tag correspondia nesse dia.
+#  3. NENHUM passo com `continue-on-error`. Step que sai != 0 reprova o job.
+#
+# OIDC / proveniencia (06-REPO-E-CI secao 8.2):
+#  - publicacao por TRUSTED PUBLISHING: NAO existe NODE_AUTH_TOKEN em lugar
+#    nenhum. A autenticacao e o OIDC do job `release` (`id-token: write`), que
+#    e o UNICO com esse campo. Pre-requisito humano separado (fora deste
+#    workflow): configurar owner/repo/workflow em npmjs.com/package/<nome>/access.
+#  - proveniencia forcada por `NPM_CONFIG_PROVENANCE: 'true'` (cinto e
+#    suspensorio; sob trusted publishing no GHA e automatica, o flag torna o
+#    contrato explicito).
+#  - `npm i -g npm@latest` garante npm >= 11.5.1 no runner (exigencia do
+#    trusted publishing, 06-REPO-E-CI secao 8.2 item 1 e 08-PESQUISA #45).
+#
+# BRANCH: `main` (nao `master`). MEDIDO no T7.2: origin/HEAD -> main e a unica
+# ref de trunk no remote. O esqueleto de 06 secao 8.2 diz `master`, mas um
+# trigger `master` nao dispararia nunca num repo cuja trunk e `main` — mesma
+# regra "doc nunca promete o que a realidade nao faz".
+# ============================================================================
+name: release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  HUSKY: '0'
+
+jobs:
+  # -------------------------------------------------------------------------
+  # changeset-gate — reprova PR sem .changeset/*.md.
+  #
+  # (06-REPO-E-CI.md secao 6.3: "Job changeset"). O comportamento do comando foi
+  # MEDIDO com @changesets/cli@3.0.1 no T7.2: `changeset status --since=<base>`
+  # sai 1 ("Some packages have been changed but no changesets were found")
+  # quando o PR mexeu em ficheiros do pacote sem changeset, e sai 0 quando ha.
+  # E o gate canonico e simples que o esqueleto prescreve.
+  # -------------------------------------------------------------------------
+  changeset-gate:
+    name: changeset-gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # changeset status precisa do historico ate a trunk
+      # pnpm/setup@v2 instala pnpm 11+ E o runtime num passo. NOTA (medido no
+      # T7.2 contra o README de v2.0.2): a v2 NAO tem input node-version-file —
+      # o pino de Node e feito por `runtime`. Desligamos o install automatico
+      # (`install: false`) e corremos --frozen-lockfile explicitamente (mesmo
+      # do ci.yml; politica de supply chain de 08-PESQUISA #47).
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@24
+          install: false
+      - run: pnpm install --frozen-lockfile
+      # Saida 1 -> job vermelho -> PR reprovado. Preciso de @changesets/cli em
+      # devDependencies (entregue pela T7.1, dona do singleton do package.json).
+      - run: pnpm exec changeset status --since=origin/main
+
+  # -------------------------------------------------------------------------
+  # release — publicacao por trusted publishing (OIDC).
+  # UNICO job com `id-token: write`.
+  # -------------------------------------------------------------------------
+  release:
+    name: release
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # criar a tag "Version Packages" + GitHub Release
+      pull-requests: write   # abrir / atualizar o PR "Version Packages"
+      id-token: write        # OIDC do trusted publishing — o motivo deste job
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # changesets/action precisa do historico para o PR de versao
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@24
+          install: false
+      - run: pnpm install --frozen-lockfile
+      # A build ANTES do publish: o package.json tem `prepublishOnly` (= build +
+      # package:check) que roda no `npm publish`, mas compilar aqui deixa o
+      # `dist/` pronto para o `changeSet publish` e faz o gate falhar cedo.
+      - run: pnpm run build
+
+      # Exigencia 1 de 06-REPO-E-CI.md secao 8.2: npm >= 11.5.1 no runner. Sem
+      # isto o trusted publishing nao autentica. `npm i -g npm@latest` nao
+      # toca no package.json nem no lockfile (instalacao global no runner).
+      - name: npm >= 11.5.1 (exigencia do trusted publishing)
+        run: npm i -g npm@latest && npm --version
+
+      # changesets/action: corre `version` (abre/atualiza o PR "Version
+      # Packages" quando ha changesets) e `publish` (publica no npm quando o
+      # PR de versao ja foi mergeado). SEM NPM_TOKEN: a autenticacao e o OIDC
+      # do job. proveniencia explicita via var de ambiente do npm.
+      - name: Changesets version + publish (OIDC)
+        uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
+        with:
+          version: pnpm exec changeset version
+          publish: pnpm exec changeset publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SEM NPM_TOKEN em lugar nenhum — 06-REPO-E-CI.md secao 8.2.
+          NPM_CONFIG_PROVENANCE: 'true'
+
+      # Disponibilidade no registry apos o publish. O scan de malware do npm a
+      # partir de 28/07/2026 atrasa a visibilidade da versao nova (~5 min
+      # tipico, 15+ em pico — 06-REPO-E-CI.md secao 8.1). POLL COM RETRY: um
+      # 404 imediato e esperado e NAO reprova; so falha depois do deadline de
+      # ~21 min cobrir o pico, quando 404 significa "nunca publicado".
+      - name: O pacote publicado esta visivel no registry (retry apos malware scan)
+        run: |
+          set -eu
+          pkg="$(python3 -c "import json;print(json.load(open('package.json'))['name'])")"
+          ver="$(python3 -c "import json;print(json.load(open('package.json'))['version'])")"
+          echo "Aguardando ${pkg}@${ver} aparecer no registry (malware scan atrasa 5-15+ min)..."
+          deadline=$(( $(date +%s) + 1260 )) # ~21 min: cobre o pico de 15+
+          attempt=0
+          while :; do
+            attempt=$((attempt+1))
+            if npm view "${pkg}@${ver}" version >/dev/null 2>&1; then
+              echo "OK (tentativa ${attempt}): ${pkg}@${ver} visivel no registry."
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "ERRO: ${pkg}@${ver} nao apareceu no registry apos ${attempt} tentativas (~21 min)." >&2
+              echo "404 apos o deadline == nunca publicado; investigar o log do changesets/action." >&2
+              exit 1
+            fi
+            printf '  tentativa %s: ainda nao disponivel; aguardando...\n' "$attempt"
+            sleep 20
+          done
