@@ -29,3 +29,10 @@ violação — a frase não pode aparecer de forma nenhuma.
 - Nome npm dsh-guarded-bot-orchestrator: npm view = E404 (LIVRE) em 2026-08-20 — a reserva (0.0.1 stub, T1.4) NÃO está no registry; reserva pendente de credenciais de publicação (humano/CI). Risco de name-squatting registado.
 - exports+repository: já no estado-alvo (types primeiro/default por último; repository git+https exato) — CONGELADOS para a Onda 7 (T7.1).
 - Texto-base do README: presente — CONGELADO para T7.4.
+
+NOTA DE REFINAMENTO (orquestrador): os IDENTIFICADORES refutados (ctx.webServer,
+dsh-host-subprocess, spawn(cmd,args,opts), dsh-host-frontend) NAO sao padroes do
+PROIBIDO.md: sao nomes tecnicos que aparecem legitimamente no README (o plugin
+intercepta ctx.webServer) e em tabelas de correcao — cobertos pelo invariante de grep
+"fora de tabela de correcao" (05-QUALIDADE 10, item D5). Este ficheiro contem SO as
+ALEGACOES proibidas (frases completas) — uma por linha, formato -f.

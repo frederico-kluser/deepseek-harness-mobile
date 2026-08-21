@@ -8,12 +8,6 @@ quick tunnel não suporta SSE
 Quem tem o token do bot contorna a allowlist
 o token do bot contorna a allowlist
 drop_pending_updates é parâmetro de getUpdates
-drop_pending_updates é parâmetro de getUpdates()
-@deepseek-ai/dsh-host-subprocess
-ctx.webServer
-spawn(cmd, args, opts)
-spawn(cmd,args,opts)
-dsh-host-frontend
 O ASVS 5.0 §6.5.2 autoriza SHA-256 em vez de Argon2 para tokens de 128 bits
 URLs de quick tunnel são indexadas por motores de busca
 child.kill() nunca basta quando há shell intermediário
