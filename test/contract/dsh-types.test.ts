@@ -8,10 +8,12 @@
  *   depende. Falham no dia em que a montante divergir do espelho.
  *
  * FAIXA SUPORTADA -- LEIA ANTES DE MEXER NUM PINO
- *   `06-REPO-E-CI.md` fixa `@deepseek-ai/dsh 0.1.0-rc.7 .. rc.9`. A tag
- *   `latest` dos subpacotes `dsh-*` aponta para a publicacao mais ANTIGA
+ *   `06-REPO-E-CI.md` fixa `@deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1` (revisao
+ *   2026-08-21 fix-upstream-011rc: `latest`/`next` saiu de `0.1.0-rc.*` e entrou
+ *   em `0.1.1-rc.1`; a faixa persegue N = `0.1.1-rc.*` e mantem N-1 = `0.1.0-rc.*`).
+ *   A tag `latest` dos subpacotes `dsh-*` aponta para a publicacao mais ANTIGA
  *   (`0.0.1-rc.1`, 2026-08-10), uma linha morta que ninguem executa; a linha
- *   viva e `0.1.0-rc.*` (`next`). CONTRACT-003 tranca o pino dentro da faixa
+ *   viva e `0.1.1-rc.1` (`next`). CONTRACT-003 tranca o pino dentro da faixa
  *   precisamente para que este erro nao se repita.
  *
  * ASSERCOES NEGATIVAS -- COMO ESCREVE-LAS SEM CRIAR UM TRINCO
@@ -37,16 +39,17 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const REGISTRY = 'https://registry.npmjs.org'
 const NET_TIMEOUT_MS = 15_000
 
-/** Versoes de `dsh-*` aceites por `06-REPO-E-CI.md` ("Versoes suportadas"). */
-const SUPPORTED_DSH = /^0\.1\.0-rc\.(7|8|9)$/
+/** Versoes de `dsh-*` aceites por `06-REPO-E-CI.md` ("Versoes suportadas").
+ * N = 0.1.1-rc.* (linha viva) e N-1 = 0.1.0-rc.* (revisao 2026-08-21). */
+const SUPPORTED_DSH = /^0\.1\.(0|1)-rc\./
 
 /** Pinos EXATOS (D18). O `sha256` e o do tarball de onde o espelho foi extraido. */
 const PINS = {
   cordis: { pkg: '@deepseek-ai/cordis', version: '4.0.1', dir: 'cordis', sha256: '31e96b8e13d5c55bfd4316c08ac8925510e0eed86d48a3a9cc86046623074613', dsh: false },
-  webserver: { pkg: '@deepseek-ai/dsh-host-webserver', version: '0.1.0-rc.7', dir: 'dsh-host-webserver', sha256: 'b5fee946c818859bd19d808b8aea492420a1e57e2a074f2f3a6d16ce943ca545', dsh: true },
-  subprocess: { pkg: '@deepseek-ai/dsh-subprocess', version: '0.1.0-rc.7', dir: 'dsh-subprocess', sha256: '71d951f6d7f34076c9c8f30f931635e87fb2bed4b7959d46f5522016f0661b72', dsh: true },
-  frontendStatic: { pkg: '@deepseek-ai/dsh-host-frontend-static', version: '0.1.0-rc.7', dir: 'dsh-host-frontend-static', sha256: 'c0c7364e47f9ad99395a38b0fe801e81cd009ffcada527571fd7e8a51b96ccb5', dsh: true },
-  homePaths: { pkg: '@deepseek-ai/dsh-home-paths', version: '0.1.0-rc.7', dir: 'dsh-home-paths', sha256: 'a496c60906b636f1236b2a9de00217e7f5c85a1547066e733e7bba1795c41484', dsh: true },
+  webserver: { pkg: '@deepseek-ai/dsh-host-webserver', version: '0.1.1-rc.1', dir: 'dsh-host-webserver', sha256: '9eabc7fd071590279be7329890547c5d00146f2633cf96fecfc6eb71015dc13b', dsh: true },
+  subprocess: { pkg: '@deepseek-ai/dsh-subprocess', version: '0.1.1-rc.1', dir: 'dsh-subprocess', sha256: 'd68176f0cdd29fe0bf033d213d483d044df534cc21b747e374ec310a1e557b78', dsh: true },
+  frontendStatic: { pkg: '@deepseek-ai/dsh-host-frontend-static', version: '0.1.1-rc.1', dir: 'dsh-host-frontend-static', sha256: 'fd29723bfb8f214ec258c386ecf10256791d289901af2348ef41c0b19f8bba4e', dsh: true },
+  homePaths: { pkg: '@deepseek-ai/dsh-home-paths', version: '0.1.1-rc.1', dir: 'dsh-home-paths', sha256: '4d31051c845b7ca97b3830d263b1be1fc7c8466753c91ae456c802b3c9994e9c', dsh: true },
   /**
    * Espelhado mas NAO instalado: depende de `node-pty` e `koffi` (nativos, com
    * `postinstall`) e o plugin nao o importa. Sem `node_modules` nao ha como
@@ -54,13 +57,13 @@ const PINS = {
    * proveniencia (versao + sha256 do tarball) mais `pnpm types:fetch --check`,
    * que rebaixa o tarball e compara. Ver CONTRACT-003 e o relatorio.
    */
-  subprocessLocal: { pkg: '@deepseek-ai/dsh-subprocess-local', version: '0.1.0-rc.7', dir: 'dsh-subprocess-local', sha256: 'ce00c135e16ef8237f2027a677b71b0c21b5081a07eb6b671c95e78f9742c67f', dsh: true, tarballOnly: true },
+  subprocessLocal: { pkg: '@deepseek-ai/dsh-subprocess-local', version: '0.1.1-rc.1', dir: 'dsh-subprocess-local', sha256: '46a7d2429ae04aed56f5bdebff1a5c1d6cdf1e25b6ac2eeea52f5ab151de7502', dsh: true, tarballOnly: true },
 } as const
 
 /** Ficheiros espelhados de cada pacote, por directorio de `types/`. */
 const MIRRORED_FILES: Readonly<Record<string, readonly string[] | undefined>> = {
   cordis: ['index.d.ts', 'context.d.ts', 'events.d.ts', 'fiber.d.ts', 'logger.d.ts', 'reflect.d.ts', 'registry.d.ts', 'service.d.ts', 'utils.d.ts'],
-  'dsh-host-webserver': ['index.d.ts', 'invariant.d.ts'],
+  'dsh-host-webserver': ['index.d.ts', 'injections.d.ts', 'invariant.d.ts'],
   'dsh-subprocess': ['index.d.ts', 'types.d.ts', 'invariant.d.ts'],
   'dsh-subprocess-local': ['index.d.ts', 'spawn.d.ts', 'process-inspector.d.ts'],
   'dsh-host-frontend-static': ['index.d.ts', 'invariant.d.ts'],
@@ -151,7 +154,11 @@ test('CONTRACT-001: dsh-host-webserver declara `interface Context { webServer: W
   assertMirrorMatches(PINS.homePaths, MIRRORED_FILES['dsh-home-paths'] ?? [])
 
   const dts = published(pin, 'index.d.ts')
-  assert.match(dts, /declare module '@deepseek-ai\/cordis' \{\s*interface Context \{\s*webServer: WebServer;\s*\}\s*\}/, 'a augmentation `Context { webServer: WebServer }` desapareceu: o `inject` do plugin deixa de resolver e o portao some em silencio')
+  // A augmentation de Context e o PRIMEIRO membro do module block (nada antes
+  // dela). Nao exigimos que seja o ULTIMO: 0.1.1-rc.1 acrescentou ao mesmo module
+  // um `interface Events` APS a de Context (index-inject). Uma regex que exigisse
+  // o fecho imediato seria um trinco contra uma mudanca a montante ADITIVA.
+  assert.match(dts, /declare module '@deepseek-ai\/cordis' \{\s*interface Context \{\s*webServer: WebServer;\s*\}/, 'a augmentation `Context { webServer: WebServer }` desapareceu: o `inject` do plugin deixa de resolver e o portao some em silencio')
   assert.match(dts, /export declare class WebServer extends Service \{/, '`WebServer` deixou de ser a classe exportada do servico')
   assert.match(dts, /export default WebServer;/, '`WebServer` deixou de ser a exportacao por defeito do pacote')
 })
@@ -187,16 +194,16 @@ test('CONTRACT-003: a faixa suportada esta trancada no que ESTA INSTALADO e no l
   // executa, e foi assim que a primeira passagem desta spike se enganou.
   for (const pin of Object.values(PINS) as Pin[]) {
     if (!pin.dsh) continue
-    assert.match(pin.version, SUPPORTED_DSH, `${pin.pkg}@${pin.version}: o PINO deste ficheiro esta fora da faixa 0.1.0-rc.7..rc.9 (06-REPO-E-CI.md)`)
+    assert.match(pin.version, SUPPORTED_DSH, `${pin.pkg}@${pin.version}: o PINO deste ficheiro esta fora de 0.1.0-rc.*|0.1.1-rc.* (06-REPO-E-CI.md)`)
     if (pin.tarballOnly === true) continue
     const installed = (JSON.parse(readText(join(ROOT, 'node_modules', pin.pkg, 'package.json'))) as { version: string }).version
-    assert.match(installed, SUPPORTED_DSH, `${pin.pkg}: INSTALADO ${installed}, fora da faixa 0.1.0-rc.7..rc.9. NAO pine por \`latest\`: nesta escala essa tag aponta para a publicacao mais antiga.`)
+    assert.match(installed, SUPPORTED_DSH, `${pin.pkg}: INSTALADO ${installed}, fora de 0.1.0-rc.*|0.1.1-rc.*. NAO pine por \`latest\`: nesta escala essa tag aponta para a publicacao mais antiga.`)
     assert.equal(installed, pin.version, `${pin.pkg}: instalado ${installed}, pino ${pin.version}`)
   }
 
   // (b) VARREDURA DO LOCKFILE INTEIRO. Os pinos diretos podem estar certos e o
-  // grafo arrastar a linha morta por um PEER resolvido: todos os `dsh-*@0.1.0-rc.8`
-  // declaram `peerDependencies: { '@deepseek-ai/dsh-invariants': '^0.1.0-rc.8' }`,
+  // grafo arrastar a linha morta por um PEER resolvido: todos os `dsh-*@0.1.1-rc.1`
+  // declaram `peerDependencies: { '@deepseek-ai/dsh-invariants': '^0.1.1-rc.1' }`,
   // e uma resolucao com politica de idade minima a rebaixar para `0.0.1-rc.5`
   // produz um lockfile que NAO satisfaz o proprio peer -- e que a CI instala.
   // Nenhum dos outros oito casos ve isto, porque so olham para os pinos diretos.
@@ -345,10 +352,12 @@ test('CONTRACT-008: dsh-host-frontend-static existe; dsh-host-frontend nao', asy
   assert.equal(existing, 200, `@deepseek-ai/dsh-host-frontend-static devia responder 200, respondeu ${existing}`)
   assert.equal(refuted, 404, `E4 regrediu: o registry respondeu ${refuted} para @deepseek-ai/dsh-host-frontend. O pacote real e @deepseek-ai/dsh-host-frontend-static.`)
 
-  // O harness que a faixa suportada persegue. Se `latest` do `dsh` sair da
-  // linha `0.1.0-rc.*`, a faixa de `06-REPO-E-CI.md` tem de ser revista ANTES
-  // de qualquer re-pino -- e este caso avisa em vez de deixar passar.
-  assert.match(tags['latest'] ?? '', /^0\.1\.0-rc\./, `@deepseek-ai/dsh latest = ${tags['latest']}: saiu da linha 0.1.0-rc.*. Reveja a faixa suportada em 06-REPO-E-CI.md antes de mexer nos pinos.`)
+  // O harness que a faixa suportada persegue. Revisao 2026-08-21
+  // (fix-upstream-011rc): `latest`/`next` entrou em `0.1.1-rc.1` e a faixa agora
+  // cobre N = `0.1.1-rc.*` e N-1 = `0.1.0-rc.*`. Se `latest` sair das DUAS linhas,
+  // a faixa de `06-REPO-E-CI.md` tem de ser revista ANTES de qualquer re-pino --
+  // e este caso avisa em vez de deixar passar.
+  assert.match(tags['latest'] ?? '', /^0\.1\.(0|1)-rc\./, `@deepseek-ai/dsh latest = ${tags['latest']}: saiu das linhas 0.1.0-rc.*|0.1.1-rc.*. Reveja a faixa suportada em 06-REPO-E-CI.md antes de mexer nos pinos.`)
 })
 
 /* ------------------------------------------------------------------------- */

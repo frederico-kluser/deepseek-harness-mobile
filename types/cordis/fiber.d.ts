@@ -4,7 +4,7 @@
  * DIVERGENCIAS DELIBERADAS: nenhuma -- copia byte-a-byte do tarball publicado.
  * TARBALL: https://registry.npmjs.org/@deepseek-ai/cordis/-/cordis-4.0.1.tgz
  * SHA256 : 31e96b8e13d5c55bfd4316c08ac8925510e0eed86d48a3a9cc86046623074613
- * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. rc.9 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
+ * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
  * NAO EDITAR A MAO: tudo abaixo desta linha e o que o pacote publicou (regra Q-1).
  */
 import type { Awaitable, Dict } from '@deepseek-ai/cosmokit';

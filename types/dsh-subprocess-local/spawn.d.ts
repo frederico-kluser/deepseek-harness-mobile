@@ -1,10 +1,10 @@
 /**
- * FONTE: @deepseek-ai/dsh-subprocess-local@0.1.0-rc.7, package/lib/types/spawn.d.ts
+ * FONTE: @deepseek-ai/dsh-subprocess-local@0.1.1-rc.1, package/lib/types/spawn.d.ts
  * VERIFICADO EM: 2026-08-20 por T0.1 (Onda 0, spike da API real do DSH)
  * DIVERGENCIAS DELIBERADAS: nenhuma -- copia byte-a-byte do tarball publicado.
- * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-subprocess-local/-/dsh-subprocess-local-0.1.0-rc.7.tgz
- * SHA256 : ce00c135e16ef8237f2027a677b71b0c21b5081a07eb6b671c95e78f9742c67f
- * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. rc.9 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
+ * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-subprocess-local/-/dsh-subprocess-local-0.1.1-rc.1.tgz
+ * SHA256 : 46a7d2429ae04aed56f5bdebff1a5c1d6cdf1e25b6ac2eeea52f5ab151de7502
+ * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
  * NAO EDITAR A MAO: tudo abaixo desta linha e o que o pacote publicou (regra Q-1).
  */
 /**

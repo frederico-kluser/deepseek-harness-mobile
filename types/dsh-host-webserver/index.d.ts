@@ -1,17 +1,17 @@
 /**
- * FONTE: @deepseek-ai/dsh-host-webserver@0.1.0-rc.7, package/lib/types/index.d.ts
+ * FONTE: @deepseek-ai/dsh-host-webserver@0.1.1-rc.1, package/lib/types/index.d.ts
  * VERIFICADO EM: 2026-08-20 por T0.1 (Onda 0, spike da API real do DSH)
  * DIVERGENCIAS DELIBERADAS: nenhuma -- copia byte-a-byte do tarball publicado.
- * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-host-webserver/-/dsh-host-webserver-0.1.0-rc.7.tgz
- * SHA256 : b5fee946c818859bd19d808b8aea492420a1e57e2a074f2f3a6d16ce943ca545
- * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. rc.9 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
+ * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-host-webserver/-/dsh-host-webserver-0.1.1-rc.1.tgz
+ * SHA256 : 9eabc7fd071590279be7329890547c5d00146f2633cf96fecfc6eb71015dc13b
+ * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
  * NAO EDITAR A MAO: tudo abaixo desta linha e o que o pacote publicou (regra Q-1).
  */
 /**
  * @deepseek-ai/dsh-host-webserver — Web route-registration plugin: a node:http
- * server plus the `webServer` service (HTTP and upgrade route registries,
- * index transform taps, and the single fallback seat for everything no route
- * claims). Knows no harness concepts and serves no files; the composing
+ * server plus the `webServer` service (HTTP and upgrade route registries, the
+ * structured index injection table with raw transform taps behind it, and the
+ * single fallback seat for everything no route claims). Knows no harness concepts and serves no files; the composing
  * application's frontend plugin owns dist serving through the fallback hook.
  * Web shape only — Electron loads dist over file:// and carries fetch over an
  * IPC bridge. This package never prints: the URL line belongs to the shell.
@@ -20,9 +20,22 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type IndexInjection } from './injections.ts';
+export { renderIndexInjections } from './injections.ts';
+export type { IndexInjection, IndexInjectionPlacement } from './injections.ts';
 declare module '@deepseek-ai/cordis' {
     interface Context {
         webServer: WebServer;
+    }
+    interface Events {
+        /**
+         * Collect the structured index injection table. Emitted on every index
+         * render and every worker boot-payload request; listeners push their
+         * current rows, so a row's data is read fresh at emit time.
+         * @param table - Mutable row table; listeners append in activation order.
+         * @mode emit
+         */
+        'webserver/index-inject'(table: IndexInjection[]): void;
     }
 }
 /** Route match kind: 'exact' matches the pathname verbatim; 'prefix' p matches p and p/<anything>. */
@@ -96,8 +109,9 @@ export declare class WebServer extends Service {
      */
     registerFallback(handler: WebRoute['handler']): () => void;
     /**
-     * Register an index.html transform, applied by the fallback owner to every
-     * index response ({@link applyIndexTaps}) in registration order.
+     * Register a raw-HTML index transform, the escape hatch for markup no
+     * {@link IndexInjection} row expresses: {@link renderIndex} applies taps in
+     * registration order after rendering the structured rows.
      * @param transform - pure html-to-html function.
      * @returns the disposer removing the transform.
      */
@@ -113,6 +127,20 @@ export declare class WebServer extends Service {
      * @returns the transformed body.
      */
     applyIndexTaps(html: string): string;
+    /**
+     * Gather the structured injection table: one `webserver/index-inject` emit,
+     * every subscriber pushes its current rows. Fresh per call, so subscribers
+     * read live state (module graph, theme preference) at emit time.
+     * @returns rows in subscriber activation order.
+     */
+    collectIndexInjections(): IndexInjection[];
+    /**
+     * Render one index.html body: the structured injection table first, then
+     * the raw `tapIndex` transforms over the result.
+     * @param html - the raw index.html body.
+     * @returns the transformed body.
+     */
+    renderIndex(html: string): string;
 }
 export default WebServer;
 //# sourceMappingURL=index.d.ts.map

@@ -1,10 +1,10 @@
 /**
- * FONTE: @deepseek-ai/dsh-subprocess@0.1.0-rc.7, package/lib/types/invariant.d.ts
+ * FONTE: @deepseek-ai/dsh-subprocess@0.1.1-rc.1, package/lib/types/invariant.d.ts
  * VERIFICADO EM: 2026-08-20 por T0.1 (Onda 0, spike da API real do DSH)
  * DIVERGENCIAS DELIBERADAS: nenhuma -- copia byte-a-byte do tarball publicado.
- * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-subprocess/-/dsh-subprocess-0.1.0-rc.7.tgz
- * SHA256 : 71d951f6d7f34076c9c8f30f931635e87fb2bed4b7959d46f5522016f0661b72
- * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. rc.9 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
+ * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-subprocess/-/dsh-subprocess-0.1.1-rc.1.tgz
+ * SHA256 : d68176f0cdd29fe0bf033d213d483d044df534cc21b747e374ec310a1e557b78
+ * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
  * NAO EDITAR A MAO: tudo abaixo desta linha e o que o pacote publicou (regra Q-1).
  */
 /** Package-owned invariant companion for the subprocess seam. @module @deepseek-ai/dsh-subprocess/invariant */

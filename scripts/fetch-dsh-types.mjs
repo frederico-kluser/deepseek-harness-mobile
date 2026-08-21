@@ -8,13 +8,13 @@
  *
  * QUAL LINHA DE VERSAO (leia isto antes de mexer nos pinos)
  * --------------------------------------------------------
- * A tag `latest` dos subpacotes `@deepseek-ai/dsh-*` esta ESTAGNADA na linha
- * `0.0.1-rc.*`, que NENHUMA composicao real usa. O harness `@deepseek-ai/dsh`
- * (`latest = 0.1.0-rc.7`) declara `@deepseek-ai/dsh-*: ^0.1.0-rc.7`, e o
- * resolvedor entrega `0.1.0-rc.8` -- a linha `next`. Pinar por `latest` mede
- * a API errada e produz um contrato verde contra codigo que ninguem executa.
- * A justificacao completa, com a tabela de dist-tags, esta em
- * `docs/spikes/api-dsh.md` seccao 1.
+ * A tag `latest` dos subpacotes `@deepseek-ai/dsh-*` aponta para a publicacao
+ * mais ANTIGA (`0.0.1-rc.*`), uma linha morta que NENHUMA composicao real usa.
+ * A linha viva e a 0.1.x: o harness `@deepseek-ai/dsh` (latest/next = 0.1.1-rc.1)
+ * declara `@deepseek-ai/dsh-*: ^0.1.1-rc.1`, e o resolvedor entrega 0.1.1-rc.1.
+ * Pinar por `latest` dos subpacotes mede a API errada e produz um contrato
+ * verde contra codigo que ninguem executa. A justificacao completa, com a
+ * tabela de dist-tags, esta em `docs/spikes/api-dsh.md` seccao 1.
  *
  * `@deepseek-ai/cordis` e a excecao: `4.0.1` e simultaneamente `latest` e o
  * que o harness pede (`^4.0.1`).
@@ -40,8 +40,14 @@ const REGISTRY = 'https://registry.npmjs.org'
 /** Data da verificacao registada no cabecalho de cada stub. */
 const VERIFIED_ON = '2026-08-20'
 
-/** Faixa de rc do DSH que este plugin suporta (`06-REPO-E-CI.md`, "Versoes suportadas"). */
-const SUPPORTED_RANGE = '@deepseek-ai/dsh 0.1.0-rc.7 .. rc.9'
+/**
+ * Faixa de rc do DSH que este plugin suporta (`06-REPO-E-CI.md` SS11.3, "N e N-1").
+ *
+ * Revisao 2026-08-21 (fix-upstream-011rc): `latest`/`next` de `@deepseek-ai/dsh` saiu
+ * da linha `0.1.0-rc.*` e entrou em `0.1.1-rc.1`. A faixa persegue N = `0.1.1-rc.*`
+ * (a linha que o harness declara em todos os subpacotes) e mantem N-1 = `0.1.0-rc.*`.
+ */
+const SUPPORTED_RANGE = '@deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1'
 
 /**
  * Pinos exatos + digest do tarball. `files` lista os `.d.ts` copiados de
@@ -62,36 +68,38 @@ const PINS = [
   },
   {
     pkg: '@deepseek-ai/dsh-host-webserver',
-    version: '0.1.0-rc.7',
-    sha256: 'b5fee946c818859bd19d808b8aea492420a1e57e2a074f2f3a6d16ce943ca545',
+    version: '0.1.1-rc.1',
+    sha256: '9eabc7fd071590279be7329890547c5d00146f2633cf96fecfc6eb71015dc13b',
     dir: 'dsh-host-webserver',
-    files: ['index.d.ts', 'invariant.d.ts'],
+    // 0.1.1-rc.1 adiciona injections.d.ts (IndexInjection/IndexInjectionPlacement),
+    // que index.d.ts importa e reexporta; tem de ser espelhado ou o typecheck falha.
+    files: ['index.d.ts', 'injections.d.ts', 'invariant.d.ts'],
   },
   {
     pkg: '@deepseek-ai/dsh-subprocess',
-    version: '0.1.0-rc.7',
-    sha256: '71d951f6d7f34076c9c8f30f931635e87fb2bed4b7959d46f5522016f0661b72',
+    version: '0.1.1-rc.1',
+    sha256: 'd68176f0cdd29fe0bf033d213d483d044df534cc21b747e374ec310a1e557b78',
     dir: 'dsh-subprocess',
     files: ['index.d.ts', 'types.d.ts', 'invariant.d.ts'],
   },
   {
     pkg: '@deepseek-ai/dsh-subprocess-local',
-    version: '0.1.0-rc.7',
-    sha256: 'ce00c135e16ef8237f2027a677b71b0c21b5081a07eb6b671c95e78f9742c67f',
+    version: '0.1.1-rc.1',
+    sha256: '46a7d2429ae04aed56f5bdebff1a5c1d6cdf1e25b6ac2eeea52f5ab151de7502',
     dir: 'dsh-subprocess-local',
     files: ['index.d.ts', 'spawn.d.ts', 'process-inspector.d.ts'],
   },
   {
     pkg: '@deepseek-ai/dsh-host-frontend-static',
-    version: '0.1.0-rc.7',
-    sha256: 'c0c7364e47f9ad99395a38b0fe801e81cd009ffcada527571fd7e8a51b96ccb5',
+    version: '0.1.1-rc.1',
+    sha256: 'fd29723bfb8f214ec258c386ecf10256791d289901af2348ef41c0b19f8bba4e',
     dir: 'dsh-host-frontend-static',
     files: ['index.d.ts', 'invariant.d.ts'],
   },
   {
     pkg: '@deepseek-ai/dsh-home-paths',
-    version: '0.1.0-rc.7',
-    sha256: 'a496c60906b636f1236b2a9de00217e7f5c85a1547066e733e7bba1795c41484',
+    version: '0.1.1-rc.1',
+    sha256: '4d31051c845b7ca97b3830d263b1be1fc7c8466753c91ae456c802b3c9994e9c',
     dir: 'dsh-home-paths',
     files: ['index.d.ts', 'invariant.d.ts'],
   },

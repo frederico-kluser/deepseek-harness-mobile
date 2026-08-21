@@ -1,10 +1,10 @@
 /**
- * FONTE: @deepseek-ai/dsh-host-webserver@0.1.0-rc.7, package/lib/types/invariant.d.ts
+ * FONTE: @deepseek-ai/dsh-host-webserver@0.1.1-rc.1, package/lib/types/invariant.d.ts
  * VERIFICADO EM: 2026-08-20 por T0.1 (Onda 0, spike da API real do DSH)
  * DIVERGENCIAS DELIBERADAS: nenhuma -- copia byte-a-byte do tarball publicado.
- * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-host-webserver/-/dsh-host-webserver-0.1.0-rc.7.tgz
- * SHA256 : b5fee946c818859bd19d808b8aea492420a1e57e2a074f2f3a6d16ce943ca545
- * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. rc.9 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
+ * TARBALL: https://registry.npmjs.org/@deepseek-ai/dsh-host-webserver/-/dsh-host-webserver-0.1.1-rc.1.tgz
+ * SHA256 : 9eabc7fd071590279be7329890547c5d00146f2633cf96fecfc6eb71015dc13b
+ * FAIXA SUPORTADA: @deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1 (06-REPO-E-CI.md). Regenerar: `pnpm types:fetch`.
  * NAO EDITAR A MAO: tudo abaixo desta linha e o que o pacote publicou (regra Q-1).
  */
 /**
