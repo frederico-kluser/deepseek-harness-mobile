@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- 2d47ab8: Correção do boot sem token do Telegram (commits bdb128f/b1e2da2).
+  
+  Instalação nova seguindo docs/INSTALL.md (add → `dsh web`, sem `TELEGRAM_BOT_TOKEN`)
+  falhava porque src/config/assert.ts recusava `worker.token` vazio, contradizendo o
+  contrato do `cordis.patch.yml` (vazio = "telegram não configurado" = arranca).
+  
+  Agora token vazio/ausente é válido: o Telegram fica desativado, com a mensagem
+  "telegram: não configurado — rode /parear <código> no bot". Token não-string
+  continua a ser recusado, e o worker do Telegram só é iniciado quando há token
+  presente. +4 testes.
+- 1027db7: Exemplo de changeset para a release 0.1.0 (primeira publicacao publica do plugin:
+  0.1.x e o ramo de versao enquanto o DSH estiver em developer preview, ver
+  docs/plano/06-REPO-E-CI.md secao 7.3).
+  
+  Regras do changeset neste repositorio:
+  - cada PR que mexe no produto (src/, worker/, test/, cordis.patch.yml) DEVE trazer
+    um ficheiro `.changeset/*.md` com um bump explicitamente escolhido — `patch`,
+    `minor` ou `major` — porque `1.0.0` so e promessa, nao inferencia de prefixo de
+    commit (06-REPO-E-CI.md secao 7.2).
+  - em `0.x` o `minor` e o bump que quebra instalacao existente; `patch` e o que
+    nao quebra (adaptacao a nova rc do DSH, feature retrocompativel, correcao de
+    seguranca).
+
 Todas as mudanças notáveis em `dsh-guarded-bot-orchestrator` são documentadas neste arquivo.
 
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto adere ao

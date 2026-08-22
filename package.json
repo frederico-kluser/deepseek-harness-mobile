@@ -1,6 +1,6 @@
 {
   "name": "dsh-guarded-bot-orchestrator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Plugin Cordis para o DeepSeek Harness v0.1: interceta a camada HTTP (auth barrier sobre o fallback da Web UI) e orquestra subprocessos de longa duracao com ciclo de vida reversivel.",
   "license": "MIT",
   "private": false,
