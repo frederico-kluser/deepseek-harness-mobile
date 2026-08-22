@@ -144,7 +144,7 @@
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
     <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.1.0 · 2026-08-20</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.1.0 · 2026-08-22</span>
   </div>
 </nav>
 
@@ -153,10 +153,10 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Plano completo do plugin dsh-guarded-bot-orchestrator: do reconhecimento da API real do DSH ao empacotamento e release, em 8 ondas com gates em cada squash-merge</p>
+    <p class="lead text-white-50 mb-3">Instalacao e teste do plugin dsh-guarded-bot-orchestrator num DSH real (isolado), fix do boot sem token do Telegram (contrato INSTALL.md/cordis.patch.yml), registro de corrida em docs/manual-runs/</p>
     <div class="d-flex flex-wrap gap-2">
       <span class="badge badge-accent">v0.1.0</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-20</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-22</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
   </header>
@@ -213,7 +213,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Plano completo do plugin dsh-guarded-bot-orchestrator: do reconhecimento da API real do DSH ao empacotamento e release, em 8 ondas com gates em cada squash-merge</p>
+      <p class="text-body-secondary">Instalacao e teste do plugin dsh-guarded-bot-orchestrator num DSH real (isolado), fix do boot sem token do Telegram (contrato INSTALL.md/cordis.patch.yml), registro de corrida em docs/manual-runs/</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -225,7 +225,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">8</div>
+              <div class="display-6 fw-bold stat-value">2</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">34</div>
+              <div class="display-6 fw-bold stat-value">2</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -243,7 +243,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">67</div>
+              <div class="display-6 fw-bold stat-value">3</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -254,7 +254,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders 0.1.0, 2026-08-20, main, ...</code></pre>
+# Ou preenche manualmente os placeholders 0.1.0, 2026-08-22, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -292,17 +292,10 @@
       <h2 class="h4 pane-title">Ondas executadas</h2>
       <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
-<h3>Ondas 0-7 + COMMIT PREPs + subwaves</h3>
-<table><tr><th>Fase</th><th>O que entregou</th><th>Gates</th></tr>
-<tr><td>PREPs 0-7</td><td>Contratos congelados antes de cada onda: tipos reais, dubleis, estado/segredo/sessao, tunel, IPC, controlo+nonce, 50 mutantes+politica, PROIBIDO+exports+repository</td><td>commits proprios (regra 0.4 — 67 commits totais)</td></tr>
-<tr><td>Onda 0</td><td>5 spikes que mediram o DSH real e fecharam S1/S2/S3/S4/S5/S7/S8/S9/S10/S11/S12</td><td>vereditos arquivados em docs/spikes</td></tr>
-<tr><td>Onda 1</td><td>API real, modularizacao (monolito 1836 linhas para ~60 ficheiros), tooling/CI, bundle+profile, higiene do repo (SECURITY.md+PVR)</td><td>gate lint/typecheck/build/test</td></tr>
-<tr><td>Onda 2</td><td>Primitivas de auth: estado persistente, segredo 256 bits, sessao+cookie __Host-, rate limit NIST, audit append-only</td><td>95%+ linhas nos modulos de decisao</td></tr>
-<tr><td>Onda 3</td><td>Tunel: supervisor com probe fail-closed de 4 sondas, TTL, descoberta da URL, gate com sessao, painel /__guard</td><td>401 pela URL publica / 200 com sessao</td></tr>
-<tr><td>Onda 4</td><td>Telegram: onboarding CLI, worker grammy, canal IPC JSONL com dead-man switch, allowlist+2 etapas</td><td>SIGKILL -> worker morto em menos de 2s</td></tr>
-<tr><td>Onda 5</td><td>Liga/desliga: controlador unico, superficies Telegram/painel/UI nativa, auditoria+notificacao, costura (nonce IPC, paridade 3 superficies)</td><td>CTL-001..040, LIFE-001..023, 1671 testes</td></tr>
-<tr><td>Onda 6</td><td>e2e offline (tunel, telegram fake-api, ciclo-vida), suite adversarial de 137 testes, checklist dos 50 mutantes, Stryker via tap-runner</td><td>test:e2e sem rede, pgrep vazio, ADV-001..059</td></tr>
-<tr><td>Onda 7</td><td>Empacotamento (exports/tarball/attw), release OIDC+changesets, docs de usuario, material de divulgacao</td><td>package:check, PROIBIDO limpo, tarball importavel</td></tr>
+<table>
+<tr><th>Onda</th><th>Worktree</th><th>Tarefa</th><th>Entrega</th><th>Status</th></tr>
+<tr><td>1</td><td>onda1-instalacao-teste</td><td>Instalar e testar o plugin num DSH isolado</td><td>docs/manual-runs/2026-08-22-instalacao-teste.md (registro da corrida)</td><td>Merged df1a3b9 + gate verde-em-diff</td></tr>
+<tr><td>2</td><td>onda2-fix-boot-tokenless</td><td>Fix boot sem token do Telegram (contrato cordis.patch.yml)</td><td>src/config/assert.ts, src/index.ts, +4 testes</td><td>Merged 301fdc8 + gate + boot tokenless validado</td></tr>
 </table>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
@@ -319,83 +312,23 @@
       <h2 class="h4 pane-title">Arquivos modificados</h2>
       <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
-      <!-- FILES_TABLE begin (não preenchido — conteúdo demo do template) -->
-      <div class="table-responsive">
-        <table class="table table-hover align-middle">
-          <thead>
-            <tr>
-              <th scope="col">Arquivo</th>
-              <th scope="col">Tipo</th>
-              <th scope="col" class="text-end">Diff</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>scripts/brave-search.sh</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+310</td>
-            </tr>
-            <tr>
-              <td><code>scripts/check-brave-credits.sh</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+98</td>
-            </tr>
-            <tr>
-              <td><code>prompts/ecc-prompts.md</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+340</td>
-            </tr>
-            <tr>
-              <td><code>prompts/ecc-skills.md</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+315</td>
-            </tr>
-            <tr>
-              <td><code>prompts/search-prompts.md</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+420</td>
-            </tr>
-            <tr>
-              <td><code>templates/html-explainer.html</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+520</td>
-            </tr>
-            <tr>
-              <td><code>SKILL.md</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end"><span class="diff-plus">+140</span> <span class="diff-minus">−45</span></td>
-            </tr>
-            <tr>
-              <td><code>README.md</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end"><span class="diff-plus">+85</span> <span class="diff-minus">−15</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — valores aproximados, substituídos na geração.</p>
-      <!-- FILES_TABLE end (não preenchido — conteúdo demo do template) -->
+<table>
+<tr><th>Arquivo</th><th>Mudança</th><th>Onda</th></tr>
+<tr><td>docs/manual-runs/2026-08-22-instalacao-teste.md</td><td>Novo — registro da corrida de instalação e teste (210 linhas)</td><td>1</td></tr>
+<tr><td>src/config/assert.ts</td><td>Validacão de worker.token: vazio/ausente válido; não-string continua a falhar loud</td><td>2</td></tr>
+<tr><td>src/index.ts</td><td>Guarda de boot no efeito do worker: sem token → linha "telegram: não configurado — rode /parear &lt;código&gt; no bot" + disposer no-op, sem spawn</td><td>2</td></tr>
+<tr><td>test/unit/config/assert.test.ts</td><td>+3 testes (token vazio válido / ausente válido / não-string recusado)</td><td>2</td></tr>
+<tr><td>test/unit/index.test.ts</td><td>+1 teste (boot tokenless: sem worker, 5 efeitos, linha emitida, disposer síncrono)</td><td>2</td></tr>
+</table>
 
       <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
-      <!-- COMMITS_LIST begin (não preenchido — conteúdo demo do template) -->
-      <ul class="list-group list-group-flush">
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">a1b2c3d</span>
-          <div><strong>Onda 1:</strong> scripts de busca Brave e verificação de créditos + prompts ECC e de busca</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">e4f5g6h</span>
-          <div><strong>Onda 2:</strong> templates/html-explainer.html + SKILL.md atualizado</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">i7j8k9l</span>
-          <div><strong>Onda 3:</strong> README.md — documentação final</div>
-        </li>
-      </ul>
-      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — hashes fictícios, substituídos na geração.</p>
-      <!-- COMMITS_LIST end (não preenchido — conteúdo demo do template) -->
+<ul>
+<li><code>df1a3b9</code> — onda1-instalacao-teste: registro da corrida de instalacao e teste do plugin</li>
+<li><code>301fdc8</code> — onda2-fix-boot-tokenless: boot sem token do Telegram (contrato cordis.patch.yml); guarda de boot no worker; +4 testes</li>
+<li><code>final</code> — EXPLAINER.html desta execução</li>
+</ul>
     </div>
 
     <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
@@ -404,37 +337,12 @@
       <h2 class="h4 pane-title">De-Para: o que mudou</h2>
       <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
 
-      <!-- BEFORE_AFTER begin (não preenchido — conteúdo demo do template) -->
-      <!-- Cards Antes/Depois e seções de de-para adicionais geradas
-           dinamicamente entram aqui (substituídos na geração). -->
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
-            <div class="card-body">
-              <p class="card-text text-body-secondary">Estado inicial — descrição genérica, substituída na geração.</p>
-              <ul class="list-unstyled mb-0 d-grid gap-2">
-                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Item representativo do estado inicial</li>
-                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Segundo item representativo</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
-            <div class="card-body">
-              <p class="card-text text-body-secondary">Estado final — descrição genérica, substituída na geração.</p>
-              <ul class="list-unstyled mb-0 d-grid gap-2">
-                <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Item representativo do estado final</li>
-                <li><i class="bi bi-file-earmark-code me-2 text-body-secondary"></i>Segundo item representativo</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos dados reais.</p>
-      <!-- BEFORE_AFTER end (não preenchido — conteúdo demo do template) -->
+<table>
+<tr><th>Arquivo</th><th>Antes</th><th>Depois</th></tr>
+<tr><td>src/config/assert.ts</td><td><code>assertNonEmptyString(config.worker.token, 'worker.token')</code> — token vazio/ausente derrubava o arranque, contradizendo o contrato (INSTALL.md: Telegram é opcional)</td><td>Valida tipo apenas quando presente; '' / undefined = "telegram não configurado" (estado legítimo); não-string continua erro de config</td></tr>
+<tr><td>src/index.ts (efeito do worker)</td><td>Supervisor do worker criado e startado incondicionalmente</td><td>Guard <code>if (!config.worker.token)</code> → loga "telegram: não configurado — rode /parear &lt;código&gt; no bot" e devolve disposer no-op síncrono; com token, caminho inalterado</td></tr>
+<tr><td>docs/manual-runs/2026-08-22-instalacao-teste.md</td><td>Não existia</td><td>Registro da corrida de instalação/teste: gate local, examples/minimal, instalação isolada, barreira 401, bind recusado, teardown e achados</td></tr>
+</table>
 
       <h2 class="h4 pane-title">Impacto</h2>
       <p>O que cada mudança significa para quem usa o deep-orchestrator:</p>
@@ -457,12 +365,38 @@
       <!-- IMPACT end (não preenchido — conteúdo demo do template) -->
 
       <h2 class="h4 pane-title">Novas capacidades</h2>
-<h3>Os 4 itens do pedido — como se provam</h3><ul>
-<li><b>(a) Guiar no Telegram</b>: onboarding em 4 estados com proximo passo emitido (TG-060..072, PAIR-001..010), roteiro M1.</li>
-<li><b>(b) Tunel + LINK</b>: descoberta pelos dois caminhos, entrega com aviso de URL publica (PWR-12), TTL, e2e com processos reais (tunnel-cycle), live opt-in.</li>
-<li><b>(c) SENHA</b>: 256 bits CSPRNG, so digest em disco 0600, sessao __Host-, rate limit NIST, SEC-14 (nunca pelo Telegram), canario ADV-050..059.</li>
-<li><b>(d) LIGAR/DESLIGAR pelo bot E pela UI</b>: controlador unico, paridade das TRES superficies (CTL-040), corrida com um unico cloudflared, convergencia real.</li>
-</ul>
+      <!-- CAPABILITIES begin (não preenchido — conteúdo demo do template) -->
+      <div class="row g-3">
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-stars fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Capacidade 1</h3>
+              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-stars fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Capacidade 2</h3>
+              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-stars fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Capacidade 3</h3>
+              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas capacidades reais.</p>
+      <!-- CAPABILITIES end (não preenchido — conteúdo demo do template) -->
     </div>
 
     <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
@@ -471,15 +405,15 @@
       <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
-<h3>Decisoes tomadas autonomamente (registro)</h3><ul>
-<li><b>Faixa de upstream N/N-1</b>: o DSH publicou 0.1.1-rc.1 — tripwire CONTRACT-008 disparado; decisao do runbook: 0.1.0-rc.7..0.1.1-rc.1, types regenerados byte-exact, API aditiva (adapter intocado).</li>
-<li><b>Vocabulario de auditoria fecha sobre a realidade</b> (fix integracao): tunel_emergencia / tunel_intent_nao_pareado / tunel_orfao_derrubado na uniao; notificacao de toggle fiada (append-primeiro); PENDENTES declaradas honestamente.</li>
-<li><b>ULID unico monotonico</b> em src/ulid.ts (as duas superficies partilham a mesma fabrica).</li>
-<li><b>Emergency sem unhandled rejection</b>: .catch nas promises derivadas + try/catch no despacho sincrono — o kill switch nunca falha em silencio.</li>
-<li><b>BLOCK do revisor de T7.2 classificado como falso positivo de snapshot</b>: o handoff declarado (T7.1 aplica @changesets/cli por ultimo) confirmado no estado integrado (changeset 3.0.1 funcional).</li>
-<li><b>PROIBIDO.md como lista de frases</b> (formato -f) com racional separado; scan de aceite escopado a material publico (docs/plano e spikes sao fontes da refutacao).</li>
-<li><b>Gate de snapshot fora da secao critica</b> (D1): builds duplicados esperados entre snapshot/validacao/gate final.</li>
-<li><b>Flaky registado</b>: dead-mans-switch (2s) e discover (race) sob carga — pre-existentes, sem reproducao isolada.</li>
+<ul>
+<li><strong>J1 (gate)</strong> — as 22 falhas locais (16-9 por execução, variância ambiental) são AMBIENTE (root contorna chmod 000; macOS sem /proc; timing): pré-existentes em main; as diffs são um .md e um fix com testes — verde-em-diff / vermelho-ambiente documentado.</li>
+<li><strong>D2</strong> — Onda 1 (apenas doc): testing e validation subwaves NO-OP; gate completo no COMMIT-FINAL.</li>
+<li><strong>D3</strong> — Onda 2 (fix com testes + aceitação real no próprio agente): subwaves dobradas — a validação pós-merge foi o re-boot tokenless no snapshot de integração + gate em snapshot.</li>
+<li><strong>PREMISSA-1</strong> — instalação/teste em DSH_HOME ISOLADO dentro das worktrees; o profile live (~/.dsh/profiles/web) e o servidor 3080 não foram tocados (a sessão roda nele).</li>
+<li><strong>PREMISSA-2</strong> — o CLI do DSH foi executado (somente leitura) do artefato compilado do checkout-fonte; git status dele limpo no início e no fim (provado em cada onda).</li>
+<li><strong>LINHA-RC.2</strong> — o teste validou o plugin por FORMA de serviço na linha que esta máquina roda (0.1.1-rc.2, uma rc além da faixa suportada rc.7..rc.1): boot OK, barreira 401, bind recusado. Documentado; sem incompatibilidade observada.</li>
+<li><strong>ACHADO (host)</strong> — o LoggerService do cordis@4.0.1 bufferiza as linhas [guarded-bot]; a visibilidade no terminal depende de console-export que o host default não tem (afeta todas as linhas do plugin e as do host web). Fora do escopo.</li>
+<li><strong>HYGIENE (tipo)</strong> — src/config/schema.ts:154 declara token: string obrigatório a nível de tipo; semanticamente virou opcional. Runtime correto (schema type-only); anotação fica como pendência de higiene, não bloqueia.</li>
 </ul>
     </div>
 
@@ -489,45 +423,19 @@
       <h2 class="h4 pane-title">Linha do tempo da execução</h2>
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
-      <!-- TIMELINE begin (não preenchido — conteúdo demo do template) -->
-      <ol class="timeline list-unstyled mb-0">
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Fase 1</span>
-            <strong>ANALYZE</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Leitura do prompt, mapeamento do repositório, classificação greenfield/brownfield.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Fase 2</span>
-            <strong>PLAN</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Decomposição em sub-tarefas atômicas, ondas topológicas, mapa de propriedade de arquivos, TASK_PLAN.md publicado.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Fase 3</span>
-            <strong>EXECUTE-ONDA</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Onda 1 — scripts + prompts · Onda 2 — templates/ + SKILL.md. Worktrees nomeadas, barreira, revisão adversarial, squash-merge com gate, limpeza.</p>
-        </li>
-        <li class="timeline-item">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-ok">Fase 4</span>
-            <strong>COMMIT-FINAL</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">TASK_PLAN.md removido, gate completo, commit final, varredura de limpeza, EXPLAINER.html gerado (este documento).</p>
-        </li>
-      </ol>
-      <p class="text-body-secondary small mt-3">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pela timeline real da execução.</p>
-      <!-- TIMELINE end (não preenchido — conteúdo demo do template) -->
+<ol>
+<li>FASE 0 — fronteira resolvida (repo do plugin, MODE=normal, branch main).</li>
+<li>Análise: DSH real da máquina (0.1.1-rc.2, source build), CLI compilado, bundles resolvidos do fonte, profile live intocado.</li>
+<li>Onda 1 — build + suítes + examples/minimal (ACEITE OK) + instalação isolada + barreira HTTP/WS + bind; achado: boot tokenless quebrado (assert.ts:404). Registro aprovado em revisão adversarial.</li>
+<li>Onda 2 — fix cirúrgico (assert + guard de worker + 4 testes), revisado (APPROVE), mergeado; re-boot tokenless no estado integrado: 401 sem credencial, sem worker, teardown limpo.</li>
+<li>COMMIT-FINAL — gate completo, EXPLAINER.html, commit stage-delta, teardown do estado.</li>
+</ol>
     </div>
 
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator</strong> v0.1.0 · 2026-08-20 · branch main.
+    Gerado por <strong>deep-orchestrator</strong> v0.1.0 · 2026-08-22 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
