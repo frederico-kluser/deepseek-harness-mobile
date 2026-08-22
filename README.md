@@ -27,6 +27,23 @@ dsh plugin --profile web add dsh-guarded-bot-orchestrator
 >
 > Detalhe e o que cada mitigação faz: [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
+## Modelo de segurança (o que o código garante de facto)
+
+Leitura honesta das garantias — cada linha aponta para o código que a cumpre; nada aqui é
+"seguro por padrão sem pensar", é redução de superfície e autenticação.
+
+| Propriedade | Como |
+| --- | --- |
+| **O bind nunca é alargado** | `assertSecureBind` recusa `0.0.0.0`/`::` **no carregamento**, com falha ruidosa (`src/config/bind.ts`) |
+| **Toda a superfície HTTP exige credencial** | `/api`, o fallback da SPA e o handshake de WebSocket passam pelo mesmo portão (`src/http/gate.ts`) |
+| **Origem e Host vêm primeiro** | `trustedRemotes` (403 sem credencial) e `Host` byte-a-byte contra DNS rebinding, antes da credencial — ordem é contrato (`src/http/gate.ts:15`, `src/http/host-header.ts`) |
+| **Senha gerada, nunca guardada em claro** | CSPRNG 256 bits, apresentada uma única vez (texto + QR); em disco fica só o digest SHA-256, ficheiro `0600` (`src/secret/*`) |
+| **Senha nunca passa por canal remoto** | entrega local (terminal/QR) ou token de uso único impresso no stdout do arranque — nem Telegram, nem túnel (invariante SEC-14) |
+| **Força bruta tem teto** | a 5ª falha começa a atrasar; 100 falhas acumuladas derrubam a exposição (modo restrito), só o loopback passa e o reiniciar não o contorna (`src/ratelimit/**`) |
+| **Comparação de segredo em tempo constante** | digest em tempo constante, com prova estatística na suíte (`src/http/auth-basic.ts`, `test/security/timing-constante.test.ts`) |
+| **`danger-full-access` vetado** | elevação proibida recusada como defesa em profundidade (`src/permissions/deny.ts`) |
+| **Só o dono pareado comanda o bot** | allowlist de `from.id` do Telegram (`worker/auth/allowlist.ts`) |
+| **O que NÃO se garante** | o TLS termina na borda da Cloudflare (texto claro passa por lá); a URL do túnel não é segredo; *prompt injection* continua aceite — decisões de desenho em [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) §4 |
 ## A tensão central, dita por nós antes que digam por nós
 
 O projeto foi construído para **travar** o DSH em loopback. Este plugin também o **expõe** pela internet. Parece contradição — e a formulação honesta é esta:
@@ -45,6 +62,28 @@ Quem não aceitar esta troca deve usar Tailscale ou SSH — e dizemo-lo com mais
 4. **Ligar/desligar pelo Telegram ou painel** — o botão de matar na mão.
 
 Cada promessa destas aponta para a linha de código que a cumpre: ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Como flui um pedido (arquitetura em 8 linhas)
+
+```
+Telemóvel (navegador)
+   │  abre https://<subdomínio>.trycloudflare.com/?key=<senha>   (lê o QR do terminal)
+   ▼
+❨ Cloudflare edge ❩   TLS → HTTP/2 → WebSocket ; o TLS termina AQUI (texto claro passa pela borda)
+   ▼
+cloudflared — quick tunnel (conexão de saída apenas, sem conta, sem SLA)
+   ▼  http://127.0.0.1:3080   (o túnel termina no loopback; o socket local NÃO é alargado)
+plugin (portão)
+   │  exige credencial em /api, no fallback da SPA e no handshake de WebSocket
+   │  403 origem/ Host fora da allowlist · 401 sem credencial · 200 com sessão
+   ▼
+DeepSeek Harness Web UI — bind travado em 127.0.0.1 (nunca 0.0.0.0)
+```
+
+O que o diagrama esconde e é decisivo: a senha é **gerada pela máquina** (CSPRNG, 256 bits) e
+entregue **uma única vez** em texto + QR; em disco fica só o digest. A recusa de bind fora do
+loopback acontece **no carregamento**, com falha ruidosa — ver o mapa de módulos em
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quickstart (5 comandos)
 
@@ -96,6 +135,30 @@ Em suma: isto **não é "mais um túnel"** — é o fluxo completo de um dono s�
 Faixa suportada do upstream `@deepseek-ai/dsh`: **`0.1.0-rc.7 .. 0.1.1-rc.1`** (política N/N-1). A tabela completa — versão do plugin × faixa de rc × status — está em [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md), que é **gerado** de `dsh-compat.yml` (nunca editado à mão).
 
 > Atenção ao registry: a tag `latest` dos subpacotes `@deepseek-ai/dsh-*` aponta para a publicação **mais antiga**, não para a mais recente. Fixa a versão explicitamente.
+
+## Validação end-to-end (o que a suíte prova de verdade)
+
+Matriz de alto nível a partir das suítes **reais** do repo — `test/e2e/**`, `test/security/**`, `test/integration/**`
+— referidas por ficheiro. São verificações que o CI corre, não promessas; o detalhe de cada nível e como correr
+está em [`docs/TESTING.md`](docs/TESTING.md).
+
+| Check | Expected | Onde está verificado |
+| --- | --- | --- |
+| `curl` sem credencial a `/api/commands/execute` | `401` (o portão dispara; o despacho original **não** é alcançado) | `test/integration/http/barreira.test.ts` + a ordem origem → `Host` → credencial em `test/security/panel-exemptions.test.ts` |
+| Com sessão válida (cookie) ou Basic Auth | `200`, resposta vem do despacho original | `test/e2e/tunnel-cycle.test.ts` |
+| Pedido pela URL do túnel sem credencial | `401` com `WWW-Authenticate`; após `stop`, o mesmo pedido devolve `403` e o direto ao loopback `401` | `test/e2e/tunnel-cycle.test.ts` (discriminador 401/403) |
+| Handshake de WebSocket de origem estranha (ex.: `https://evil.com`) | recusado — allowlist exata de `Origin` (CWE-1385) | `test/security/websocket-origin.test.ts` |
+| Rota contornada (`/..//api`, `%2e`, barras duplicadas, `/__guard/API/login`) | uniforme `401/403/404`, nunca pass-through | `test/security/path-bypass.test.ts` (ADV-001..020) |
+| `Host` que não é o publicado / DNS rebinding | `403` no perímetro, byte-a-byte | `test/security/host-header.test.ts`, `test/e2e/tunnel-cycle.test.ts` |
+| 100.ª falha de força bruta | modo restrito acende, **persiste** após reinício, credencial pelo túnel negada e a do loopback passa | `test/security/nist-ceiling.test.ts` |
+| Segredo a vazar (logs, respostas, frames IPC, payloads do Telegram, env, state) | canário por valor falha se vazar | `test/security/secret-leak-canary.test.ts` (ADV-050..059) |
+| A comparação de segredo vaza tempo? | prova estatística de tempo constante | `test/security/timing-constante.test.ts` |
+| Ciclo completo do túnel com processos reais | start → READY → 401/200 pela URL → stop → 403, **sem processo órfão** | `test/e2e/tunnel-cycle.test.ts` (T6.1) |
+
+Honestidade sobre o que esta matriz **não** é: o e2e usa um *fake-cloudflared* e uma borda
+falsa — **nenhum byte sai de `127.0.0.1` no CI**, por construção. A re-confirmação **através** da borda
+e da rede reais é a suíte `test/live/**` (`DSH_GUARD_LIVE_TESTS=1`), opt-in e fora do gate —
+ver `docs/TESTING.md` §5.
 
 ## Desinstalar e reverter
 
