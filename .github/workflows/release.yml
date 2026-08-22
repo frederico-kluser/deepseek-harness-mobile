@@ -117,8 +117,8 @@ jobs:
       - name: Changesets version + publish (OIDC)
         uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
         with:
-          version: pnpm exec changeset version
-          publish: pnpm exec changeset publish
+          version-script: pnpm exec changeset version
+          publish-script: pnpm exec changeset publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # SEM NPM_TOKEN em lugar nenhum — 06-REPO-E-CI.md secao 8.2.
