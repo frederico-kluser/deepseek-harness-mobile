@@ -144,7 +144,7 @@
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
     <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.1.0 · 2026-08-19</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.1.0 · 2026-08-20</span>
   </div>
 </nav>
 
@@ -153,10 +153,10 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Plugin TypeScript nativo para o DeepSeek Harness v0.1: interceptação HTTP por middleware reversível do Cordis, orquestração atômica de um worker de long-polling com tree-kill real, e manifesto cordis.patch.yml seguro na camada Profile.</p>
+    <p class="lead text-white-50 mb-3">Plano completo do plugin dsh-guarded-bot-orchestrator: do reconhecimento da API real do DSH ao empacotamento e release, em 8 ondas com gates em cada squash-merge</p>
     <div class="d-flex flex-wrap gap-2">
       <span class="badge badge-accent">v0.1.0</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-19</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-20</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
   </header>
@@ -213,7 +213,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Plugin TypeScript nativo para o DeepSeek Harness v0.1: interceptação HTTP por middleware reversível do Cordis, orquestração atômica de um worker de long-polling com tree-kill real, e manifesto cordis.patch.yml seguro na camada Profile.</p>
+      <p class="text-body-secondary">Plano completo do plugin dsh-guarded-bot-orchestrator: do reconhecimento da API real do DSH ao empacotamento e release, em 8 ondas com gates em cada squash-merge</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -225,7 +225,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">3</div>
+              <div class="display-6 fw-bold stat-value">8</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">8</div>
+              <div class="display-6 fw-bold stat-value">34</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -243,7 +243,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">6</div>
+              <div class="display-6 fw-bold stat-value">67</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -254,7 +254,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders 0.1.0, 2026-08-19, main, ...</code></pre>
+# Ou preenche manualmente os placeholders 0.1.0, 2026-08-20, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -292,15 +292,18 @@
       <h2 class="h4 pane-title">Ondas executadas</h2>
       <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
-<table>
-<thead><tr><th>Onda</th><th>Worktree</th><th>Entrega</th><th>Resultado</th></tr></thead>
-<tbody>
-<tr><td>1</td><td>onda1-tipagem-e-scaffold</td><td>package.json ESM strict, tsconfig+paths, 3 pacotes de tipos locais <code>@deepseek-ai/*</code>, smoke-test de contrato</td><td>Gate verde</td></tr>
-<tr><td>1</td><td>onda1-manifesto-patch</td><td><code>cordis.patch.yml</code> (camada Profile, whole-entry replace, segredos via <code>!!js</code>) + README</td><td>Gate verde</td></tr>
-<tr><td>2</td><td>onda2-plugin-interceptor</td><td><code>src/index.ts</code> (plugin completo) + 49 testes</td><td>Gate verde, depois BLOCK na revisão</td></tr>
-<tr><td>2</td><td>onda2-fix-manifesto-seguranca</td><td>Fecha 9 achados da revisão da onda 1</td><td>Gate verde</td></tr>
-<tr><td>3</td><td>onda3-fix-zumbi-e-bypass</td><td>Fecha 17 achados das duas revisões da onda 2</td><td>Gate verde, 92 testes</td></tr>
-</tbody></table>
+<h3>Ondas 0-7 + COMMIT PREPs + subwaves</h3>
+<table><tr><th>Fase</th><th>O que entregou</th><th>Gates</th></tr>
+<tr><td>PREPs 0-7</td><td>Contratos congelados antes de cada onda: tipos reais, dubleis, estado/segredo/sessao, tunel, IPC, controlo+nonce, 50 mutantes+politica, PROIBIDO+exports+repository</td><td>commits proprios (regra 0.4 — 67 commits totais)</td></tr>
+<tr><td>Onda 0</td><td>5 spikes que mediram o DSH real e fecharam S1/S2/S3/S4/S5/S7/S8/S9/S10/S11/S12</td><td>vereditos arquivados em docs/spikes</td></tr>
+<tr><td>Onda 1</td><td>API real, modularizacao (monolito 1836 linhas para ~60 ficheiros), tooling/CI, bundle+profile, higiene do repo (SECURITY.md+PVR)</td><td>gate lint/typecheck/build/test</td></tr>
+<tr><td>Onda 2</td><td>Primitivas de auth: estado persistente, segredo 256 bits, sessao+cookie __Host-, rate limit NIST, audit append-only</td><td>95%+ linhas nos modulos de decisao</td></tr>
+<tr><td>Onda 3</td><td>Tunel: supervisor com probe fail-closed de 4 sondas, TTL, descoberta da URL, gate com sessao, painel /__guard</td><td>401 pela URL publica / 200 com sessao</td></tr>
+<tr><td>Onda 4</td><td>Telegram: onboarding CLI, worker grammy, canal IPC JSONL com dead-man switch, allowlist+2 etapas</td><td>SIGKILL -> worker morto em menos de 2s</td></tr>
+<tr><td>Onda 5</td><td>Liga/desliga: controlador unico, superficies Telegram/painel/UI nativa, auditoria+notificacao, costura (nonce IPC, paridade 3 superficies)</td><td>CTL-001..040, LIFE-001..023, 1671 testes</td></tr>
+<tr><td>Onda 6</td><td>e2e offline (tunel, telegram fake-api, ciclo-vida), suite adversarial de 137 testes, checklist dos 50 mutantes, Stryker via tap-runner</td><td>test:e2e sem rede, pgrep vazio, ADV-001..059</td></tr>
+<tr><td>Onda 7</td><td>Empacotamento (exports/tarball/attw), release OIDC+changesets, docs de usuario, material de divulgacao</td><td>package:check, PROIBIDO limpo, tarball importavel</td></tr>
+</table>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
       <div class="d-flex flex-wrap gap-2">
@@ -376,14 +379,23 @@
       <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
-<ul>
-<li><code>3bb53ad</code> — bootstrap do repositório (era um repo sem nenhum commit)</li>
-<li><code>41f3066</code> — onda1-tipagem-e-scaffold</li>
-<li><code>dda510b</code> — onda1-manifesto-patch</li>
-<li><code>079debe</code> — onda2-plugin-interceptor</li>
-<li><code>cbcbdf9</code> — onda2-fix-manifesto-seguranca</li>
-<li><code>b9a8138</code> — onda3-fix-zumbi-e-bypass</li>
-</ul>
+      <!-- COMMITS_LIST begin (não preenchido — conteúdo demo do template) -->
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">a1b2c3d</span>
+          <div><strong>Onda 1:</strong> scripts de busca Brave e verificação de créditos + prompts ECC e de busca</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">e4f5g6h</span>
+          <div><strong>Onda 2:</strong> templates/html-explainer.html + SKILL.md atualizado</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">i7j8k9l</span>
+          <div><strong>Onda 3:</strong> README.md — documentação final</div>
+        </li>
+      </ul>
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — hashes fictícios, substituídos na geração.</p>
+      <!-- COMMITS_LIST end (não preenchido — conteúdo demo do template) -->
     </div>
 
     <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
@@ -426,55 +438,31 @@
 
       <h2 class="h4 pane-title">Impacto</h2>
       <p>O que cada mudança significa para quem usa o deep-orchestrator:</p>
-<p>Duas revisões adversariais independentes deram <strong>BLOCK</strong> e encontraram falhas que os testes originais
-não pegavam. As mais graves:</p>
-<ul>
-<li><strong>Zumbis órfãos.</strong> O tree-kill nunca executava. Netos do worker sobreviviam reparentados ao init a cada
-recarga da Fiber — exatamente o que a restrição pedia para prevenir.</li>
-<li><strong>Duble de teste cego.</strong> O <code>FakeChildProcess</code> nunca ligava o <code>AbortSignal</code>, então a
-suíte exercitava um estado inexistente em produção: remover a guarda defeituosa deixava 49/49 passando. Hoje 5 testes pegam.</li>
-<li><strong>Credencial universal.</strong> Sem <code>ADMIN_USER</code>/<code>ADMIN_PASS</code>, o <code>!!js</code>
-interpolava a string <code>"undefined"</code> e produzia <code>dW5kZWZpbmVkOnVuZGVmaW5lZA==</code> — uma credencial válida,
-fixa e publicamente derivável, abrindo a barreira criada contra a RCE não autenticada da #853.</li>
-<li><strong>Vazamento de <code>ADMIN_PASS</code>.</strong> O worker recebia <code>{ ...process.env }</code>: um bot Python
-exposto à Internet lia a senha do plano de controle do próprio <code>environ</code>.</li>
-<li><strong>Bypass de rota.</strong> Uma rota <code>prefix</code> em <code>/</code> servia <code>/api/...</code> sem credencial;
-o canal WebSocket ficava inteiramente fora do portão.</li>
-</ul>
-
-      <h2 class="h4 pane-title">Novas capacidades</h2>
-      <!-- CAPABILITIES begin (não preenchido — conteúdo demo do template) -->
-      <div class="row g-3">
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 1</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
+      <!-- IMPACT begin (não preenchido — conteúdo demo do template) -->
+      <div class="list-group list-group-flush mb-4">
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Impacto 1</strong> — descrição genérica, substituída na geração.</div>
         </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 2</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Impacto 2</strong> — descrição genérica, substituída na geração.</div>
         </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 3</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Impacto 3</strong> — descrição genérica, substituída na geração.</div>
         </div>
       </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas capacidades reais.</p>
-      <!-- CAPABILITIES end (não preenchido — conteúdo demo do template) -->
+      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos impactos reais.</p>
+      <!-- IMPACT end (não preenchido — conteúdo demo do template) -->
+
+      <h2 class="h4 pane-title">Novas capacidades</h2>
+<h3>Os 4 itens do pedido — como se provam</h3><ul>
+<li><b>(a) Guiar no Telegram</b>: onboarding em 4 estados com proximo passo emitido (TG-060..072, PAIR-001..010), roteiro M1.</li>
+<li><b>(b) Tunel + LINK</b>: descoberta pelos dois caminhos, entrega com aviso de URL publica (PWR-12), TTL, e2e com processos reais (tunnel-cycle), live opt-in.</li>
+<li><b>(c) SENHA</b>: 256 bits CSPRNG, so digest em disco 0600, sessao __Host-, rate limit NIST, SEC-14 (nunca pelo Telegram), canario ADV-050..059.</li>
+<li><b>(d) LIGAR/DESLIGAR pelo bot E pela UI</b>: controlador unico, paridade das TRES superficies (CTL-040), corrida com um unico cloudflared, convergencia real.</li>
+</ul>
     </div>
 
     <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
@@ -483,27 +471,16 @@ o canal WebSocket ficava inteiramente fora do portão.</li>
       <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
-<h3>Divergir do código canônico da documentação (obrigatório)</h3>
-<p>O exemplo oficial do doc-fonte escreve <code>if (child.pid &amp;&amp; !child.killed) process.kill(-child.pid,'SIGKILL')</code>.
-Essa guarda <strong>torna o tree-kill código morto</strong>: o Node, ao processar <code>abortController.abort()</code>,
-chama <code>child.kill()</code> de forma síncrona e põe <code>child.killed = true</code> <em>antes</em> da linha seguinte.
-Medido com processos reais: o neto sobrevive reparentado ao init. O plugin diverge de propósito e documenta a divergência
-no código, para ninguém "corrigir de volta".</p>
-
-<h3>Tipos locais em vez de dependências de npm</h3>
-<p>Os pacotes <code>@deepseek-ai/*</code> são <em>vendored</em> dentro do monorepo do DSH e não existem no npm público.
-Sem eles não há <code>tsc</code>, e a restrição do usuário exigia validação estática do compilador. A execução criou
-pacotes de tipos locais resolvidos por <code>paths</code>, mais um smoke-test de contrato que falha se a superfície mudar.</p>
-
-<h3>Não consumir o corpo da requisição</h3>
-<p>O doc avisa que interromper a leitura do corpo fecha o socket e gera HTTP 400. O portão decide por método, URL,
-cabeçalhos e socket. Consequência assumida e documentada: o veto de elevação é hook de defesa em profundidade,
-não o travão principal — quem fecha a #853 é o portão de autenticação e de origem.</p>
-
-<h3>Limitações declaradas em vez de API inventada</h3>
-<p>Dois requisitos não têm API na superfície tipada desta distribuição: auto-desregistro do plugin ao esgotar
-<code>maxAttempts</code>, e enumeração de rotas já registradas para provar a ordem de carregamento. Em vez de inventar
-chamadas, o plugin entrega estado terminal explícito, avisos ruidosos no load e documentação da limitação.</p>
+<h3>Decisoes tomadas autonomamente (registro)</h3><ul>
+<li><b>Faixa de upstream N/N-1</b>: o DSH publicou 0.1.1-rc.1 — tripwire CONTRACT-008 disparado; decisao do runbook: 0.1.0-rc.7..0.1.1-rc.1, types regenerados byte-exact, API aditiva (adapter intocado).</li>
+<li><b>Vocabulario de auditoria fecha sobre a realidade</b> (fix integracao): tunel_emergencia / tunel_intent_nao_pareado / tunel_orfao_derrubado na uniao; notificacao de toggle fiada (append-primeiro); PENDENTES declaradas honestamente.</li>
+<li><b>ULID unico monotonico</b> em src/ulid.ts (as duas superficies partilham a mesma fabrica).</li>
+<li><b>Emergency sem unhandled rejection</b>: .catch nas promises derivadas + try/catch no despacho sincrono — o kill switch nunca falha em silencio.</li>
+<li><b>BLOCK do revisor de T7.2 classificado como falso positivo de snapshot</b>: o handoff declarado (T7.1 aplica @changesets/cli por ultimo) confirmado no estado integrado (changeset 3.0.1 funcional).</li>
+<li><b>PROIBIDO.md como lista de frases</b> (formato -f) com racional separado; scan de aceite escopado a material publico (docs/plano e spikes sao fontes da refutacao).</li>
+<li><b>Gate de snapshot fora da secao critica</b> (D1): builds duplicados esperados entre snapshot/validacao/gate final.</li>
+<li><b>Flaky registado</b>: dead-mans-switch (2s) e discover (race) sob carga — pre-existentes, sem reproducao isolada.</li>
+</ul>
     </div>
 
     <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
@@ -550,7 +527,7 @@ chamadas, o plugin entrega estado terminal explícito, avisos ruidosos no load e
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator</strong> v0.1.0 · 2026-08-19 · branch main.
+    Gerado por <strong>deep-orchestrator</strong> v0.1.0 · 2026-08-20 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
