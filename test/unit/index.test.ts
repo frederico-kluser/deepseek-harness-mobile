@@ -112,6 +112,32 @@ describe('ciclo de vida sob ctx.effect', () => {
     ])
   })
 
+  it('token vazio/ausente = telegram nao configurado: sem worker, mas o efeito existe', () => {
+    // Contrato INSTALL.md Passo 2/4: o portao HTTP sobe sem o bot. A validacao
+    // aceita o token vazio, o efeito do worker continua registado (5 efeitos /
+    // ordem LIFO inalterados) mas NAO spawna supervisor nem subprocesso.
+    const config = makeConfig()
+    config.worker.token = ''
+    const ctx = new FakeContext()
+    apply(ctx.asContext(), config)
+
+    assert.equal(ctx.effects.length, 5, 'o efeito do worker continua registado')
+    assert.equal(
+      ctx.subprocess.calls.length,
+      0,
+      'sem token nao ha supervisor nem subprocesso do worker',
+    )
+    assert.equal(
+      ctx.logger.has('info', 'telegram: não configurado — rode /parear <código> no bot'),
+      true,
+      'a linha de boot documentada tem de ser impressa',
+    )
+
+    const workerDisposer = ctx.effects[EFFECT.worker]
+    assert.equal(typeof workerDisposer, 'function')
+    assert.equal(workerDisposer?.(), undefined, 'disposer no-op sincrono')
+  })
+
   it('em modo tunnel o controlador nasce com o supervisor e morre sem deixar handles', async () => {
     // A configuracao de tunel e o que faz o efeito do controlador criar o
     // supervisor (T3.1), o controlador (T5.1) e o alocador de porta de

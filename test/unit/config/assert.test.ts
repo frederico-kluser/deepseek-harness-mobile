@@ -173,6 +173,32 @@ describe('worker.cwd', () => {
   })
 })
 
+describe('worker.token -- vazio/ausente = "telegram nao configurado", NAO-string = erro', () => {
+  it('VAZIO e valido: o manifesto entrega `process.env.TELEGRAM_BOT_TOKEN ?? \'\'`', () => {
+    const vazio = makeConfig()
+    vazio.worker.token = ''
+    // O contrato de INSTALL.md Passo 2/4: sem token o portao HTTP sobe na mesma
+    // e o bot fica em baixo.
+    assert.doesNotThrow(() => assertValidConfig(vazio))
+  })
+
+  it('AUSENTE e valido: uma camada superior pode apagar a chave no `replace`', () => {
+    const ausente = makeConfig()
+    delete (ausente.worker as { token?: string }).token
+    assert.doesNotThrow(() => assertValidConfig(ausente))
+  })
+
+  it('NAO-string continua a ser recusado (fail loud, Q-3)', () => {
+    const numero = makeConfig()
+    numero.worker.token = 12345 as unknown as string
+    assert.throws(() => assertValidConfig(numero), /worker\.token/u)
+
+    const nulo = makeConfig()
+    nulo.worker.token = null as unknown as string
+    assert.throws(() => assertValidConfig(nulo), /worker\.token/u)
+  })
+})
+
 /* ========================================================================== */
 /* Os eixos da Onda 3                                                         */
 /* ========================================================================== */

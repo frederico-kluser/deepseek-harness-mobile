@@ -1096,6 +1096,15 @@ export function apply(ctx: Context, config: Config): void {
    * (EMENDA-COSTURA-5) e do dono persistido no boot (8c).
    */
   ctx.effect((): Disposable => {
+    // Token vazio/ausente = "telegram nao configurado" (contrato INSTALL.md
+    // Passo 2/4): o portao HTTP funciona sem o bot. Nao ha worker, nem
+    // supervisor, nem subprocesso, nem backoff -- so a linha de boot
+    // documentada. O efeito continua registado (os 5 efeitos sao contrato de
+    // ordem/LIFO) mas devolve um disposer no-op sincrono.
+    if (!config.worker.token) {
+      log.info('telegram: não configurado — rode /parear <código> no bot')
+      return (): void => undefined
+    }
     const responder = criarRespondedorIpc({
       controller: controladorAtual,
       modoTunel: config.tunnel !== undefined,

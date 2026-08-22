@@ -401,7 +401,20 @@ export function assertValidConfig(config: Config): void {
   }
   assertExistingDirectory(resolveWorkerCwd(config), 'worker.cwd')
 
-  assertNonEmptyString(config.worker.token, 'worker.token')
+  // `worker.token`: OPCIONAL EM SEMANTICA, obrigatorio em forma. O manifesto de
+  // Camada 1 entrega SEMPRE uma string (`process.env.TELEGRAM_BOT_TOKEN ?? ''`)
+  // e VAZIO = "telegram nao configurado" -- estado legitimo e documentado
+  // (INSTALL.md Passo 2: "não configurado — rode /parear"; Passo 4: o portao
+  // HTTP funciona sem o bot). Por isso a UNICA falha de arranque aqui e um
+  // token NAO-string (fail loud, Q-3); vazio ou ausente (camadas superiores
+  // podem apagar a chave no `replace`) passa e e lido como bot desligado.
+  const token: unknown = config.worker.token
+  if (token !== undefined && typeof token !== 'string') {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.worker.token tem de ser uma string (recebido: ${typeof token}). ` +
+        'Vazio ou ausente e o estado legitimo "telegram nao configurado".',
+    )
+  }
 
   // `graceMs` e obrigatorio em `SubprocessSpawnSpec` e o assento NAO aplica
   // defaults ("this seam applies no defaults"). Sem validacao, um YAML sem a
