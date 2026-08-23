@@ -687,10 +687,11 @@ export const AUMENTA_EXPOSICAO: Readonly<Record<SurfaceAction, boolean>> = Objec
   'session.issue': true,
   'secret.rotate': true,
   emergency: false,
-  // NAVEGACAO LOCAL (Onda 3): nunca aumenta exposicao; o nucleo resolve em local.
+  // NAVEGACAO LOCAL (Onda 3/5): nunca aumenta exposicao; o nucleo resolve em local.
   menu: false,
   ajuda: false,
   inicio: false,
+  cancel: false,
 })
 
 /* ========================================================================== */

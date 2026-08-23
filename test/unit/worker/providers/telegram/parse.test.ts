@@ -179,6 +179,8 @@ describe('provider/telegram/parse — gramatica g1 e o limite de 64 BYTES', () =
     assert.equal(parseCallbackData('g1:menu:tok').ok, true)
     assert.equal(parseCallbackData('g1:ajuda:tok').ok, true)
     assert.equal(parseCallbackData('g1:inicio:tok').ok, true)
+    // Onda 5 — o cancelamento das telas de confirmacao sao navegacao local tambem.
+    assert.equal(parseCallbackData('g1:cancel:tok').ok, true)
   })
 
   it('a unidade e BYTE, nao caractere: acento custa 2', () => {

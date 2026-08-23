@@ -393,7 +393,9 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
     case 'menu':
     case 'ajuda':
     case 'inicio':
-      // Nav e leituras nao confirmam accao destrutiva; generico.
+    case 'cancel':
+      // Nav e leituras nao confirmam accao destrutiva; generico. O `cancel` e
+      // navegacao local que nunca gera ack (nao envia intent); cobre o tipo.
       return result === 'noop' ? 'Já estava assim.' : 'Pedido aceite.'
   }
 }
@@ -764,6 +766,18 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
           'ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.\n' +
             'Usa /menu para o cartão de controlo e /status para ver o túnel.',
         )
+      }
+      return
+    }
+    if (event.action === 'cancel') {
+      // CONTRATO §4 Regra 4 / Onda 5: o CANCELAMENTO das telas de confirmacao
+      // destrutiva. O clique nao executa nada: responde ao botao (TG-027) e
+      // EDITA a mensagem da confirmacao — in-place, SEM actionRows, o que no
+      // adaptador DESTROI o teclado (anti duplo-toque, Regra 2). NAO envia
+      // intent, NAO desarma/rotaciona nonce e NAO altera estado do host.
+      await deps.sender.answer(event.answerTarget, { text: 'Ok, cancelado.' })
+      if (event.messageTarget !== undefined) {
+        await editarPara(chat, event.messageTarget, 'Cancelado. Nada foi alterado.')
       }
       return
     }

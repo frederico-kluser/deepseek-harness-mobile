@@ -830,3 +830,84 @@ describe('CONTRATO §4/: cartao de controlo (/menu), ajudas e navegacao local', 
     assert.deepEqual(rotulos, ['🔘 Abrir menu', '📶 Estado', 'ℹ️ Ajuda'])
   })
 })
+
+/* ========================================================================== */
+/* Onda 5 — CONTRATO §4 Regra 4: botao de CANCELAMENTO das confirmacoes        */
+/* ========================================================================== */
+
+describe('CONTRATO §4 Regra 4 / Onda 5: cancelamento local das confirmacoes', () => {
+  /** Carpeta conveniente para a acao `cancel` (token local opaco de um botao). */
+  function cancelDoDono(messageTarget?: string): SurfaceActionEvent {
+    return accaoDoDono('cancel', 'tok-cancel', messageTarget)
+  }
+
+  it('cancelar responde `Ok, cancelado.` e edita a mensagem para o texto de cancelado, SEM intent', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.ipc.intents.length
+    const confirmId = 'msg-confirmacao'
+
+    await bancada.tratar(cancelDoDono(confirmId))
+
+    // NENHUM intent (nao executa, nao rotaciona nonce, nao muda estado do host).
+    assert.equal(bancada.ipc.intents.length, antes, 'cancelar nao envia intent')
+    // TG-027: responder ao clique com o texto de cancelado.
+    const resp = bancada.sender.respostas.at(-1)
+    assert.equal(resp?.outras?.text, 'Ok, cancelado.')
+    // Edita a propria mensagem da confirmacao para o texto de cancelado.
+    const edicao = bancada.sender.edicoes.at(-1)
+    assert.equal(edicao?.messageId, confirmId)
+    assert.equal(edicao?.texto, 'Cancelado. Nada foi alterado.')
+    // SEM actionRows: converge, na chegada ao adaptador, em teclado destruido
+    // (anti duplo-toque — CONTRATO §4 Regra 2).
+    assert.equal(edicao?.opcoes?.actionRows, undefined, 'o teclado e destruido ao cancelar')
+  })
+
+  it('cancelar SEM messageTarget so responde; nao inventa destino de edicao', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antesEdicoes = bancada.sender.edicoes.length
+
+    await bancada.tratar(cancelDoDono(undefined))
+
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.equal(bancada.sender.respostas.at(-1)?.outras?.text, 'Ok, cancelado.', 'TG-027 sempre')
+    assert.equal(bancada.sender.edicoes.length, antesEdicoes, 'sem messageTarget nao ha o que editar')
+  })
+
+  it('cancelar depois do clique positivo NAO desarma o autolink que o positivo armou', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    // O /ligar armou o nonce na tela; o clique POSITIVO confirma (autolink armado).
+    await bancada.tratar(comandoDoDono('/ligar'))
+    const nonceToken = tokenDoBotao(bancada)
+    await bancada.tratar(accaoDoDono('tunnel.up', nonceToken, messageDoBotao(bancada)))
+    assert.equal(bancada.ipc.intents.length, 1, 'o positivo ja confirmou tunnel.up')
+
+    // Um cancelar DEPOIS nao desfaz nada: nao re-serializa, nao novo intent.
+    const antes = bancada.ipc.intents.length
+    await bancada.tratar(cancelDoDono(messageDoBotao(bancada)))
+    assert.equal(bancada.ipc.intents.length, antes, 'o cancelar nao envia intent nem desarma o confirmado')
+
+    // O autolink daquela ligacao ainda VIVE: READY pede session.issue UMA vez.
+    bancada.nucleo.onState(ready(7))
+    await tick()
+    assert.equal(bancada.ipc.intents.length, antes + 1, 'session.issue continua a sair (autolink intacto)')
+    assert.equal(bancada.ipc.intents.at(-1)?.intent, 'session.issue')
+  })
+
+  it('um estranho que clique em cancelar e descartado em silencio (TG-089): answer VAZIO, sem edicao', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.sender.edicoes.length
+    const antesInt = bancada.ipc.intents.length
+
+    await bancada.tratar({ kind: 'acao', identity: { userKey: ESTRANHO, chatKey: ESTRANHO }, action: 'cancel', token: 'tok-estranho', answerTarget: 'cq-x', messageTarget: 'm-1' })
+
+    assert.equal(bancada.ipc.intents.length, antesInt, 'sem intent')
+    assert.equal(bancada.sender.edicoes.length, antes, 'sem edicao para o estranho')
+    const resp = bancada.sender.respostas.at(-1)
+    assert.equal(resp?.outras, undefined, 'answer VAZIO para o estranho — sem oraculo')
+    assert.match(bancada.log.all(), /deny:not-allowlisted/u)
+  })
+})

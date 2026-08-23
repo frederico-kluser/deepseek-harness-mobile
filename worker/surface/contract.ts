@@ -119,8 +119,15 @@ export type SurfacePairingOwnerLike = Readonly<{
  * local e nunca as envia pela ponte IPC. Por isso `AUMENTA_EXPOSICAO`
  * (`worker/surface/auth.ts`) e `INCREASES_EXPOSURE` (`worker/providers/telegram/
  * parse.ts`) cobrem-nas como `false` ("nao aumenta exposicao").
+ *
+ * `cancel` (Onda 5 — CONTRATO §4 Regra 4) e a NAVEGACAO LOCAL do botao de
+ * CANCELAMENTO das telas de confirmacao destrutiva: o clique responde ao botao
+ * (`Ok, cancelado.`) e EDITA a mensagem da confirmacao para o texto de cancelado
+ * (teclado destruido), SEM executar a accao e SEM enviar intent — nunca desarma
+ * nonce nem altera estado do host. Tambem e resolvida em local, sem tocar na
+ * ponte IPC.
  */
-export type SurfaceNavAction = 'menu' | 'ajuda' | 'inicio'
+export type SurfaceNavAction = 'menu' | 'ajuda' | 'inicio' | 'cancel'
 
 /**
  * O vocabulario que um botao da superficie pode carregar: a intencao do host

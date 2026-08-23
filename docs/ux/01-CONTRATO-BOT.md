@@ -241,10 +241,12 @@ Túnel: ✅ Ligado · link no ar há 3 h
   ⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?
   [✅ Sim, gerar]  [✕ Não]
   ```
-  - O botão `[✕ Não]` faz `answerCallbackQuery('OK')` e **edita a mensagem de
-    volta** (voltar sem efeito); o botão `[✅ …]` executa. Fonte: teclados +
-    microcopy (confirmação destrutiva específica "isto vai…", "não dá para
-    desfazer").
+  - O botão `[✕ Não]` faz `answerCallbackQuery('Ok, cancelado.')` e **edita a
+    mensagem no lugar** para `Cancelado. Nada foi alterado.` com o **teclado
+    destruído** (voltar sem efeito — anti duplo-toque, Regra 2; **sem** executar a
+    acção nem enviar intent/de armazenar nonce — Onda 5); o botão `[✅ …]` executa.
+    Fonte: teclados + microcopy (confirmação destrutiva específica "isto vai…",
+    "não dá para desfazer").
 
 - **Regra 5 (pós-ação destrói e resume):** após qualquer acção, a mensagem vira
   um **resultado claro em 1-2 linhas sem botões** (teclado removido). Ex.
@@ -260,7 +262,7 @@ Túnel: ✅ Ligado · link no ar há 3 h
 | `session.issue` | `A enviar o link…` |
 | `emergency` confirmado | `A derrubar tudo…` |
 | botão de confirmação `[✅ …]` | vazio (a edição mostra) |
-| botão `[✕ Não]` | `OK` |
+| botão `[✕ Não]` (cancelamento) | `Ok, cancelado.` + edita a mensagem para `Cancelado. Nada foi alterado.` (teclado destruído) |
 | **estranho / inseguro** | **vazio (sem texto)** |
 
 > **Mapa OLD → NEW dos rótulos atuais (Onda 3):**

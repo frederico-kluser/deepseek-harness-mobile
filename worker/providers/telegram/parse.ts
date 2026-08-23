@@ -75,10 +75,11 @@ export const INCREASES_EXPOSURE: Readonly<Record<SurfaceAction, boolean>> = Obje
   'session.issue': true,
   'secret.rotate': true,
   emergency: false,
-  // NAVEGACAO LOCAL (Onda 3): o worker resolve-a; nunca chega ao host.
+  // NAVEGACAO LOCAL (Onda 3/5): o worker resolve-a; nunca chega ao host.
   menu: false,
   ajuda: false,
   inicio: false,
+  cancel: false,
 })
 
 /** Bytes UTF-8. A unidade em que a Bot API conta, e a unica que nao mente. */

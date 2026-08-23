@@ -135,6 +135,16 @@ const MAX_TOKENS_DESLIGAR = 16
 /** `/ligar` OU `/rotacionar` sem nonce do host — a face worker de CTL-023. */
 const SEM_NONCE = 'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.'
 
+/**
+ * CONTRATO §4 Regra 4 (Onda 5): a linha de CANCELAMENTO das telas de confirmacao
+ * destrutiva — `[✕ Não]` ao lado do botao positivo `[✅ …]`. E uma NAVEGACAO
+ * LOCAL (`cancel`): o nucleo resolve-a sem intent nem nonce, respondendo ao clique
+ * e editando a mensagem da confirmacao para o texto de cancelado (teclado destruido).
+ */
+function linhaDeCancelar(): ActionRow {
+  return { label: '✕ Não', action: 'cancel', token: gerarTokenOpaque(), kind: 'confirm' }
+}
+
 interface TokenDeDesligar {
   readonly token: string
   readonly userKey: string
@@ -176,7 +186,7 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
         await ctx.enviar(identidade.chatKey, SEM_NONCE)
         return
       }
-      // 2a etapa: o teclado com o nonce opaco no botao.
+      // 2a etapa: o teclado com o nonce opaco no botao + o cancelamento (§4 Regra 4).
       const acao: ActionRow = {
         label: '✅ Sim, ligar',
         action: 'tunnel.up',
@@ -186,13 +196,14 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
       await ctx.enviar(
         identidade.chatKey,
         '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.',
-        { actionRows: [[acao]] },
+        { actionRows: [[acao, linhaDeCancelar()]] },
       )
     },
 
     async desligar(identidade): Promise<void> {
       // Confirmacao em 2 etapas com token LOCAL — sem nonce (CTL-024): o intent
-      // de confirmacao nao carrega campo `nonce`.
+      // de confirmacao nao carrega campo `nonce`. O cancelamento (§4 Regra 4) e
+      // UMA actionRow ao lado do botao positivo — voltar sem efeito.
       const token = emitirTokenDeDesligar(identidade.userKey, identidade.chatKey)
       const acao: ActionRow = {
         label: '✅ Sim, desligar',
@@ -200,7 +211,9 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
         token,
         kind: 'emergency',
       }
-      await ctx.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', { actionRows: [[acao]] })
+      await ctx.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', {
+        actionRows: [[acao, linhaDeCancelar()]],
+      })
     },
 
     async confirmarDesligar(identidade, token, answerTarget, messageTarget): Promise<void> {
@@ -263,7 +276,8 @@ export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
         await ctx.enviar(identidade.chatKey, SEM_NONCE)
         return
       }
-      // 2a etapa: o teclado. O clique envia secret.rotate com o nonce opaco.
+      // 2a etapa: o teclado. O clique envia secret.rotate com o nonce opaco. O
+      // cancelamento (§4 Regra 4) volta sem efeito, ao lado do botao positivo.
       const acao: ActionRow = {
         label: '✅ Sim, gerar',
         action: 'secret.rotate',
@@ -273,7 +287,7 @@ export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
       await ctx.enviar(
         identidade.chatKey,
         '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?',
-        { actionRows: [[acao]] },
+        { actionRows: [[acao, linhaDeCancelar()]] },
       )
     },
   }

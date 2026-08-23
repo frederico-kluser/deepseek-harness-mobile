@@ -794,11 +794,13 @@ describe('criarGuardDeIdentidade — decisao por evento, descartado CONTADO', ()
       menu: false,
       ajuda: false,
       inicio: false,
+      cancel: false,
     })
     assert.equal(AUMENTA_EXPOSICAO.emergency, false, 'em panico, o botao tem de funcionar a primeira')
     assert.equal(AUMENTA_EXPOSICAO.menu, false, 'navegacao local nunca aumenta exposicao')
     assert.equal(AUMENTA_EXPOSICAO.ajuda, false, 'navegacao local nunca aumenta exposicao')
     assert.equal(AUMENTA_EXPOSICAO.inicio, false, 'navegacao local nunca aumenta exposicao')
+    assert.equal(AUMENTA_EXPOSICAO.cancel, false, 'cancelar nunca aumenta exposicao (Onda 5)')
   })
 
   it('acumula por motivo, e a auditoria nunca pode carregar o token', () => {

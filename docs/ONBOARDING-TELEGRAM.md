@@ -1,12 +1,16 @@
-# ONBOARDING-TELEGRAM.md — ligar o telemóvel ao DSH via bot
+# ONBOARDING-TELEGRAM — ligar o telemóvel ao DSH via bot
 
-Guia para conectar o Telegram ao DSH guardado por este plugin e parear o teu chat como
-dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é aceite de um chat pareado.
+Guia para conectar o Telegram ao DSH guardado por este plugin e parear o teu
+chat como dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é
+aceite de um chat pareado.
 
-> **Compat (arquitetura de provedores):** o worker é neutro ao provedor e o Telegram é o único
-> fornecedor hoje (`config.worker.provider`, default `telegram`). **Nada muda para si** no
-> onboarding: o token continua na variável `TELEGRAM_BOT_TOKEN`, o pareamento é o mesmo e os
-> comandos do bot não mudam. Detalhe em [`docs/PROVIDERS.md`](PROVIDERS.md).
+> **Dois caminhos para configurar:** (a) o **painel "Telegram Guard"** (aba do
+> settings) faz tudo pela interface — ver [`docs/PANEL-TELEGRAM.md`](PANEL-TELEGRAM.md);
+> (b) a CLI `dsh-guard-setup` também guia o fluxo. O pareamento do chat é o mesmo
+> nos dois. Os **textos EXATOS** do bot (boas-vindas, menu, telas de confirmação
+> com botão `✕ Não`, respostas de pareamento) estão em
+> [`docs/ux/01-CONTRATO-BOT.md`](ux/01-CONTRATO-BOT.md) e o padrão de microcopy em
+> [`docs/ux/03-MICROCOPY.md`](ux/03-MICROCOPY.md) — aqui resume-se o uso.
 
 > **Não há senha a digitar em lugar nenhum.** O acesso pelo túnel entra por
 > **sessão** ou pela **chave no link** `?key=`. O bot é o canal de entrega: o
@@ -16,67 +20,97 @@ dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é aceite
 > **reutilizável** até `/rotacionar` (gera chave nova e invalida sessões) ou
 > derrubar o túnel.
 >
-> Aviso honesto de canal: a conversa com bot é *cloud chat* — não é ponta-a-ponta,
-> o histórico fica nos servidores da Telegram. Como a chave viaja por aí, quem ler
-> o chat lê a chave; foi por isso que a revogação (`/rotacionar`) existe. Outros
-> segredos que **não** são a chave do link (token do bot, segredos internos) nunca
-> devem aparecer no chat.
+> Aviso honesto de canal: a conversa com o bot é *cloud chat* — não é
+> ponta-a-ponta, o histórico fica nos servidores da Telegram. Como a chave viaja
+> por aí, quem ler o chat lê a chave; foi por isso que a revogação existe. Outros
+> segredos que **não** são a chave do link (token do bot, segredos internos)
+> nunca devem aparecer no chat.
 
-## Ponto de partida
+---
 
-A ferramenta de onboarding é a CLI `dsh-guard-setup`, que vem no próprio pacote
-(`bin` em `package.json` → `dist/bin/dsh-guard-setup.js`). Correr sem opções
-mostra **só o passo que falta** fazer, na ordem. É pensada para quem nunca viu o
-projeto: quem a corre do zero e segue cada passo sem perguntar nada ao autor cumpriu o
-critério de usabilidade (roteiro M1, `docs/plano/04-TESTES.md §9`).
+## Passo 1 — Criar o bot
 
-## Passo 1 — criar o bot no BotFather
+No Telegram, conversa com **@BotFather** e corre `/newbot`. Dá um nome e um
+`@username` **que termine em `bot`**. O BotFather devolve um **token** no formato
+`<número>:<segredo>`. Guarda-o.
 
-1. No Telegram, conversa com `@BotFather` e corre `/newbot`.
-2. Dá um nome e um username **que termine em `bot`** (5–32 caracteres,
-   `[A-Za-z0-9_]`, imutável).
-3. O BotFather devolve um token no formato `<id>:<segredo>`. Guarda-o por
-   agora; vai ser pedido no passo seguinte.
+Se estiveres no **painel Telegram Guard**, o Passo 1 da trilha explica o mesmo
+passo a passo (`<details>` "Como criar o bot do zero") e aceita o token com o
+CTA `Salvar bot` (loading: `A conectar ao Telegram…`). O token fica guardado de
+forma segura nesta máquina e **nunca** sai do backend para o painel.
 
-O texto exato a digitar é mostrado pela própria CLI quando corres `dsh-guard-setup`,
-sem jargão.
+---
 
-## Passo 2 — colar o token
+## Passo 2 — Parear o teu chat (código de 6 dígitos)
 
-Corre a CLI na máquina onde o DSH roda:
+1. Na **trilha do painel**, no Passo 2, toca **`Gerar código`**. O painel mostra
+   um **código de 6 dígitos** (TTL de 5 min) em caixa espaçada, um botão
+   **`Copiar`**, um **countdown** (`expira em 4:53`) e a instrução única:
+   `No Telegram, envia: /parear 123456 no @handle`.
+2. No bot, digita **`/start`** (opcional, antes de parear): o bot responde uma
+   **boas-vindas inócuas — iguais para toda a gente** (PAIR-006) e **não pareia
+   ninguém**. Segue o `/start` com o botão `🔘 Abrir menu`:
+   - `👋 Olá. Este bot controla o acesso ao teu Harness pelo Telegram.\n\n Antes
+     de mais nada, pareie-o: gere um código no painel e envie:  /parear 123456\n\n
+     Depois, abra o menu para ligar e desligar o túnel.`
+3. Manda **`/parear <código>`** com o código certo. O bot responde:
+   `✓ Pareado com sucesso! Agora: /menu e /status.` (2 primeiras ações + aviso de
+   segurança).
+4. Se o código estiver **errado/expirado**, o bot responde **sempre a mesma
+   frase**: `Código errado ou expirado. Confere no painel e tenta de novo.`
+   (sem revelar se o código existe — PAIR-003) e conta a tentativa (tetos).
+5. Já pareado e mandas `/parear` outra vez? Só o dono vê a explicação:
+   `Este bate-papo já é o dono deste bot. Para trocar o dono, reset na máquina.`
+   (PAIR-005). Um estranho é **silêncio**.
 
-```sh
-dsh-guard-setup
-```
+O pareamento é de **um dono só**: quem valida é o digest do código (nunca o
+claro), e o dono é gravado no `state.json` pelo host (`pairing.owner`), que
+liberta a allowlist no ato — sem reiniciar.
 
-Quando pedido, cola o token. A leitura é **sem eco** (não aparece no terminal) e o valor
-é gravado com modo `0600`. A CLI valida com `getMe` e mostra o `@username` do
-bot para conferência. Se colares um token errado, tens um erro claro, sem stack trace,
-com a instrução de `/token` no BotFather.
+---
 
-> A CLI **recusa** qualquer forma de token no *argv* (`--token=...` ou valor solto) —
-> um argumento é visível em `/proc/<pid>/cmdline` para qualquer processo local
-> (`src/telegram/onboarding.ts:423-434`).
+## Passo 3 — Usar (por onde começar)
 
-O token fica numa **allowlist de ambiente** do worker, nunca em `argv`. O worker de
-long-polling não herda `process.env` inteiro: o plugin monta um ambiente mínimo a
-partir de uma allowlist mais o token (`src/proc/env.ts`).
+Pós-pareamento, o controlo fica no **cartão de controle do bot** (`/menu`):
+uma mensagem edit-in-place com o estado do túnel (`✅ Ligado` / `⬜ Desligado`) e
+os botões `🟢 Ligar`, `🔴 Desligar`, `📶 Status`, `🔗 Link de acesso`,
+`⇄ Nova chave`, `🚨 Emergência`, `🏠 Início`.
 
-## Passo 3 — parear o teu chat (código de 6 dígitos)
+Ações que **aumentam a exposição** (ligar, rotacionar) e as **destrutivas**
+(desligar, emergência) pedem **confirmação em duas etapas**, com um botão
+positivo `[✅ …]` e agora **um botão de cancelamento `[✕ Não]`** — ao tocar
+`✕ Não`, o bot responde `Ok, cancelado.` e edita a mensagem para
+`Cancelado. Nada foi alterado.` (teclado destruído), **sem executar nada**.
 
-1. A CLI mostra um **código de pareamento de 6 dígitos**, só no terminal, com TTL de 5
-   minutos e a instrução `/parear <código>` no bot.
-2. Manda `/start` ao bot **antes** de parear, se quiseres: o bot responde uma
-   boas-vindas inócua e **não pareia** ninguém. Por desenho, `/start` não pareia
-   (`docs/plano/02-SEGURANCA.md` D8).
-3. Manda `/parear <código>` com o código certo. A CLI confirma o `@username` e o
-   `chat` pareado e **fecha** o pareamento.
-4. Se o código estiver errado, o bot responde uma recusa genérica e conta a tentativa
-   (teto de 5 errados). Se voltar a tentar `/parear` (ou de outra conta), é
-   **recusado**; reabrir exige `--reset-pairing` na máquina. O pareamento é de um
-   dono só (`worker/surface/auth.ts`).
+O menu publicado do bot é **curto (5 comandos)** e escopado (v.
+`docs/ux/01-CONTRATO-BOT.md §2`):
 
-## Passo 4 — conferir o que ficou em disco
+| Comando | Escopo | O que faz |
+| --- | --- | --- |
+| `/menu` | privado (só DM) | abrir o painel de controlo do bot |
+| `/status` | privado | ver o estado do túnel |
+| `/parear` | privado | parear com um código |
+| `/emergencia` | privado | derrubar tudo de imediato |
+| `/ajuda` | default (grupos e privado) | ver como usar |
+
+> `/start` não aparece no menu (são boas-vindas inócuas, PAIR-006), mas a sua
+> descoberta segura (junto com `/ajuda`) vai ao escopo `default`. As ações/estado
+> ficam no escopo **privado** (só DM) — em grupos qualquer comando é barrado pelo
+> guard, então restringir a descoberta reduz o "porquê não funciona" em grupo.
+
+---
+
+## Se usas o painel / outra superfície
+
+O painel Telegram Guard (Passo 3 · Usar) mostra os comandos essenciais e `Uso
+recente` (métricas). Ligar/desligar também está em superfícies de UI próprias;
+todas mostram o mesmo estado e o mesmo `seq` (paridade por contrato, CTL-040). O
+worker de long-polling **conflita com uma segunda instância** do bot no mesmo
+token (`409` — nunca corras duas instâncias no mesmo token).
+
+---
+
+## O que fica em disco
 
 ```
 ~/.dsh/guarded-bot/secrets.env   # 0600, guarda TELEGRAM_BOT_TOKEN
@@ -84,37 +118,6 @@ partir de uma allowlist mais o token (`src/proc/env.ts`).
 ```
 
 O caminho usa `$DSH_HOME` se estiver definido, senão `~/.dsh`, sempre sob
-`guarded-bot/` (`src/state/paths.ts`). Tudo `0600`, diretório `0700`,
-fora do workspace e fora do git.
-
-## Passo 5 — ler os 5 avisos de exposição
-
-A CLI imprime (no terminal) os cinco avisos que tens de ter lido antes de expor:
-
-1. `trustedRemotes` fica **inerte** como controlo de rede sob o túnel;
-2. o túnel **fura a firewall** (qualquer porto de saída 443);
-3. o **TLS termina na borda da Cloudflare** — o texto claro passa por um terceiro;
-4. o endereço do túnel **não é segredo**;
-5. `trycloudflare.com` tem reputação de malware em alguns filtros.
-
-## Comandos do bot (depois de pareado)
-
-| Comando | O que faz |
-| --- | --- |
-| `/ligar` | Sobe o túnel e, quando fica READY, **envia automaticamente** o link com a chave `?key=` (pede confirmação) |
-| `/desligar` | Derruba o túnel (e revoga a chave) (pede confirmação) |
-| `/status` | Estado atual e a URL vigente |
-| `/acessar` | (Re)envia o link com a chave |
-| `/rotacionar` | Gera **chave nova** e invalida as sessões — encerra também as conexões ativas (WebSocket) além de revogar a chave e as sessões |
-| `/emergencia` | Derruba o túnel e revoga as sessões (kill switch) |
-
-Ações que **aumentam a exposição** (subir o túnel) exigem confirmação em duas etapas com
-um nonce do host. O botão de confirmar é identificado pelo **texto** (o estilo de botão é
-não confirmado pela referência — não dependemos dele).
-
-## Se usas o painel / outra superfície
-
-Ligar/desligar também está no painel local e numa superfície de UI própria; ambas as
-superfícies mostram o mesmo estado e o mesmo `seq` (paridade por contrato,
-CTL-040). O worker de long-polling conflita com uma segunda instância do bot no mesmo
-token (`409 terminated by other getUpdates request`) — nunca corras duas instâncias no mesmo token.
+`guarded-bot/`. Tudo `0600`, diretório `0700`, fora do workspace e do git. O
+token entra por **ambiente (allowlist do worker)**, nunca em `argv` — um
+argumento seria visível em `/proc/<pid>/cmdline` para qualquer processo local.

@@ -88,6 +88,11 @@ describe('TG-082: /ligar — 1a etapa: nonce do host + actionRow de confirmacao'
     assert.equal(botao.kind, 'confirm')
     assert.ok(bancada.host.foiEmitido(botao.token), 'o nonce do botao foi emitido pelo host')
     assert.match(bancada.emissor.mensagens[0]?.texto ?? '', /Ligar o túnel agora\?/u)
+    // Onda 5 — CONTRATO §4 Regra 4: o botao positivo vem acompanhado do
+    // CANCELAMENTO (`✕ Não`, navegacao local `cancel`), na mesma actionRow.
+    const linha = bancada.emissor.mensagens[0]?.opcoes?.actionRows?.[0]
+    assert.equal(linha?.map((b) => b.action).join(','), 'tunnel.up,cancel')
+    assert.equal(linha?.map((b) => b.label).join(','), '✅ Sim, ligar,✕ Não')
   })
 
   it('CTL-023 (face worker): sem nonce do host, falha FECHADO — nenhum intent', async () => {
@@ -113,6 +118,9 @@ describe('TG-083: /desligar — 2 etapas, intent REDUZ sem nonce (CTL-024)', () 
     assert.equal(botao.label, '✅ Sim, desligar')
     assert.equal(botao.kind, 'emergency')
     assert.ok(!bancada.host.foiEmitido(botao.token), 'o token e LOCAL do worker, nao do host')
+    const linha = bancada.emissor.mensagens[0]?.opcoes?.actionRows?.[0]
+    assert.equal(linha?.map((b) => b.label).join(','), '✅ Sim, desligar,✕ Não', 'cancelamento ao lado do positivo')
+    assert.equal(linha?.map((b) => b.action).join(','), 'tunnel.down,cancel')
   })
 
   it('a confirmacao envia tunnel.down SEM campo nonce e responde ao clique', async () => {
@@ -242,6 +250,9 @@ describe('TG-086: /rotacionar — 1a etapa: nonce do host + actionRow', () => {
     assert.equal(botao.label, '✅ Sim, gerar')
     assert.equal(botao.kind, 'confirm')
     assert.ok(bancada.host.foiEmitido(botao.token))
+    const linha = bancada.emissor.mensagens[0]?.opcoes?.actionRows?.[0]
+    assert.equal(linha?.map((b) => b.label).join(','), '✅ Sim, gerar,✕ Não', 'cancelamento ao lado do positivo')
+    assert.equal(linha?.map((b) => b.action).join(','), 'secret.rotate,cancel')
   })
 
   it('sem nonce do host, /rotacionar falha fechado', async () => {
