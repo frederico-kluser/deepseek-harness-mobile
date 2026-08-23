@@ -57,6 +57,17 @@ export interface WorkerSupervisor extends ProcessSupervisor {
    * -- um `write` que bloqueasse num pipe cheio congelava o DSH inteiro.
    */
   send(message: IpcMessageToWorker): boolean
+  /**
+   * ATUALIZA o token do bot em runtime, ANTES de um `restart`.
+   *
+   * O `buildSpec` captura o token no instante do spawn; sem este setter, um
+   * `restart()` apos a rota POST /__guard-ui/api/token gravar um token novo em
+   * `secrets.env` relancaria o worker com o token ANTIGO. O `definirToken` e o
+   * que liga o novo valor ao proximo spawn (e a nova mascara de logs -- a
+   * `secrets()` partilha o MESMO holder). Aditivo: espelha o token atual, nao
+   * muda `provider` nem `config`.
+   */
+  definirToken(token: string): void
 }
 
 /** O que distingue este supervisor do generico, alem do `argv`. */
@@ -161,8 +172,13 @@ export function createWorkerSupervisor(
    * `config.worker.token`/`secrets.env`) ou o do proprio `config` quando
    * aquele e omitido (os testes, por exemplo). Uma so fonte para o segredo,
    * o env do filho E a mascara de logs.
+   *
+   * `let` e NAO `const` de proposito: a rota POST /__guard-ui/api/token grava
+   * um token novo em `secrets.env` e chama {@link WorkerSupervisor.definirToken}
+   * + `restart()`. O `buildSpec` e a `secrets()` fecham sobre ESTA variavel, e
+   * o `definirToken` repinta-a para o proximo spawn usar o valor novo.
    */
-  const tokenDoBot = options.token ?? worker.token
+  let tokenDoBot = options.token ?? worker.token
 
   /**
    * O provedor ATIVO do worker: o da costura (`options.provider`, resolvido de
@@ -309,5 +325,8 @@ export function createWorkerSupervisor(
       return supervisor.failure
     },
     send: (message: IpcMessageToWorker): boolean => channel?.send(message) ?? false,
+    definirToken: (token: string): void => {
+      tokenDoBot = token
+    },
   }
 }

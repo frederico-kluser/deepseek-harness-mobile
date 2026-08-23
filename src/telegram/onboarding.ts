@@ -40,7 +40,19 @@
  *     parametro explicito, para que nenhum outro chamador o obtenha por acaso.
  */
 
-import { constants, fstatSync, closeSync, openSync, readFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fsyncSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 
@@ -616,6 +628,84 @@ export function lerSecretsEnv(caminho: string): string | undefined {
 
 function mensagemDe(erro: unknown): string {
   return erro instanceof Error ? erro.message : String(erro)
+}
+
+/** O MINIMO que a escrita do `secrets.env` precisa de saber (o HOST + o CLI). */
+export interface EscritaDeSegredos {
+  readonly paths: StatePaths
+  readonly caminhoSecrets: string
+}
+
+/**
+ * Grava a chave preservando o resto do ficheiro, com modo 0600 (TG-068).
+ *
+ * A escrita e ATOMICA e pela mesma razao que a do `state.json`: o temporario
+ * nasce no MESMO diretorio (`rename(2)` so e atomico dentro do mesmo sistema de
+ * ficheiros), leva `fchmod` explicito (o `mode` do `open` passa pelo `umask` do
+ * host, que so RETIRA bits) e um `fsync` antes do `rename`, para que a entrada
+ * nova nunca aponte para bytes que ainda estao em cache. Um leitor concorrente
+ * ve o ficheiro velho inteiro ou o novo inteiro — nunca meio `secrets.env`, que
+ * seria um token truncado a arrancar o harness.
+ *
+ * `O_EXCL | O_NOFOLLOW` no temporario: nome novo a cada escrita, e nenhum link
+ * simbolico e seguido.
+ *
+ * E o DESTINO UNICO da escrita do token em runtime: o CLI (`bin/dsh-guard-setup`)
+ * e a rota POST /__guard-ui/api/token chamam EXATAMENTE esta funcao — nao ha
+ * um segundo writer do `secrets.env` para a mesma chave.
+ *
+ * LANCAMENTO de `OnboardingError` quando a gravacao falha; o ficheiro antigo
+ * fica intacto (o `rename` so acontece depois de o novo estar completo).
+ */
+export function gravarSecretsEnv(ctx: EscritaDeSegredos, chave: string, valor: string): void {
+  const existente = lerSecretsEnv(ctx.caminhoSecrets) ?? ''
+  const conteudo = fundirSecretsEnv(existente, chave, valor)
+
+  const tmp = join(
+    ctx.paths.dir,
+    `.${NOME_DO_SECRETS_ENV}.tmp-${process.pid.toString(36)}-${randomBytes(6).toString('hex')}`,
+  )
+  try {
+    const fd = openSync(
+      tmp,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      MODO_DO_SECRETS_ENV,
+    )
+    try {
+      const bytes = Buffer.from(conteudo, 'utf8')
+      let escritos = 0
+      // `writeSync` pode escrever menos do que se pediu: o laco e o que impede
+      // um `secrets.env` truncado que passaria despercebido.
+      while (escritos < bytes.byteLength) {
+        escritos += writeSync(fd, bytes, escritos, bytes.byteLength - escritos)
+      }
+      fchmodSync(fd, MODO_DO_SECRETS_ENV)
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmp, ctx.caminhoSecrets)
+  } catch (erro) {
+    try {
+      unlinkSync(tmp)
+    } catch (falhaDaLimpeza) {
+      // Nao pode mascarar o erro real que trouxe o fluxo ate aqui; ja nao
+      // existir e, alias, o caso normal (o `rename` consumiu o temporario).
+      void falhaDaLimpeza
+    }
+    // As recusas tipadas ja tem codigo e mensagem acionavel: passam intactas.
+    if (erro instanceof OnboardingError) throw erro
+    // Um `EACCES` cru do `openSync` traz o caminho do temporario — que, em
+    // producao, vive debaixo do `$HOME`. `redact()` tira a casa do utilizador
+    // e deixa o resto do caminho, que e o que diz onde procurar.
+    throw new OnboardingError(
+      'SECRETS_WRITE_FAILED',
+      `não foi possível gravar o ficheiro ${NOME_DO_SECRETS_ENV}: ` +
+        `${redact(erro instanceof Error ? erro.message : String(erro))}. ` +
+        'O ficheiro antigo NÃO foi alterado — a substituição só acontece depois ' +
+        'de o novo estar inteiro e gravado no disco.',
+    )
+  }
 }
 
 /**

@@ -65,6 +65,12 @@ export const UI_PATH_CLIENT = `${UI_PREFIX}/client.js`
 export const UI_PATH_TELEGRAM = `${UI_PREFIX}/api/telegram`
 /** O clique no botao Telegram — POST, CSRF como as demais escritas. */
 export const UI_PATH_TELEGRAM_CLICK = `${UI_PREFIX}/api/telegram/click`
+/** O token do bot, configurado VIA INTERFACE — POST, CSRF como as demais. */
+export const UI_PATH_TOKEN = `${UI_PREFIX}/api/token`
+/** O estado do token (configurado/handle/fonte), SEM o valor — GET. */
+export const UI_PATH_TOKEN_STATE = `${UI_PREFIX}/api/token-state`
+/** Quem/quanto esta a acessar (sessoes e conexoes do proxy) — GET. */
+export const UI_PATH_ACCESS = `${UI_PREFIX}/api/access`
 
 /** O vinculo do token anti-CSRF: a superficie inteira. */
 export const UI_CSRF_BINDING = 'ui-contrib'
@@ -103,12 +109,97 @@ export interface UiContribCore {
    * So boleanos e motivos; o token NUNCA passa por aqui.
    */
   readonly botState: () => BotEstado
+  /**
+   * Operacoes do panel de token, fiadas pela costura em `src/index.ts`. So
+   * chegam aqui como servico injetado (validar/sondar/gravar/estado) — este
+   * modulo nao importa `src/telegram/**` nem `bin/**`, e o token NUNCA e
+   * logado nem ecoado por este modulo.
+   */
+  readonly tokenOps: UiTokenOps
+  /**
+   * Projecao de acesso, fiada pela costura: a contagem de sockets ativos do
+   * proxy do tunel e a lista de sessoes vivas, ja com os metadados de acesso.
+   */
+  readonly acesso: () => UiAcessoBruto
   readonly csrf: CsrfGuard
   readonly now: () => number
   readonly requestedBy: string
   readonly requestId: () => string
   readonly issueNonce: (action: ControlAction) => Nonce
   readonly emit: (intent: ControlIntent) => Promise<ControlResultado>
+}
+
+/**
+ * Onde vive o token do bot, para o `token-state` — SEM o valor. `env` = o
+ * `config.worker.token` (o host injeta-o por ambiente); `secrets` = o
+ * `secrets.env` gravado pelo CLI ou por esta rota.
+ */
+export type FonteDoToken = 'env' | 'secrets' | 'nenhum'
+
+/** O estado do token que a interface mostra — nunca o valor. */
+export interface EstadoDoToken {
+  readonly configurado: boolean
+  /** O `@handle`, quando o `getMe` o confirmou. Ausente = `null`. */
+  readonly handle?: string | null | undefined
+  readonly fonte: FonteDoToken
+}
+
+/**
+ * O servico de configuracao do token fiado a superficie. Cada operacao e
+ * executada pela costura em `src/index.ts` (que detem `config`, `statePaths` e
+ * o supervisor do worker); este modulo so orquestra o HTTP.
+ */
+export interface UiTokenOps {
+  /** Formato `<id numerico>:<segredo>` SEM rede (reusa `validarFormatoDoToken`). */
+  readonly validarFormato: (bruto: string) => boolean
+  /**
+   * A FONTE EFETIVA do token configurado no momento. `'env'` significa que o
+   * `config.worker.token` (variavel TELEGRAM_BOT_TOKEN do ambiente) tem
+   * PRECEDENCIA sobre o `secrets.env` — neste estado, gravar em `secrets.env`
+   * nao muda o bot ate o env mudar. `'secrets'` = o ficheiro e a fonte vigente.
+   *
+   * O handler usa isto ANTES de sondar/gravar: com a fonte `'env'`, a rota
+   * recusa (409 `token-por-env`) em vez de escrever um token que o env vai
+   * continuar a sombrear — transparencia, nao mentira.
+   */
+  readonly fonte: () => FonteDoToken
+  /**
+   * `getMe` na rede. `ok:true` traz o `@handle`. O token NUNCA volta nesta
+   * resposta; `erro` e uma causa acionavel, nunca o token. NAO tem efeito
+   * lateral no estado do token (o handle so e "committed" em `gravar`).
+   */
+  readonly sondar: (
+    token: string,
+  ) => Promise<{ readonly ok: true; readonly handle: string } | { readonly ok: false; readonly erro: string }>
+  /**
+   * Grava em `secrets.env` (0600, atomico), reinicia o worker com o token novo
+   * e grava o `handle` lembrado pelo token-state — SO SOB SUCESSO. Na falha
+   * (excecao), NADA muda: nem a escrita, nem o handle lembrado.
+   */
+  readonly gravar: (token: string, handle: string) => void
+  /** Estado do token (fonte+handle) para o `token-state`; le o disco a cada chamada. */
+  readonly estado: () => EstadoDoToken
+}
+
+/** Uma sessao viva, ja redigida, com os metadados de acesso capturados. */
+export interface RegistroAcessoBruto {
+  readonly hash: string
+  readonly criadaEm: number
+  readonly ultimoUsoEm: number
+  readonly userAgent?: string | undefined
+  readonly ip?: string | undefined
+}
+
+/** A fonte de dados do `/api/access`, montada pela costura. */
+export interface UiAcessoBruto {
+  /** Sockets ativos do lado cliente do proxy do tunel (a fonte de `totalConexoes`). */
+  readonly conexoesAtivas: number
+  /** Sessoes vivas no `SessionStore`. */
+  readonly totalSessoes: number
+  /** As sessoes vivas, redigidas. */
+  readonly sessoes: ReadonlyArray<RegistroAcessoBruto>
+  /** `true` sse o IP da borda e confiavel agora (`exposure.trustEdgeHeaders`). */
+  readonly ipConfiavel: boolean
 }
 
 /* ========================================================================== */
@@ -488,5 +579,153 @@ export function createTelegramClickHandler(core: UiContribCore): UiContribReques
       return
     }
     json(res, 200, { passos: passosDoBot(core.botState()) })
+  }
+}
+
+/* ========================================================================== */
+/* O painel de configuracao do token (POST /api/token)                        */
+/* ========================================================================== */
+
+/**
+ * Projeta o estado do token para a rota GET. FUNCAO PURA e exportada: e o
+ * coracao da pergunta falsificavel "o token sai nesta resposta?" — o corpo
+ * so tem `configurado`+`handle`+`fonte`; o valor do token nunca entra aqui.
+ */
+export function projetarEstadoToken(estado: EstadoDoToken): Record<string, unknown> {
+  return {
+    configurado: estado.configurado,
+    ...(estado.handle === undefined || estado.handle === null ? {} : { handle: estado.handle }),
+    fonte: estado.fonte,
+  }
+}
+
+/**
+ * GET /__guard-ui/api/token-state — o estado do token SEM o valor. SO LE; o
+ * disco e lido pela costura a cada pedido (`tokenOps.estado`).
+ */
+export function createTokenStateHandler(core: UiContribCore): UiContribRequestHandler {
+  return (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    json(res, 200, projetarEstadoToken(core.tokenOps.estado()))
+  }
+}
+
+/**
+ * POST /__guard-ui/api/token — configura o token do bot VIA INTERFACE.
+ *
+ * Fluxo (a ordem e contrato — TG-061: FORMATO antes de rede, e a fonte antes
+ * de TUDO quando o env manda):
+ *   - corpo vazio/token em branco -> 400 `{ok:false,erro:'token-vazio'}`;
+ *   - a fonte EFETIVA e `'env'` (variavel TELEGRAM_BOT_TOKEN a mandar) -> 409
+ *     `{ok:false,erro:'token-por-env', aviso}`, SEM sondar nem gravar: um token
+ *     gravado em `secrets.env` nao mudaria o bot enquanto o env o sombrear;
+ *   - formato `<id>:<segredo>` invalido (SEM rede) -> 400
+ *     `{ok:false,erro:'formato-invalido'}`;
+ *   - `getMe` na rede recusa o token -> 422 `{ok:false,erro:'token-invalido'}`;
+ *   - token aceito -> grava em `secrets.env` (0600, atomico), reinicia o
+ *     worker com ele e devolve 200 `{ok:true,handle,fonte:'secrets'}`.
+ *
+ * A FONTE da resposta 200 casa SEMPRE com a que o `/token-state` reporta
+ * depois: quando e `'env'` nao se chega a gravar (409), logo so responde 200
+ * com `fonte:'secrets'`.
+ *
+ * NUNCA ecoa o token nem o loga: o corpo so devolve `ok`+`handle`. Exige o
+ * token anti-CSRF como qualquer POST da superficie (NIST SP 800-63B-4 5.1.1).
+ */
+export function createTokenHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    if (!exigeMetodo(req, res, 'POST')) return
+    const corpo = await lerCorpo(req)
+    if (!corpo.ok) {
+      json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' })
+      return
+    }
+    if (!csrfValido(core, req, corpo.corpo)) {
+      recusarCsrf(res)
+      return
+    }
+    const bruto = corpo.corpo.token
+    if (typeof bruto !== 'string' || bruto.trim().length === 0) {
+      json(res, 400, { ok: false, erro: 'token-vazio' })
+      return
+    }
+    // TRANSPARENCIA ANTES DE REDE: se a variavel TELEGRAM_BOT_TOKEN do ambiente
+    // for a fonte vigente, um token gravado em `secrets.env` nao mudaria o bot.
+    // Recusa-se com instrucao clara em vez de responder `{ok:true}` e o bot
+    // continuar com o token antigo (shadowing silencioso).
+    if (core.tokenOps.fonte() === 'env') {
+      json(res, 409, {
+        ok: false,
+        erro: 'token-por-env',
+        aviso:
+          'A variavel TELEGRAM_BOT_TOKEN do ambiente tem precedência e continua a mandar. ' +
+          'Remova-a (ou use o token dela) — só então este painel passa a configurar o secrets.env.',
+      })
+      return
+    }
+    // O token e aparado UMA vez aqui; `validarFormato` apara de novo por
+    // paridade com o CLI. O valor aparado e o que segue para `sondar`/`gravar`.
+    const token = bruto.trim()
+    if (!core.tokenOps.validarFormato(token)) {
+      json(res, 400, { ok: false, erro: 'formato-invalido' })
+      return
+    }
+    const sonda = await core.tokenOps.sondar(token)
+    if (!sonda.ok) {
+      json(res, 422, { ok: false, erro: 'token-invalido' })
+      return
+    }
+    try {
+      core.tokenOps.gravar(token, sonda.handle)
+    } catch {
+      // Nenhum caminho de erro vaza topologia nem o token: 500 generico.
+      json(res, 500, { ok: false, erro: 'interno' })
+      return
+    }
+    json(res, 200, { ok: true, handle: sonda.handle, fonte: 'secrets' })
+  }
+}
+
+/* ========================================================================== */
+/* As metricas de acesso (GET /api/access)                                    */
+/* ========================================================================== */
+
+/** Normaliza `undefined` para `null` no corpo — o painel le `null`, nao ausente. */
+function ouNull(valor: string | undefined): string | null {
+  return valor === undefined ? null : valor
+}
+
+/**
+ * Projeta a lista de sessoes para a rota GET. FUNCAO PURA e exportada: e o
+ * coracao das perguntas falsificaveis "o ?key ou o id em claro saem aqui?" e
+ * "o ip vaza quando nao e confiavel?" — o corpo so tem hashes e metadados.
+ */
+export function projetarAcesso(bruto: UiAcessoBruto): Record<string, unknown> {
+  return {
+    totalConexoes: bruto.conexoesAtivas,
+    totalSessoes: bruto.totalSessoes,
+    conexoesAtivas: bruto.conexoesAtivas,
+    ipConfiavel: bruto.ipConfiavel,
+    sessoes: bruto.sessoes.map((registo) => ({
+      hash: registo.hash,
+      criadaEm: registo.criadaEm,
+      ultimoUsoEm: registo.ultimoUsoEm,
+      ip: ouNull(registo.ip),
+      userAgent: ouNull(registo.userAgent),
+    })),
+  }
+}
+
+/**
+ * GET /__guard-ui/api/access — quem/quanto esta a acessar. SO LE. Aglutina a
+ * contagem de sockets ativos do PROXY do tunel (a fonte de `totalConexoes`/
+ * `conexoesAtivas`) e a projecao das sessoes vivas do `SessionStore`. Um
+ * endpoint de METADADOS de quem acessa: atras da MESMA barreira (loopback/tunel
+ * autenticado) e sem nunca expor a `?key`-nem o id de sessao em claro.
+ */
+export function createAccessHandler(core: UiContribCore): UiContribRequestHandler {
+  return (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    json(res, 200, projetarAcesso(core.acesso()))
   }
 }

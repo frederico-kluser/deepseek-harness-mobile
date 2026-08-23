@@ -347,3 +347,38 @@ describe('limites de memoria', () => {
     assert.notEqual(store.validate(ultimo), null)
   })
 })
+
+/* ========================================================================== */
+/* Rastreio de acesso: `regenerate` com metadados + `listar()` (aditivo)       */
+/* ========================================================================== */
+describe('rastreio de acesso (userAgent/ip) -- aditivo', () => {
+  it('regenerate SEM metadados nao cria campos ip/userAgent', () => {
+    const { store } = makeStore()
+    const id: string = store.regenerate(undefined)
+    const registos = store.listar()
+    assert.equal(registos.length, 1)
+    assert.equal(registos[0]?.userAgent, undefined, 'ausencia nao produz campo userAgent')
+    assert.equal(registos[0]?.ip, undefined, 'ausencia nao produz campo ip')
+    assert.equal(id, store.validate(id)?.id)
+  })
+
+  it('regenerate COM userAgent+ip guarda-os e lista com o hash, nunca o id', () => {
+    const { store } = makeStore()
+    const id: string = store.regenerate(undefined, { userAgent: 'Meu-Navegador/2.0', ip: '203.0.113.9' })
+    const registos = store.listar()
+    assert.equal(registos.length, 1)
+    const registo = registos[0]
+    assert.equal(registo?.userAgent, 'Meu-Navegador/2.0')
+    assert.equal(registo?.ip, '203.0.113.9')
+    assert.match(registo?.idHash ?? '', /^[0-9a-f]{16}$/u)
+    // O id em claro nunca sai na projecao; o hash e digest do sha256, nao pedaco do id.
+    assert.equal(id.includes(registo?.idHash ?? 'x'), false)
+  })
+
+  it('listar so devolve sessoes VIVAS (expiradas ficam de fora)', () => {
+    const { clock, store } = makeStore()
+    store.regenerate(undefined, { userAgent: 'A/1' })
+    clock.advance(SESSION_IDLE_TIMEOUT_MS + 1)
+    assert.equal(store.listar().length, 0, 'sessao expirada nao entra na projecao')
+  })
+})

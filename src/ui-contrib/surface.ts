@@ -41,6 +41,7 @@ import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import { createCsrfGuard, type CsrfGuard } from './csrf.ts'
 import { createIndexTap } from './html.ts'
 import {
+  createAccessHandler,
   createClientHandler,
   createConfirmHandler,
   createResetConfirmHandler,
@@ -50,7 +51,10 @@ import {
   createStopHandler,
   createTelegramClickHandler,
   createTelegramHandler,
+  createTokenHandler,
+  createTokenStateHandler,
   UI_CSRF_BINDING,
+  UI_PATH_ACCESS,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_RESET,
@@ -60,8 +64,12 @@ import {
   UI_PATH_STOP,
   UI_PATH_TELEGRAM,
   UI_PATH_TELEGRAM_CLICK,
+  UI_PATH_TOKEN,
+  UI_PATH_TOKEN_STATE,
+  type UiAcessoBruto,
   type UiContribCore,
   type UiContribRoute,
+  type UiTokenOps,
 } from './routes.ts'
 import type { BotEstado } from './bot-state.ts'
 import { createUlidFactory } from './ulid.ts'
@@ -105,6 +113,17 @@ export interface UiContribDeps {
    */
   readonly botState: () => BotEstado
   readonly requestedBy?: string
+  /**
+   * O servico de configuracao do token, fiado pela costura em `src/index.ts`
+   * (detem `config`, `statePaths` e o supervisor do worker). NUNCA sai daqui
+   * para a UI o valor do token.
+   */
+  readonly tokenOps: UiTokenOps
+  /**
+   * A projecao de acesso, fiada pela costura: contage de sockets ativos do
+   * proxy + sessoes vivas com os metadados de acesso.
+   */
+  readonly acesso: () => UiAcessoBruto
 }
 
 /** A origem que o audit log escreve para esta superficie (03-ONDAS 10, item 7). */
@@ -141,6 +160,8 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     seq: () => lastSeq,
     lastReady: () => lastReady,
     botState: deps.botState,
+    tokenOps: deps.tokenOps,
+    acesso: deps.acesso,
     csrf,
     now: deps.now,
     requestedBy,
@@ -162,6 +183,11 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     // O botao Telegram: estado (GET) e clique (POST com CSRF).
     { kind: 'exact', path: UI_PATH_TELEGRAM, handler: createTelegramHandler(core) },
     { kind: 'exact', path: UI_PATH_TELEGRAM_CLICK, handler: createTelegramClickHandler(core) },
+    // O painel de configuracao do token (POST com CSRF) e o estado sem valor.
+    { kind: 'exact', path: UI_PATH_TOKEN, handler: createTokenHandler(core) },
+    { kind: 'exact', path: UI_PATH_TOKEN_STATE, handler: createTokenStateHandler(core) },
+    // As metricas de acesso (GET, so leitura).
+    { kind: 'exact', path: UI_PATH_ACCESS, handler: createAccessHandler(core) },
   ]
 
   const rotaDisposers: Array<() => void> = []
@@ -193,3 +219,12 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     unsub()
   }
 }
+
+/** Tipos fiados da superficie para a costura (que os injeta nos deps). */
+export type {
+  EstadoDoToken,
+  FonteDoToken,
+  RegistroAcessoBruto,
+  UiAcessoBruto,
+  UiTokenOps,
+} from './routes.ts'

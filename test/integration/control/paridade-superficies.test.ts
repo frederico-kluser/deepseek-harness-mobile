@@ -212,6 +212,22 @@ function superficieUi(b: Bancada): Superficie {
     issueNonce: (action: 'start' | 'stop' | 'reset') => b.controlador.emitirNonce(action),
     emit: (intent: Parameters<TunnelController['despachar']>[0]) => b.controlador.despachar(intent),
     botState: () => ({ online: false, motivo: 'sem-chave' } as const),
+    tokenOps: {
+      validarFormato: (bruto: string) => bruto.trim().includes(':'),
+      fonte: () => 'secrets' as const,
+      sondar: async (
+        token: string,
+      ): Promise<{ ok: true; handle: string } | { ok: false; erro: string }> =>
+        token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
+      gravar: () => undefined,
+      estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+    },
+    acesso: () => ({
+      conexoesAtivas: 0,
+      totalSessoes: 0,
+      sessoes: [],
+      ipConfiavel: false,
+    }),
   }
   const startHandler = createStartHandler(core)
   const confirmHandler = createConfirmHandler(core)

@@ -58,6 +58,7 @@ import { criarCoalescedor, criarObservadorSessaoNova, criarRelatorioPeriodico } 
 import { assertValidConfig } from './config/assert.ts'
 import { assertSecureBind } from './config/bind.ts'
 import { resolveControl, resolveExposure, shouldAutoStartTunnel, type Config } from './config/schema.ts'
+import { mayTrustEdgeClientIp } from './config/schema.ts'
 import type { IncomingMessage, Server } from 'node:http'
 import type { StateStore } from './contracts/state.ts'
 import { IPC_PROTOCOL_VERSION, type IpcIntentMessage } from './contracts/ipc.ts'
@@ -79,14 +80,20 @@ import { createCsrfGuard } from './panel/csrf.ts'
 import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
 import { createOneTimeTokenStore } from './secret/ott.ts'
 import { createMagicStore } from './session/magic.ts'
-import { createNativeUiSurface } from './ui-contrib/surface.ts'
+import { createNativeUiSurface, type FonteDoToken, type UiAcessoBruto } from './ui-contrib/surface.ts'
 import { derivarEstadoDoBot } from './ui-contrib/bot-state.ts'
 import type { WebRoute } from './dsh/adapter.ts'
 import {
   analisarSecretsEnv,
   caminhoDoSecretsEnv,
+  criarSondaHttp,
+  gravarSecretsEnv,
   lerSecretsEnv,
+  validarFormatoDoToken,
 } from './telegram/onboarding.ts'
+import { arrivedViaTunnel } from './http/host-header.ts'
+import { normalizeRemoteAddress } from './http/origin.ts'
+import { EDGE_CLIENT_IP_HEADER } from './http/session-auth.ts'
 import {
   DEFAULT_PROVIDER,
   PROVIDER_ENV,
@@ -118,6 +125,7 @@ import {
  */
 export { createRequestOriginResolver } from './http/session-auth.ts'
 import { readSessionCookie, assertTrustworthyOrigin, serializeSessionCookie } from './session/cookie.ts'
+import type { RegistroDeAcesso } from './session/store.ts'
 import { createLinkTokenStore } from './session/link-token.ts'
 import type { LinkTokenSurface } from './contracts/link-token.ts'
 import { createGuardLogger, type GuardLogger } from './logging/logger.ts'
@@ -726,6 +734,31 @@ export function apply(ctx: Context, config: Config): void {
     'dsh-guard.auth-check',
   )
 
+  /**
+   * Captura os METADADOS DE ACESSO lidos do pedido para o nascimento de uma
+   * sessao: o `User-Agent` (sempre guardado, sem cortes — e so texto curto) e o
+   * IP da borda SO quando `mayTrustEdgeClientIp` o garante (`trustEdgeHeaders`
+   * + tunel + borda). O mesmo criterio do portao (`EDGE_CLIENT_IP_HEADER`, uma
+   * lista com virgulas fecha-se). NAO confia em `X-Forwarded-For` (forjavel).
+   */
+  const capturarRegistroDeAcesso = (req: IncomingMessage): RegistroDeAcesso => {
+    const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+    // Le o `Host` DIRETO: `arrivedViaTunnel` colapsa "ausente"/"repetido" no
+    // mesmo `undefined`, e ambos significam "nao chegou pelo nome do tunel".
+    const rawHost = typeof req.headers.host === 'string' ? req.headers.host : undefined
+    const confiaIp = mayTrustEdgeClientIp(exposure, arrivedViaTunnel(rawHost, tunnelOrigin.current()))
+    const rawEdge = confiaIp ? req.headers[EDGE_CLIENT_IP_HEADER] : undefined
+    const ip =
+      typeof rawEdge === 'string' && !rawEdge.includes(',') ? normalizeRemoteAddress(rawEdge) : undefined
+    // Aditivo: so entram os campos presentes; `undefined` nao cria um campo
+    // `userAgent: undefined`. A var guarda uma forma mutavel e e devolvida
+    // como `RegistroDeAcesso` (readonly na interface, construindo em UMA vez).
+    const registo: { userAgent?: string; ip?: string } = {}
+    if (userAgent !== undefined) registo.userAgent = userAgent
+    if (ip !== undefined) registo.ip = ip
+    return registo
+  }
+
   /* --- 4. A barreira, sobre o despacho do node:http.Server ------------- */
   /**
    * A SESSAO emitida pelo fluxo `?key=` do portao (onda 1).
@@ -754,7 +787,7 @@ export function apply(ctx: Context, config: Config): void {
       )
       return null
     }
-    const id = authStack().sessions.regenerate(presentedId)
+    const id = authStack().sessions.regenerate(presentedId, capturarRegistroDeAcesso(req))
     return serializeSessionCookie(id, { scheme: 'https', host })
   }
 
@@ -1108,6 +1141,89 @@ export function apply(ctx: Context, config: Config): void {
           return { online: false, motivo: tokenConfigurado ? 'sem-pareamento' : 'sem-chave' }
         }
         return derivarEstadoDoBot({ tokenConfigurado, pairing })
+      },
+      // O PAINEL DE CONFIGURACAO DO TOKEN: cada operacao e executada AQUI, na
+      // costura (que detem `config`, `statePaths` e o supervisor do worker); a
+      // superficie so orquestra o HTTP. O token NUNCA sai daqui para a UI.
+      tokenOps: (() => {
+        // A raiz do getMe e a MESMA variavel que o worker le (`TELEGRAM_API_ROOT`
+        // em worker/providers/telegram/token.ts); omitida = `api.telegram.org`.
+        const apiRoot = process.env.TELEGRAM_API_ROOT?.trim()
+        const sonda = criarSondaHttp(apiRoot === undefined || apiRoot === '' ? {} : { apiRoot })
+        // O handle lembrado da ultima GRAVACAO bem-sucedida por ESTA rota. So e
+        // setado em `gravar` (sob sucesso): um `getMe` que nao grava NAO deixa
+        // aqui um handle estale que o token-state depois mostraria como se fosse
+        // o bot vigente (LOW-1 do revisor).
+        let handleAtual: string | undefined
+        // A FONTE EFETIVA, partilhada por `fonte` e `estado` para nunca
+        // divergirem: `config.worker.token` (env) PRIMEIRO (precedencia sobre o
+        // `secrets.env`), `secrets.env` a seguir. A MESMA logica de
+        // `resolverTokenDoBot`/`resolverToken` do onboarding.
+        const fonteEfetiva = (): FonteDoToken => {
+          const doConfig = typeof config.worker.token === 'string' ? config.worker.token.trim() : ''
+          if (doConfig.length > 0) return 'env'
+          let temSecrets = false
+          try {
+            const env = lerSecretsEnv(caminhoDoSecretsEnv(statePaths))
+            const valor =
+              env === undefined ? undefined : analisarSecretsEnv(env).get(tokenVarDoProvedor)?.trim()
+            temSecrets = valor !== undefined && valor.length > 0
+          } catch (error) {
+            // secrets.env ilegivel/exposto: trata como ausente (fail-closed).
+            void error
+            temSecrets = false
+          }
+          return temSecrets ? 'secrets' : 'nenhum'
+        }
+        return {
+          validarFormato: (bruto: string): boolean => validarFormatoDoToken(bruto).valido,
+          fonte: fonteEfetiva,
+          sondar: async (token: string) => {
+            const resposta = await sonda.getMe(token)
+            if (!resposta.ok) return { ok: false, erro: 'token-invalido' }
+            return { ok: true, handle: resposta.bot.username }
+          },
+          gravar: (token: string, handle: string): void => {
+            // 1) Persistir em secrets.env (0600, atomico). Na falha, a excecao
+            //    sobe para o handler virar 500; nada muda (nem a escrita, nem o
+            //    handle lembrado).
+            gravarSecretsEnv(
+              { paths: statePaths, caminhoSecrets: caminhoDoSecretsEnv(statePaths) },
+              tokenVarDoProvedor,
+              token,
+            )
+            // 2) SO AQUI o handle e "committed": a gravacao aconteceu de facto.
+            handleAtual = handle
+            // 3) Reiniciar o worker com o token novo. Se o supervisor ainda nao
+            //    nasceu (nao ha bot a correr), o token fica persistido e sobe no
+            //    proximo boot — nao ha processo vivo para reiniciar.
+            if (workerSupervisor === undefined) return
+            workerSupervisor.definirToken(token)
+            workerSupervisor.restart('token reconfigurado por /__guard-ui/api/token')
+          },
+          estado: () => ({
+            configurado: fonteEfetiva() !== 'nenhum',
+            ...(handleAtual === undefined ? {} : { handle: handleAtual }),
+            fonte: fonteEfetiva(),
+          }),
+        }
+      })(),
+      // AS METRICAS DE ACESSO: sockets ativos do proxy do tunel + sessoes vivas
+      // do SessionStore (listar() e aditivo e devolve hash, nunca o portador).
+      acesso: (): UiAcessoBruto => {
+        const sessaoStore = authStack().sessions
+        return {
+          conexoesAtivas: tunnelProxyAtual?.conexoesAtivas ?? 0,
+          totalSessoes: sessaoStore.live,
+          sessoes: sessaoStore.listar().map((registo) => ({
+            hash: registo.idHash,
+            criadaEm: registo.criadaEm,
+            ultimoUsoEm: registo.ultimoUsoEm,
+            ...(registo.userAgent === undefined ? {} : { userAgent: registo.userAgent }),
+            ...(registo.ip === undefined ? {} : { ip: registo.ip }),
+          })),
+          ipConfiavel: mayTrustEdgeClientIp(exposure, true),
+        }
       },
     })
 

@@ -71,6 +71,12 @@ export interface TunnelProxy {
   /** O `node:http.Server` do proxy, em escuta em `127.0.0.1`. */
   readonly server: Server
   /**
+   * Sockets ativos do lado cliente do proxy (HTTP e WebSocket `upgraded`).
+   * ADITIVO/observabilidade: e a fonte da contagem de `conexoesAtivas` do
+   * painel de acesso (GET /__guard-ui/api/access).
+   */
+  get conexoesAtivas(): number
+  /**
    * Destroi TODAS as conexoes do lado cliente do proxy (sockets HTTP e
    * WebSocket `upgraded`) SEM derrubar o listener — o tunel continua de pe.
    * Idempotente, sincrono, nunca lanca. Usado pelo `/rotacionar` para encerrar
@@ -233,6 +239,9 @@ export function createTunnelProxy(deps: TunnelProxyDeps): TunnelProxy {
 
   return {
     server,
+    get conexoesAtivas(): number {
+      return conexoesAtivas.size
+    },
     encerrarConexoesAtivas(): void {
       // Sincrono e idempotente (Q-2). NUNCA derruba o listener (o tunel fica de
       // pe: o proxy continua a aceitar novas ligacoes com as credenciais novas).

@@ -47,6 +47,9 @@ import {
   UI_PATH_STOP,
   UI_PATH_TELEGRAM,
   UI_PATH_TELEGRAM_CLICK,
+  UI_PATH_TOKEN,
+  UI_PATH_TOKEN_STATE,
+  UI_PATH_ACCESS,
   type UiContribRoute,
 } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -143,6 +146,22 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
     },
     now: () => clock.now(),
     botState: () => ({ online: false, motivo: 'sem-chave' }),
+    tokenOps: {
+      validarFormato: (bruto: string) => bruto.trim().includes(':'),
+      fonte: () => 'secrets' as const,
+      sondar: async (
+        token: string,
+      ): Promise<{ ok: true; handle: string } | { ok: false; erro: string }> =>
+        token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
+      gravar: () => undefined,
+      estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+    },
+    acesso: () => ({
+      conexoesAtivas: 0,
+      totalSessoes: 0,
+      sessoes: [],
+      ipConfiavel: false,
+    }),
     ...overrides,
   }
 
@@ -262,6 +281,9 @@ describe('registo da contribuicao', () => {
         UI_PATH_CLIENT,
         UI_PATH_TELEGRAM,
         UI_PATH_TELEGRAM_CLICK,
+        UI_PATH_TOKEN,
+        UI_PATH_TOKEN_STATE,
+        UI_PATH_ACCESS,
       ].toSorted(),
     )
     for (const rota of bancada.rotas.values()) {
@@ -273,7 +295,7 @@ describe('registo da contribuicao', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-    assert.equal(bancada.rotaDesmontadas, 9, 'as nove rotas (telegram + reset) sao removidas')
+    assert.equal(bancada.rotaDesmontadas, 12, 'as doze rotas (telegram + token + acesso) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
@@ -306,6 +328,22 @@ describe('registo da contribuicao', () => {
       subscribe: () => () => undefined,
       now: () => clock.now(),
       botState: () => ({ online: false, motivo: 'sem-chave' }),
+      tokenOps: {
+        validarFormato: (bruto: string) => bruto.trim().includes(':'),
+        fonte: () => 'secrets' as const,
+        sondar: async (
+          token: string,
+        ): Promise<{ ok: true; handle: string } | { ok: false; erro: string }> =>
+          token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
+        gravar: () => undefined,
+        estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+      },
+      acesso: () => ({
+        conexoesAtivas: 0,
+        totalSessoes: 0,
+        sessoes: [],
+        ipConfiavel: false,
+      }),
     }
     assert.throws(() => createNativeUiSurface(deps), /rota duplicada/u)
     assert.equal(rotasDesmontadas, 2)

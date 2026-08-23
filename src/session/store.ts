@@ -161,8 +161,14 @@ export interface GuardSessionStore extends SessionStore {
   /**
    * ANTI-FIXATION. Invalida `previousId` (se existir) e emite um id novo.
    * Chamado APOS a credencial ser aceite, nunca antes.
+   *
+   * O PARAMETRO ADITIVO `metadados` guarda, no nascimento da sessao, o que
+   * o acesso monitoring precisa e nao esta noutro sitio: o `user-agent` do
+   * pedido que autenticou e o IP (SO quando a borda o garante — ver
+   * `src/http/session-auth.ts` e `mayTrustEdgeClientIp`). Omitir continua a
+   * emitir sessao sem metadados — aditivo, nao quebra chamadores existentes.
    */
-  regenerate(previousId: string | undefined): SessionId
+  regenerate(previousId: string | undefined, metadados?: RegistroDeAcesso): SessionId
   validate(id: string): GuardSession | null
   /** Logout: invalida do lado do SERVIDOR, nao apenas apaga o cookie. */
   revoke(id: string): boolean
@@ -172,11 +178,43 @@ export interface GuardSessionStore extends SessionStore {
   dispose(): void
   /** Sessoes vivas (sem varrer expiradas). Observabilidade e teste. */
   readonly live: number
+  /**
+   * PROJECCAO DE ACESSO — lista as sessoes vivas com o minimo de que o
+   * painel de metricas precisa. ADITIVO a `live`: devolve SEMPRE o `idHash`
+   * (digest, nunca o portador), os instantes e os metadados de acesso quando
+   * foram capturados. Nao vaza o id em claro nem o `?key`.
+   */
+  listar(): ReadonlyArray<RegistroDeSessao>
+}
+
+/** O que o acesso monitoring captura no nascimento de uma sessao. */
+export interface RegistroDeAcesso {
+  /** `User-Agent` do pedido que criou a sessao. Nunca emitida a altura (curta). */
+  readonly userAgent?: string | undefined
+  /**
+   * IP normalizado do cliente, SO quando `mayTrustEdgeClientIp` o garante
+   * (`exposure.trustEdgeHeaders` + tunel + borda). Ausente = `undefined`.
+   */
+  readonly ip?: string | undefined
+}
+
+/** Uma sessao sob a forma redigida que o painel de acesso consome. */
+export interface RegistroDeSessao {
+  /** `sha256(id)` — nunca o id em claro, nunca o `?key`. */
+  readonly idHash: string
+  readonly criadaEm: number
+  readonly ultimoUsoEm: number
+  /** Presente sse capturado no nascimento; caso contrario `undefined`. */
+  readonly userAgent?: string | undefined
+  /** Presente sse confiavel; caso contrario `undefined`. */
+  readonly ip?: string | undefined
 }
 
 interface SessionRecord {
   criadaEm: number
   ultimoUsoEm: number
+  userAgent?: string | undefined
+  ip?: string | undefined
 }
 
 function digestOf(id: string): string {
@@ -265,7 +303,7 @@ export function createSessionStore(deps: SessionStoreDeps): GuardSessionStore {
    * "fica exatamente uma viva" e verdade para UMA sessao apresentada, nao uma
    * invariante do store.
    */
-  function regenerate(previousId: string | undefined): SessionId {
+  function regenerate(previousId: string | undefined, metadados?: RegistroDeAcesso): SessionId {
     guardaDisposto()
     if (typeof previousId === 'string' && PRESENTED_ID.test(previousId)) {
       vivas.delete(digestOf(previousId))
@@ -274,7 +312,15 @@ export function createSessionStore(deps: SessionStoreDeps): GuardSessionStore {
     varrer(agora)
     abrirEspaco()
     const id = novoId()
-    vivas.set(digestOf(id), { criadaEm: agora, ultimoUsoEm: agora })
+    vivas.set(digestOf(id), {
+      criadaEm: agora,
+      ultimoUsoEm: agora,
+      // Aditivo: so entram quando o nascimento os entregou, e apenas os
+      // campos presentes — um `undefined` nao cria um campo `ip: undefined`
+      // que o JSON do painel depois serializaria como `null`.
+      ...(metadados?.userAgent === undefined ? {} : { userAgent: metadados.userAgent }),
+      ...(metadados?.ip === undefined ? {} : { ip: metadados.ip }),
+    })
     return toSessionId(id)
   }
 
@@ -340,6 +386,24 @@ export function createSessionStore(deps: SessionStoreDeps): GuardSessionStore {
     },
     get live(): number {
       return vivas.size
+    },
+    listar(): ReadonlyArray<RegistroDeSessao> {
+      const agora = clock.now()
+      const registos: RegistroDeSessao[] = []
+      for (const [chave, rec] of vivas) {
+        // A mesma redacao de `validate`: o `idHash` e o prefixo de 16 hex do
+        // digest, nunca o portador. A sessao EXPIRADA nao entra na projecao —
+        // seria uma sessao que o `validate` ja devolveria `null`.
+        if (expirada(rec, agora)) continue
+        registos.push({
+          idHash: chave.slice(0, 16),
+          criadaEm: rec.criadaEm,
+          ultimoUsoEm: rec.ultimoUsoEm,
+          ...(rec.userAgent === undefined ? {} : { userAgent: rec.userAgent }),
+          ...(rec.ip === undefined ? {} : { ip: rec.ip }),
+        })
+      }
+      return registos
     },
   }
 }

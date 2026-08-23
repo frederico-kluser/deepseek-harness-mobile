@@ -1934,7 +1934,14 @@ describe('M5: a escrita atómica do `secrets.env`, exercida e não só comentada
     // `O_EXCL`, `O_NOFOLLOW` e `fsync` não têm efeito observável barato: um
     // temporário com nome aleatório nunca colide, e o `fsync` só se mede
     // cortando a energia. A alternativa a NÃO os prender é prendê-los aqui.
-    const fonte = readFileSync(CLI, 'utf8')
+    //
+    // O `gravarSecretsEnv` vive AGORA em `src/telegram/onboarding.ts` (o
+    // destinho UNICO da escrita do `secrets.env`, partilhado com o CLI e com a
+    // rota POST /__guard-ui/api/token); é lá que as bandeiras têm de estar.
+    const fonte = readFileSync(
+      join(import.meta.dirname, '../../../src/telegram/onboarding.ts'),
+      'utf8',
+    )
     const corpo = /export function gravarSecretsEnv[\s\S]*?\n\}\n/u.exec(fonte)?.[0] ?? ''
     assert.ok(corpo.length > 0, 'não encontrei o corpo de gravarSecretsEnv')
     for (const bandeira of ['O_EXCL', 'O_NOFOLLOW', 'fsyncSync', 'fchmodSync', 'renameSync']) {
@@ -1942,11 +1949,7 @@ describe('M5: a escrita atómica do `secrets.env`, exercida e não só comentada
     }
     assert.ok(!corpo.includes('writeFileSync'), 'a escrita voltou a ser não-atómica')
 
-    const onboarding = readFileSync(
-      join(import.meta.dirname, '../../../src/telegram/onboarding.ts'),
-      'utf8',
-    )
-    const leitura = /export function lerSecretsEnv[\s\S]*?\n\}\n/u.exec(onboarding)?.[0] ?? ''
+    const leitura = /export function lerSecretsEnv[\s\S]*?\n\}\n/u.exec(fonte)?.[0] ?? ''
     assert.ok(leitura.includes('O_NOFOLLOW'), 'a LEITURA deixou de recusar symlink')
     assert.ok(leitura.includes('fstatSync'), 'o modo voltou a ser lido pelo caminho, não pelo fd')
   })
