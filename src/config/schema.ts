@@ -1,6 +1,6 @@
 /**
  * `interface Config` -- contrato congelado da entrada `config` do
- * `cordis.patch.yml` (id `guarded-bot-orchestrator`).
+ * `cordis.patch.yml` (id `guard-messenger`).
  *
  * COMO O MOTOR DE PATCHES RESOLVE ISTO (corrigido: a versao anterior deste
  * comentario dizia *whole-entry replace*, e esta errado). O `replace` do

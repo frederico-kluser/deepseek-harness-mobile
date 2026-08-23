@@ -73,14 +73,14 @@ prompt_head = [
 ]
 for nch in range(1, len(cmd)+1):
     im, d = base()
-    window(d, "guarded-bot-orchestrator  [dsh]")
+    window(d, "guard-messenger  [dsh]")
     lines(d, prompt_head)
     d.text((20, 116), cmd[:nch], font=FS_MD, fill=FG)
     cap(d, "0-3s  bind travado em 127.0.0.1 • prova: /api sem credencial", ACC)
     emit(im)
 
 im, d = base()
-window(d, "guarded-bot-orchestrator  [dsh]")
+window(d, "guard-messenger  [dsh]")
 lines(d, prompt_head)
 d.text((20, 116), cmd, font=FS_MD, fill=FG)
 d.text((20, 140), "401", font=F(22), fill=RED)
@@ -104,13 +104,13 @@ hold(im, 16)
 cmd2 = "$ curl -s -o /dev/null -w '%{http_code}' -u dsh:******** http://127.0.0.1:3080/api"
 for nch in range(1, len(cmd2)+1):
     im, d = base()
-    window(d, "guarded-bot-orchestrator  [dsh]")
+    window(d, "guard-messenger  [dsh]")
     lines(d, prompt_head[:2])
     d.text((20, 116), cmd2[:nch], font=FS_MD, fill=FG)
     cap(d, "7-11s  com a credencial do dono passa-se", ACC)
     emit(im)
 im, d = base()
-window(d, "guarded-bot-orchestrator  [dsh]")
+window(d, "guard-messenger  [dsh]")
 lines(d, prompt_head[:2])
 d.text((20, 116), cmd2, font=FS_MD, fill=FG)
 d.text((20, 140), "200", font=F(22), fill=GREEN)

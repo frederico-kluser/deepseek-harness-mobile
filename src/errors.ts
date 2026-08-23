@@ -17,10 +17,10 @@
  * `name`, que e o que o motor le.
  *
  * NOTA: nao confundir com o `id` usado no `cordis.patch.yml`
- * (`guarded-bot-orchestrator`). O `id` identifica a ENTRADA de configuracao
+ * (`guard-messenger`). O `id` identifica a ENTRADA de configuracao
  * numa camada de patch; o `name` identifica o pacote/modulo a resolver.
  */
-export const PLUGIN_NAME = 'dsh-guarded-bot-orchestrator'
+export const PLUGIN_NAME = 'dsh-guard-messenger'
 
 /**
  * Codigos estaveis. Cada um corresponde a uma condicao que o operador tem de

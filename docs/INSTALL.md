@@ -1,6 +1,6 @@
 # INSTALL.md — instalação passo a passo
 
-Este guia instala o plugin `dsh-guarded-bot-orchestrator` num DeepSeek Harness (DSH) e verifica que o portão está a funcionar. Pressupõe:
+Este guia instala o plugin `dsh-guard-messenger` num DeepSeek Harness (DSH) e verifica que o portão está a funcionar. Pressupõe:
 
 - um **DSH instalado e a correr** (o formato canónico da *awesome-list* é `dsh plugin --profile <perfil> add <pacote>`; alternativamente `add github:owner/repo`);
 - **Node ≥ 24** (`engines.node: ">=24"`);
@@ -25,7 +25,7 @@ Este guia instala o plugin `dsh-guarded-bot-orchestrator` num DeepSeek Harness (
 ## Passo 1 — Adicionar o plugin
 
 ```sh
-dsh plugin --profile web add dsh-guarded-bot-orchestrator
+dsh plugin --profile web add dsh-guard-messenger
 ```
 
 > **Não copies ficheiro nenhum à mão.** A camada de *Bundle* deste pacote entra **automaticamente** com o `dsh plugin add`: o `package.json` declara `dsh.bundle.patch`, o que ativa o manifesto de Bundle (`cordis.patch.yml`) sem passo de `cp` manual. Uma cópia manual antiga teria aplicado as mesmas entradas uma segunda vez, noutra camada de precedência.
@@ -100,7 +100,7 @@ nenhum.**
 - **Desinstalar e reverter:**
 
 ```sh
-dsh plugin remove dsh-guarded-bot-orchestrator
+dsh plugin remove dsh-guard-messenger
 ```
 
 Desinstalar deixa **zero processos remanescentes** (nenhum worker nem túnel) e a UI do DSH volta ao comportamento original (sem portão) — verificado no smoke test pós-release (`docs/plano/04-TESTES.md §10` item 12).

@@ -2,7 +2,7 @@
 name: dsh-provider-bot
 description: >-
   Use ao adicionar um novo provedor de mensageria a este repo
-  (dsh-guarded-bot-orchestrator) — WhatsApp, Discord, Matrix, Signal, Slack,
+  (dsh-guard-messenger) — WhatsApp, Discord, Matrix, Signal, Slack,
   X/Telegram alternativo, ou qualquer canal com comandos e cliques/teclado.
   Cobre a arquitectura de provedores (entry→registry→adapter→core→bridge→IPC),
   o CONTRATO neutro tipo-a-tipo em worker/surface/contract.ts, o passo-a-passo

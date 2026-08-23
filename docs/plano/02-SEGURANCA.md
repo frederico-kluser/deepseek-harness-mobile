@@ -1,7 +1,7 @@
 # 02 — Segurança: modelo de ameaças e controles
 
 > **Escopo deste arquivo.** Este é o documento normativo de segurança do plugin
-> `dsh-guarded-bot-orchestrator` na sua nova missão: guiar o onboarding do Telegram,
+> `dsh-guarded-bot-orchestrator` na sua nova missão: guiar o onboarding do Telegram, (hoje: dsh-guard-messenger)
 > abrir um túnel Cloudflare para o DeepSeek Harness (DSH) e permitir ligar/desligar o
 > servidor pelo bot e pela UI. Os outros arquivos do plano (`01-ARQUITETURA.md`,
 > `03-ONDAS.md`, `04-TESTES.md`) **dependem** deste: nenhuma onda pode ser considerada

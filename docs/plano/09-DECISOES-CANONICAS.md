@@ -359,7 +359,7 @@ doc divergem entre 01, 02, 03, 04, 06 e 07 (C4 itens 4, 24, 25, 26, 27, 28).
 | Var. de ambiente do chat do dono | `TELEGRAM_OWNER_CHAT_ID` | — |
 | Var. de ambiente que libera teste de rede real | `DSH_GUARD_LIVE_TESTS=1` | — |
 | Comandos do bot (`setMyCommands`, nesta ordem) | `/ligar`, `/desligar`, `/status`, `/acessar`, `/rotacionar`, `/parear <código>`, `/emergencia` | `/parar`, `/parar_bot`, `/desligar_servidor`, `/abrir_tunel`, `/vincular` |
-| Nome do pacote npm | `dsh-guarded-bot-orchestrator` | — |
+| Nome do pacote npm | `dsh-guarded-bot-orchestrator` | — | (hoje: dsh-guard-messenger)
 | Nome do plugin (`export const name`) | `dsh-guarded-bot-orchestrator` | — |
 | `id` da entrada do plugin em `cordis.patch.yml` | `guarded-bot-orchestrator` | — |
 | `id` do interceptor em `cordis.patch.yml` | `core-auth-interceptor` | — |

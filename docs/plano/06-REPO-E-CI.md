@@ -89,7 +89,7 @@ invariante de bind** como *required check* no CI (§6.3).
 ## 2. Árvore completa do repositório
 
 ```text
-dsh-guarded-bot-orchestrator/
+dsh-guarded-bot-orchestrator/ (hoje: dsh-guard-messenger)
 ├── .changeset/
 │   ├── config.json                  # Changesets: baseBranch master, access public, commit false
 │   └── README.md                    # Boilerplate gerado por `changeset init`

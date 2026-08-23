@@ -2,7 +2,7 @@
 name: dsh-telegram-provider
 description: >-
   Use ao trabalhar no adaptador Telegram deste repo
-  (dsh-guarded-bot-orchestrator) — implementar, corrigir, testar ou portar o
+  (dsh-guard-messenger) — implementar, corrigir, testar ou portar o
   `worker/providers/telegram/**`. Cobre a gramática do callback_data `g1`, os
   limites 4096/1/1/64/supportsEditing, o long polling (sequência de boot,
   409→11 / 401→12 / boot 45 s→14, retry_after do 429), answerCallback SEMPRE

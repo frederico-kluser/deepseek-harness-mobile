@@ -23,7 +23,7 @@
  * com o sufixo `/worker` porque estas linhas saem no `stderr` do FILHO e o
  * operador tem de conseguir separa-las das do host num log intercalado.
  */
-export const WORKER_LOG_NAME = 'dsh-guarded-bot-orchestrator/worker'
+export const WORKER_LOG_NAME = 'dsh-guard-messenger/worker'
 
 /**
  * Vocabulario FECHADO. Cada codigo e uma condicao que o operador tem de

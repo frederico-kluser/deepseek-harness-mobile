@@ -5,7 +5,7 @@
 > do `deep-orchestrator`), a **técnica concreta** de cada um, os roteiros manuais e
 > o desenho de CI.
 >
-> Escopo: o plugin `dsh-guarded-bot-orchestrator` no estado atual (`src/index.ts`,
+> Escopo: o plugin `dsh-guarded-bot-orchestrator` no estado atual (`src/index.ts`, (hoje: dsh-guard-messenger)
 > 1836 linhas; `test/index.test.ts`, ~2100 linhas, `node --test`) **mais** as quatro
 > capacidades novas — onboarding do Telegram, túnel Cloudflare, senha de acesso e
 > liga/desliga nas duas superfícies.

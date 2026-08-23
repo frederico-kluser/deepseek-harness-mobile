@@ -33,7 +33,7 @@ Validações das Ondas 5/6/7: PASS · revisão adversarial antes de cada merge: 
 ## Itens pendentes (fora de escopo / manuais)
 - pnpm test:live exige DSH_GUARD_LIVE_TESTS=1 + túnel real (documentado).
 - Runbooks manuais M1–M7 (docs/manual-runs como checklists, placeholders honestos).
-- Re-verificação do actionlint (binário; T7.2 rodou 1.7.12) e confirmação da reserva do nome npm (dsh-guarded-bot-orchestrator E404 → credenciais pendentes).
+- Re-verificação do actionlint (binário; T7.2 rodou 1.7.12) e confirmação da reserva do nome npm (dsh-guarded-bot-orchestrator E404 → credenciais pendentes). (hoje: dsh-guard-messenger)
 - docs/plano/06-REPO-E-CI.md §11.2 e docs/spikes/api-dsh.md §1 ainda citam faixa 0.1.0-rc.7..rc.9 (atualizar).
 - .changeset/config.json $schema aponta @changesets/config@3.0.1 (instalado 4.0.0) — IDE-only.
 

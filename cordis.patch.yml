@@ -1,5 +1,5 @@
 # =============================================================================
-# dsh-guarded-bot-orchestrator — CAMADA 1 (BUNDLE)
+# dsh-guard-messenger — CAMADA 1 (BUNDLE)
 # =============================================================================
 #
 # Este ficheiro é o patch de BUNDLE do pacote. Ele entra na composição porque o
@@ -9,7 +9,7 @@
 #
 # É a mesma declaração que `@deepseek-ai/dsh-base` e `@deepseek-ai/dsh-web-app`
 # fazem sobre os seus próprios manifestos (medido nos tarballs 0.1.0-rc.7). Por
-# causa dela, `dsh plugin --profile web add dsh-guarded-bot-orchestrator`
+# causa dela, `dsh plugin --profile web add dsh-guard-messenger`
 # ATIVA esta camada sozinho. NÃO existe passo de `cp` manual.
 #
 # A camada 2 (Profile) é OPCIONAL e vive noutro ficheiro:
@@ -43,7 +43,7 @@
 # valor vazio, e o plugin trata "vazio" como "não configurado" — que é um estado
 # legítimo e documentado do produto:
 #
-#     $ dsh plugin --profile web add dsh-guarded-bot-orchestrator
+#     $ dsh plugin --profile web add dsh-guard-messenger
 #     $ dsh web
 #     [guarded-bot] senha gerada (aparece UMA vez): K7QF-2M9X-...-4TZP
 #     [guarded-bot] bind 127.0.0.1:3080 — OK
@@ -81,7 +81,7 @@
 # `cordis.profile.patch.example.yml`: lá é um passo deliberado, verificável e
 # reversível pelo operador, com o comando de verificação ao lado.
 #
-# O `id` inserido aqui, `guarded-bot-orchestrator`, é do PRÓPRIO plugin e não é
+# O `id` inserido aqui, `guard-messenger`, é do PRÓPRIO plugin e não é
 # declarado por mais nenhum pacote. Não há com o que colidir.
 #
 # -----------------------------------------------------------------------------
@@ -138,7 +138,7 @@
 - insert:
 
     # =========================================================================
-    # dsh-guarded-bot-orchestrator — a única linha deste bundle
+    # dsh-guard-messenger — a única linha deste bundle
     # =========================================================================
     # O QUÊ: regista o orquestrador guardado, que faz duas coisas:
     #        (a) instala a BARREIRA sobre o `webServer`, trocando o dono do
@@ -158,8 +158,8 @@
     # com a `interface Config` exportada por `src/`. Não renomear, não
     # acrescentar chaves fora do contrato. Chave OMITIDA aqui não é erro: é o
     # plugin a aplicar o seu próprio default (ver `worker.cwd` abaixo).
-    - id: guarded-bot-orchestrator
-      name: 'dsh-guarded-bot-orchestrator'
+    - id: guard-messenger
+      name: 'dsh-guard-messenger'
       config:
         # --- Perímetro de rede -----------------------------------------------
         # `allowedHosts` é a ALLOWLIST DO ENDEREÇO DE BIND, isto é, os valores
@@ -354,7 +354,7 @@
           # o processo filho, e o plugin aplica um default seguro.
           #
           # PORQUE UM VALOR FIXO SERIA DESTRUTIVO AQUI: o valor anterior era
-          # `/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator/worker`.
+          # `/usr/local/lib/dsh-plugins/dsh-guard-messenger/worker`.
           # Depois de `dsh plugin add` o pacote fica sob o `node_modules` do
           # perfil, e esse caminho não existe. Como o plugin valida no arranque
           # que o `cwd` existe e é um diretório, um caminho fixo errado

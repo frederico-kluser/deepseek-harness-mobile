@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * dsh-guarded-bot-orchestrator -- RAIZ DE COMPOSICAO
+ * dsh-guard-messenger -- RAIZ DE COMPOSICAO
  * Plugin Cordis v4 para o DeepSeek Harness (DSH) v0.1
  * =============================================================================
  *

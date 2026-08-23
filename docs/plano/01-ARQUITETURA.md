@@ -14,7 +14,7 @@
 O objetivo é permitir que o dono da máquina use a Web UI do DeepSeek Harness (DSH) para
 codificar a partir do celular, **sem abrir nenhuma porta de entrada no firewall e sem
 alargar o bind para além do loopback**. O plugin que já existe neste repositório
-(`dsh-guarded-bot-orchestrator`) é o portão HTTP do plano de controle: intercepta
+(`dsh-guarded-bot-orchestrator`) é o portão HTTP do plano de controle: intercepta (hoje: dsh-guard-messenger)
 `register` / `registerFallback` / `registerUpgrade`, exige credencial, recusa origens
 fora da allowlist, trava o bind em `127.0.0.1` com falha ruidosa no load, veta elevação
 de permissão e supervisiona um subprocesso de longa duração com tree-kill real. A

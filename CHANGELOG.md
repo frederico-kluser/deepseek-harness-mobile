@@ -14,7 +14,7 @@
   "telegram: não configurado — rode /parear <código> no bot". Token não-string
   continua a ser recusado, e o worker do Telegram só é iniciado quando há token
   presente. +4 testes.
-Todas as mudanças notáveis em `dsh-guarded-bot-orchestrator` são documentadas neste arquivo.
+Todas as mudanças notáveis em `dsh-guard-messenger` são documentadas neste arquivo.
 
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto adere ao
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
@@ -38,7 +38,7 @@ linha `[Unreleased]` é substituído a cada `changeset version`.
 
 ## [0.1.0] - 2026-08-22
 
-- Primeira publicação do `dsh-guarded-bot-orchestrator` v0.1.0 no npm (registry npmjs.org, tag `latest`).
+- Primeira publicação do `dsh-guarded-bot-orchestrator` v0.1.0 no npm (registry npmjs.org, tag `latest`). (hoje: `dsh-guard-messenger` — o pacote foi renomeado a partir da 0.1.1.)
 
 ### Adicionado
 

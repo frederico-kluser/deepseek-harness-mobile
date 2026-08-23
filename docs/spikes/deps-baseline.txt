@@ -1,6 +1,6 @@
 Legend: production dependency, optional only, dev only
 
-dsh-guarded-bot-orchestrator@0.1.0 /home/ondokai/Projects/deepseek-harness-mobile
+dsh-guarded-bot-orchestrator@0.1.0 /home/ondokai/Projects/deepseek-harness-mobile (hoje: dsh-guard-messenger)
 │
 │   dependencies:
 └── grammy@1.45.1

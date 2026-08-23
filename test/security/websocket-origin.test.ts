@@ -348,7 +348,7 @@ describe('ADV-047..049 -- o handshake nao pode nem morrer a meio nem vazar detal
     assert.equal(status(forjado), 403)
     assert.match(forjado.written, /Content-Length: 0/u)
     assert.equal(forjado.written.includes('evil'), false, 'a origem recusada nao pode ecoar no corpo')
-    assert.equal(forjado.written.includes('dsh-guarded-bot'), false, 'o nome do plugin nao pode sair')
+    assert.equal(forjado.written.includes('dsh-guard-messenger'), false, 'o nome do plugin nao pode sair')
     assert.equal(/\bv?\d+\.\d+\.\d+\b/u.test(forjado.written), false, 'nenhuma versao no fio')
     assert.equal(forjado.written.includes('WWW-Authenticate'), false)
   })

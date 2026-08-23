@@ -26,7 +26,7 @@ violação — a frase não pode aparecer de forma nenhuma.
 - B0: build verde contra @deepseek-ai/* REAIS re-verificado — o upstream publicou 0.1.1-rc.1 e a faixa foi revista (N=0.1.1-rc.*, N-1=0.1.0-rc.*; types/ regenerados byte-exact; API aditiva; CONTRACT-001/008 atualizados) — fix w6-fix-upstream-011rc (e95da74).
 - B1 (dsh.bundle): decisão MEDIDA registada no package.json (//dsh): bundle com .patch (o gate aceita {} mas o produto não ativa). CONFERIDO.
 - B6 (SECURITY.md + PVR): SECURITY.md existe (T1.4); Private Vulnerability Reporting = configuração da UI do GitHub (humano), registada como passo pós-onda.
-- Nome npm dsh-guarded-bot-orchestrator: npm view = E404 (LIVRE) em 2026-08-20 — a reserva (0.0.1 stub, T1.4) NÃO está no registry; reserva pendente de credenciais de publicação (humano/CI). Risco de name-squatting registado.
+- Nome npm dsh-guarded-bot-orchestrator: npm view = E404 (LIVRE) em 2026-08-20 — a reserva (0.0.1 stub, T1.4) NÃO está no registry; reserva pendente de credenciais de publicação (humano/CI). Risco de name-squatting registado. (histórico: o pacote foi renomeado para `dsh-guard-messenger`; a reserva passa a aplicar-se ao nome novo.)
 - exports+repository: já no estado-alvo (types primeiro/default por último; repository git+https exato) — CONGELADOS para a Onda 7 (T7.1).
 - Texto-base do README: presente — CONGELADO para T7.4.
 

@@ -1,6 +1,6 @@
 # 00 — ÍNDICE DO PLANO
 
-**Plugin `dsh-guarded-bot-orchestrator` para o DeepSeek Harness.** O usuário pediu quatro
+**Plugin `dsh-guarded-bot-orchestrator` para o DeepSeek Harness.** O usuário pediu quatro (hoje: dsh-guard-messenger)
 capacidades: **(a)** guiar quem ainda não conectou o Telegram, passo a passo; **(b)** com o
 Telegram conectado, subir o túnel Cloudflare e devolver o **link** para acessar o próprio DSH e
 codificar do celular; **(c)** gerar uma **senha** que impede terceiros de entrar na máquina, com as

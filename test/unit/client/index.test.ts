@@ -105,7 +105,7 @@ function carregarBundle(fetchStub: typeof fetch): Record<string, unknown> {
   // `require` das palavras-seed do harness.
   windowHost[MODULE_LOADER_KEY] = {
     load(registro: { id: string; factory: (requireFn: (id: string) => unknown) => Record<string, unknown> }) {
-      assert.equal(registro.id, 'dsh-guarded-bot-orchestrator')
+      assert.equal(registro.id, 'dsh-guard-messenger')
       const seeds: Record<string, unknown> = {
         react: { createElement: () => ({}) },
         'react/jsx-runtime': {},

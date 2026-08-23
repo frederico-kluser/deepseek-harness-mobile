@@ -55,7 +55,7 @@ O modelo novo: o DSH abre **direto em `127.0.0.1`** (sem login); a autenticaçã
 Ver `docs/INSTALL.md` §Desinstalar e reverter. Resumo:
 
 ```sh
-dsh plugin remove dsh-guarded-bot-orchestrator
+dsh plugin remove dsh-guard-messenger
 ```
 
 Deixa zero processos e a UI volta ao original. Para apagar também os dados locais, remove

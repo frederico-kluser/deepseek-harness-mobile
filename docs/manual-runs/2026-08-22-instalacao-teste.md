@@ -65,7 +65,7 @@ ACEITE OK: 401 sem credencial / 200 com credencial / nenhum processo ao fim.
 
 `DSH_HOME` isolado: `$WORKTREE/.dsh-test-home` (proibido tocar no DSH_HOME real).
 
-Empacotei: `pnpm pack` → `dsh-guarded-bot-orchestrator-0.1.0.tgz`.
+Empacotei: `pnpm pack` → `dsh-guarded-bot-orchestrator-0.1.0.tgz`. (hoje: dsh-guard-messenger)
 
 ```
 dsh: initialized profile web at .../.dsh-test-home/profiles/web

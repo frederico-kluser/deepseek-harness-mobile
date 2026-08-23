@@ -159,7 +159,7 @@ export function describeForLog(value: unknown, knownSecrets: readonly string[] =
 /* ERRO TIPADO E CODIGOS DE SAIDA (port de `worker/lib/errors.ts`)            */
 /* ========================================================================== */
 
-export const WORKER_LOG_NAME = 'dsh-guarded-bot-orchestrator/worker'
+export const WORKER_LOG_NAME = 'dsh-guard-messenger/worker'
 
 /**
  * Vocabulario FECHADO de causas. Espelha `WorkerErrorCode` de

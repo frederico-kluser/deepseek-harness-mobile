@@ -1,5 +1,5 @@
 # =============================================================================
-# dsh-guarded-bot-orchestrator — CAMADA 2 (PROFILE), EXEMPLO E OPCIONAL
+# dsh-guard-messenger — CAMADA 2 (PROFILE), EXEMPLO E OPCIONAL
 # =============================================================================
 #
 # ISTO É UM EXEMPLO. Não é aplicado por ninguém automaticamente, e o plugin
@@ -275,9 +275,9 @@
 # Ao copiar, confira o bloco contra o `config` do `cordis.patch.yml` do pacote
 # NA VERSÃO QUE TEM INSTALADA, e contra:
 #
-#     dsh --profile web --dump-default-config | grep -A30 'id: guarded-bot-orchestrator'
+#     dsh --profile web --dump-default-config | grep -A30 'id: guard-messenger'
 #
-# - id: guarded-bot-orchestrator
+# - id: guard-messenger
 #   config:
 #     realm: 'Secure DSH Interface'
 #     allowedHosts:
@@ -308,7 +308,7 @@
 #       #
 #       # Note `dist/worker`, e não `worker`: no artefacto distribuído o worker
 #       # está compilado. `<pacote>/worker/` é fonte e não viaja no tarball.
-#       cwd: '/usr/local/lib/dsh-plugins/dsh-guarded-bot-orchestrator/dist/worker'
+#       cwd: '/usr/local/lib/dsh-plugins/dsh-guard-messenger/dist/worker'
 #       # NUNCA escreva o token literal aqui. Esta expressão apenas REFERENCIA
 #       # a variável de ambiente; nenhum segredo é materializado no ficheiro.
 #       # Ausência vira string vazia e o worker fica em baixo — "telegram: não

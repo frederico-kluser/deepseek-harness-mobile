@@ -18,7 +18,7 @@
 
 ## Entrada proposta (linha única do registro)
 
-DSH | dsh-guarded-bot-orchestrator | Expõe a Web UI do DSH por um túnel Cloudflare
+DSH | dsh-guard-messenger | Expõe a Web UI do DSH por um túnel Cloudflare
 efêmero sem alargar o bind de loopback: acesso local aberto; túnel protegido por chave no
 link `?key=` (reutilizável, revogável); liga/desliga pelo bot do Telegram.
 
@@ -38,7 +38,7 @@ protegido por chave no link (`?key=`) e controle por um bot do Telegram.
 
 **Install (formato canônico das 1.650 entradas, 08 §8:43):**
 
-    dsh plugin --profile web add dsh-guarded-bot-orchestrator
+    dsh plugin --profile web add dsh-guard-messenger
 
 ### Por que entra (diferenciais verificáveis)
 

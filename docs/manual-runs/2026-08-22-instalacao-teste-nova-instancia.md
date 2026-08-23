@@ -6,7 +6,7 @@
 **Instância alvo:** `deepseek-harness` clonado fresco em `~/dsh-test-instance/harness`
 (master `b150a55`, dsh 0.1.1-rc.2), com homes isolados `DSH_HOME=~/dsh-test`
 e `DSH_AGENTS_HOME=~/.agents-test` — a instalação REAL do DSH (porta 3080) fica intocada.
-**Plugin testado:** `dsh-guarded-bot-orchestrator` v0.1.1 **local** (commit `3233c54`,
+**Plugin testado:** `dsh-guarded-bot-orchestrator` v0.1.1 **local** (commit `3233c54`, (hoje: dsh-guard-messenger)
 + .changeset/instalacao-nova-senha-do-portao.md), empacotado via `pnpm pack`.
 
 ## (a) Gate local — ✅ (integralmente verde nesta máquina)

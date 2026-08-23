@@ -1,5 +1,5 @@
 ---
-'dsh-guarded-bot-orchestrator': minor
+'dsh-guard-messenger': minor
 ---
 
 Arquitetura de provedores de mensageria: o worker do bot passou a ser **neutro ao provedor** — o

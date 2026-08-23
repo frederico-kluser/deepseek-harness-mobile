@@ -37,7 +37,7 @@
  * é embebido como string pelo esbuild (loader `text`) e injetado num
  * `<style id="dsh-guard-panel-css">`. Ver `build-client.mjs`.
  *
- * @module dsh-guarded-bot-orchestrator/client
+ * @module dsh-guard-messenger/client
  */
 
 import * as React from 'react'
@@ -735,7 +735,7 @@ export function apply(ctx: {
         id: 'telegram-guard',
         order: 99,
         label: 'Telegram Guard',
-        registrant: 'dsh-guarded-bot-orchestrator',
+        registrant: 'dsh-guard-messenger',
       },
       TelegramGuardSection,
     ),

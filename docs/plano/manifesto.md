@@ -141,7 +141,7 @@ já não por abstenção.
 | Entrada antiga | Para onde foi | Porquê |
 | --- | --- | --- |
 | `[1/3]` servidor web, `id` placeholder | **Camada 2**, com o `id` medido | alveja linha de outro pacote; é o único `id` que pode não casar |
-| `[2/3]` `guarded-bot-orchestrator` | **Camada 1** | é o plugin; `id` próprio, não colide com nada |
+| `[2/3]` `guarded-bot-orchestrator` | **Camada 1** | é o plugin; `id` próprio, não colide com nada | (hoje: dsh-guard-messenger)
 | `[3/3]` `core-auth-interceptor` por caminho absoluto | **eliminada** | ver §2.2 |
 | `encodedAuthString: !!js …ADMIN_USER/ADMIN_PASS…` (×2) | **eliminada** | §3 |
 | secção "ORDEM DE CARREGAMENTO: REQUISITO DURO" | **eliminada** | §4 |

@@ -30,7 +30,7 @@ import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
 
 describe('manifesto do plugin', () => {
   it('expoe o nome e as dependencias injetadas exigidas pelo contrato', () => {
-    assert.equal(name, 'dsh-guarded-bot-orchestrator')
+    assert.equal(name, 'dsh-guard-messenger')
     // `webServer` (e nao `httpServer`): medido contra as 9 versoes publicadas --
     // `httpServer` so existiu na linha morta 0.0.1-rc.1/rc.2.
     assert.deepEqual(inject, ['webServer', 'subprocess'])

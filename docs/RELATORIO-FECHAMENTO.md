@@ -8,7 +8,7 @@
 2. **README.md melhorado** (merge 0036d77, gate verde, push) — 3 secções novas, só aditivas (63 inserções, 0 remoções), fiéis ao código real (referem ficheiros de teste reais), em pt-PT, com honestidade explícita sobre o que NÃO se garante.
 3. **GitHub topics aplicadas (6)** — via gh: dsh-plugin, dsh, cordis, deepseek-harness, ai-agents, telegram-bot. O repo agora aparece em https://github.com/topics/dsh-plugin . Pesquisa confirmou que `dsh-plugin` é a topic canônica (10.4k repos; o repo oficial deepseek-ai/deepseek-harness usa ai-agents/cordis/dsh/dsh-plugin).
 4. **package.json** — keywords já estavam corretas (dsh-plugin, cordis, cordis-plugin, deepseek-harness, telegram-bot, cloudflare-tunnel, authentication); nenhuma alteração necessária.
-5. **Publicação npm** — dsh-guarded-bot-orchestrator@0.1.0 publicado (registry npmjs.org, tag latest, access public). prepublishOnly (build + package:check) rodou e passou. Verificado via npm view (version 0.1.0, tarball, keywords), badge shields (v0.1.0) e smoke install (require() carrega; bin dsh-guard-setup ok; 0 vulns).
+5. **Publicação npm** — dsh-guarded-bot-orchestrator@0.1.0 publicado (registry npmjs.org, tag latest, access public). prepublishOnly (build + package:check) rodou e passou. Verificado via npm view (version 0.1.0, tarball, keywords), badge shields (v0.1.0) e smoke install (require() carrega; bin dsh-guard-setup ok; 0 vulns). (hoje: dsh-guard-messenger)
 6. **CHANGELOG.md** — entrada '## [0.1.0] - 2026-08-22' registada (merge 1612a59, gate verde, push). [Unreleased] mantido vazio para o fluxo do changesets.
 7. **Tag v0.1.0** criada e empurrada para origin.
 

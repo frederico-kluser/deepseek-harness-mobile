@@ -1,8 +1,8 @@
 {
-  "name": "dsh-guarded-bot-orchestrator-examples-minimal",
+  "name": "dsh-guard-messenger-examples-minimal",
   "version": "0.0.0",
   "private": true,
-  "description": "Exemplo mínimo do portão do dsh-guarded-bot-orchestrator (usa os módulos compilados em dist/).",
+  "description": "Exemplo mínimo do portão do dsh-guard-messenger (usa os módulos compilados em dist/).",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",

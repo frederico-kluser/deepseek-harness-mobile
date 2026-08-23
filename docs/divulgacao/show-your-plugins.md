@@ -13,7 +13,7 @@
 
 ## Título (obrigatório: DSH | Nome | one-line)
 
-DSH | dsh-guarded-bot-orchestrator | Use a Web UI do DSH pelo celular sem alargar o bind
+DSH | dsh-guard-messenger | Use a Web UI do DSH pelo celular sem alargar o bind
 de loopback
 
 ---

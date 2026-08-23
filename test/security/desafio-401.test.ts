@@ -112,7 +112,7 @@ describe('o 401 do gate e TEXTO PURO, SEM WWW-Authenticate (onda 1)', () => {
     // Referrer-Policy em TODA recusa (a regra de ficheiro).
     assert.match(bruta, /^referrer-policy: no-referrer\r$/imu)
     // E o corpo nao enumera nem o plugin nem detalhe.
-    assert.equal(bruta.includes('dsh-guarded-bot-orchestrator'), false)
+    assert.equal(bruta.includes('dsh-guard-messenger'), false)
   })
 
   it('o 401 do tunel com `?key=` invalida e o mesmo 401 texto puro', async () => {
@@ -177,7 +177,7 @@ describe('os dois 404 de `/__guard/secret` sao o MESMO 404 (inalterado)', () => 
     assert.match(doGate, /^content-type: text\/plain; charset=utf-8\r$/imu)
     assert.match(doGate, /^x-content-type-options: nosniff\r$/imu)
     assert.match(doGate, /^referrer-policy: no-referrer\r$/imu)
-    assert.equal(doGate.includes('dsh-guarded-bot-orchestrator'), false)
+    assert.equal(doGate.includes('dsh-guard-messenger'), false)
     assert.match(doGate, /Not Found\n$/mu)
   })
 })

@@ -258,7 +258,7 @@ describe('PANEL-010 · a superficie isenta nao enumera nada', () => {
     for (const { nome, bruta } of respostas) {
       assert.equal(/^server:/imu.test(bruta), false, `${nome}: cabecalho Server identificavel`)
       assert.equal(/^x-powered-by:/imu.test(bruta), false, nome)
-      assert.equal(bruta.includes('dsh-guarded-bot-orchestrator'), false, `${nome}: nome do plugin`)
+      assert.equal(bruta.includes('dsh-guard-messenger'), false, `${nome}: nome do plugin`)
       assert.equal(/\bv?\d+\.\d+\.\d+\b/u.test(bruta), false, `${nome}: numero de versao`)
       assert.equal(bruta.includes('/home/'), false, `${nome}: caminho absoluto`)
       assert.equal(bruta.includes('node_modules'), false, nome)

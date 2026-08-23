@@ -18,8 +18,8 @@ contribuir client-half de UI e registar os dois slots, e abrir o modal na aba
 nova.** A evidência final (browser headless, `:3082`):
 
 - `window.__DSH_BOOT__.entries` passou de 42 → 43 e passou a incluir
-  `dsh-guarded-bot-orchestrator` (`url: /plugins/dsh-guarded-bot-orchestrator/client.js?rev=…`).
-- `GET /plugins/dsh-guarded-bot-orchestrator/client.js` → `200`, contendo as
+  `dsh-guard-messenger` (`url: /plugins/dsh-guard-messenger/client.js?rev=…`).
+- `GET /plugins/dsh-guard-messenger/client.js` → `200`, contendo as
   chamadas `slots.inject('sidebar.footer.action', …)` e
   `slots.inject('settings.section', …)`.
 - No DOM: o botão **"✈️ Telegram"** renderiza no rodapé da sidebar (ao lado do
@@ -220,7 +220,7 @@ trocar por um `TelegramGuardSection.module.css` com os tokens `--dsw-*` acima.
 
 **Restaurado ao estado original** (isolado, NUNCA mexido no 3080):
 - profile `package.json` de volta a `link:/home/ondokai/Projects/deepseek-harness-mobile`.
-- symlink de `node_modules/dsh-guarded-bot-orchestrator` aponta ao checkout principal.
+- symlink de `node_modules/dsh-guard-messenger` aponta ao checkout principal.
 - servidor `:3082` reiniciado com o mesmo comando
   `node --import tsx/esm apps/cli/src/bin.ts --profile web --host 127.0.0.1 --port 3082 --no-open`
   (novo PID; log `/tmp/guardbot-web-3082.log`). Confirmado: boot 42 plugins

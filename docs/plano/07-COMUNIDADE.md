@@ -33,7 +33,7 @@ segurança, em um projeto cujo argumento central é segurança, é dano permanen
 
 ### 1.1 Uma frase
 
-> **`dsh-guarded-bot-orchestrator` permite usar o seu próprio DeepSeek Harness pelo celular — a
+> **`dsh-guarded-bot-orchestrator` permite usar o seu próprio DeepSeek Harness pelo celular — a (hoje: dsh-guard-messenger)
 > Web UI inteira, para codificar de verdade — sem nunca alargar o bind para fora do loopback: o
 > túnel termina em `127.0.0.1`, a senha é gerada pela máquina, e você liga e desliga o acesso
 > pelo Telegram.**

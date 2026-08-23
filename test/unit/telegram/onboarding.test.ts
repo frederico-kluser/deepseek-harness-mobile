@@ -1974,6 +1974,6 @@ describe('o relato de erro não publica o $HOME nem a `stack`', () => {
     const saida = linhas.join('')
     assert.ok(saida.startsWith('não conheço'), saida)
     assert.ok(saida.includes('código: SETUP_UNKNOWN_ARGUMENT'))
-    assert.ok(!saida.includes('[dsh-guarded-bot-orchestrator]'), 'o prefixo é ruído para quem lê')
+    assert.ok(!saida.includes('[dsh-guard-messenger]'), 'o prefixo é ruído para quem lê')
   })
 })

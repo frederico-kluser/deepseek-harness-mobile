@@ -795,7 +795,7 @@ Vulnerability Reporting**. Publicar SECURITY.md e ligar PVR neste repo é difere
 **Install de uma linha:** o padrão canônico das 1.650 entradas é
 `dsh plugin --profile web add <pkg-npm>` ou `… add github:owner/repo`. Publicar no npm encurta e
 pula o passo `allowBuilds` do pnpm ≥10. Alternativa oficial: campo `tarball:` apontando `.tgz`
-https em GitHub Release. **O nome npm `dsh-guarded-bot-orchestrator` estava LIVRE** (HTTP 404 em
+https em GitHub Release. **O nome npm `dsh-guarded-bot-orchestrator` estava LIVRE** (HTTP 404 em (hoje: dsh-guard-messenger)
 2026-08-19) — vale reservar.
 
 ### 6.2 Claim REFUTADA

@@ -14,4 +14,4 @@ child.kill() nunca basta quando há shell intermediário
 O cookie Secure não funciona em http://127.0.0.1
 Existe campo de compatibilidade no package.json
 uma dependência de runtime a mais para o host
-dsh-guarded-bot-orchestrator tem N dependências de runtime
+dsh-guard-messenger tem N dependências de runtime

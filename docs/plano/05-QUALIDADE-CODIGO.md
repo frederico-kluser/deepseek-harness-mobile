@@ -806,7 +806,7 @@ throw new GuardError(
   `Bind inseguro: host "${host}" não está em allowedHosts [${allowed.join(', ')}]. ` +
   `Expor o control plane fora do loopback sem o gate ativo reproduz a discussão #853 ` +
   `(RCE não autenticado, verificado em 0.1.0-rc.6). ` +
-  `Corrija a chave "allowedHosts" em cordis.patch.yml (entrada id: guarded-bot-orchestrator).`,
+  `Corrija a chave "allowedHosts" em cordis.patch.yml (entrada id: guarded-bot-orchestrator).`, (hoje: dsh-guard-messenger)
 )
 ```
 

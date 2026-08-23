@@ -1,8 +1,8 @@
-# dsh-guarded-bot-orchestrator
+# dsh-guard-messenger
 
 [![CI](https://img.shields.io/github/actions/workflow/status/frederico-kluser/deepseek-harness-mobile/ci.yml)](https://github.com/frederico-kluser/deepseek-harness-mobile/actions)
-[![npm version](https://img.shields.io/npm/v/dsh-guarded-bot-orchestrator)](https://www.npmjs.com/package/dsh-guarded-bot-orchestrator)
-[![npm downloads](https://img.shields.io/npm/dm/dsh-guarded-bot-orchestrator)](https://www.npmjs.com/package/dsh-guarded-bot-orchestrator)
+[![npm version](https://img.shields.io/npm/v/dsh-guard-messenger)](https://www.npmjs.com/package/dsh-guard-messenger)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-guard-messenger)](https://www.npmjs.com/package/dsh-guard-messenger)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/frederico-kluser/deepseek-harness-mobile)](https://securityscorecards.dev/)
 
 **Usa o teu próprio DeepSeek Harness pelo celular — a Web UI inteira, para codificar de verdade — sem nunca alargar o bind para fora do loopback: o túnel termina em `127.0.0.1` (acesso local abre direto), e pelo túnel só entra quem tem a chave no link `?key=` (que o bot envia) — ligas e desligas o acesso pelo Telegram.**
@@ -12,7 +12,7 @@
 ## Instalação (uma linha)
 
 ```sh
-dsh plugin --profile web add dsh-guarded-bot-orchestrator
+dsh plugin --profile web add dsh-guard-messenger
 ```
 
 > **Instalação por git / tarball:** se instalares a partir do git (`pnpm add <git-url>`),
@@ -137,7 +137,7 @@ O que o diagrama esconde e é decisivo: **o acesso local abre direto** (sem barr
 
 ```sh
 # 1. instala o plugin (uma linha; ativa o manifesto de Bundle automaticamente)
-dsh plugin --profile web add dsh-guarded-bot-orchestrator
+dsh plugin --profile web add dsh-guard-messenger
 
 # 2. corre o DSH — o acesso local abre direto (sem login)
 dsh web
@@ -150,7 +150,7 @@ dsh web
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/
 
 # 5. para desligar/desinstalar
-dsh plugin remove dsh-guarded-bot-orchestrator
+dsh plugin remove dsh-guard-messenger
 ```
 
 [`examples/minimal`](examples/minimal/) é um exemplo mínimo instalável com o critério de aceite documentado (local abre direto / borda sem `?key=` dá 401 / 200 com o link ou sessão / nenhum processo no fim).
@@ -214,7 +214,7 @@ ver `docs/TESTING.md` §5.
 ## Desinstalar e reverter
 
 ```sh
-dsh plugin remove dsh-guarded-bot-orchestrator
+dsh plugin remove dsh-guard-messenger
 ```
 
 Deixa zero processos remanescentes e a Web UI volta ao comportamento original. Para apagar também a chave do link, o pareamento e o estado local: remove `~/.dsh/guarded-bot`. Detalhe em [`docs/INSTALL.md`](docs/INSTALL.md).

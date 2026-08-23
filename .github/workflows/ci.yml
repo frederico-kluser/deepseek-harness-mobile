@@ -138,8 +138,8 @@ jobs:
           set -eu
           pnpm pack --pack-destination /tmp
           mkdir -p /tmp/smoke && cd /tmp/smoke && npm init -y >/dev/null
-          npm i /tmp/dsh-guarded-bot-orchestrator-*.tgz
-          node --input-type=module -e "const p = await import('dsh-guarded-bot-orchestrator'); if (typeof p.apply !== 'function') { console.error('o entry publicado nao exporta apply()'); process.exit(1) }"
+          npm i /tmp/dsh-guard-messenger-*.tgz
+          node --input-type=module -e "const p = await import('dsh-guard-messenger'); if (typeof p.apply !== 'function') { console.error('o entry publicado nao exporta apply()'); process.exit(1) }"
 
   # ---------------------------------------------------------------------------
   test:
