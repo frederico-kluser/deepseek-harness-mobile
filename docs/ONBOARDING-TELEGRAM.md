@@ -100,7 +100,7 @@ A CLI imprime (no terminal) os cinco avisos que tens de ter lido antes de expor:
 | `/desligar` | Derruba o túnel (e revoga a chave) (pede confirmação) |
 | `/status` | Estado atual e a URL vigente |
 | `/acessar` | (Re)envia o link com a chave |
-| `/rotacionar` | Gera **chave nova** e invalida as sessões — revoga o acesso antigo |
+| `/rotacionar` | Gera **chave nova** e invalida as sessões — encerra também as conexões ativas (WebSocket) além de revogar a chave e as sessões |
 | `/emergencia` | Derruba o túnel e revoga as sessões (kill switch) |
 
 Ações que **aumentam a exposição** (subir o túnel) exigem confirmação em duas etapas com

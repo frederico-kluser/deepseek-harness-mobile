@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest, type Server } from 'node:http'
-import { connect } from 'node:net'
+import { connect, type Socket } from 'node:net'
 import { afterEach, describe, it } from 'node:test'
 
 import type { AddressInfo } from 'node:net'
@@ -215,6 +215,50 @@ describe('WebSocket no proxy (modelo porta)', () => {
   })
 })
 
+describe('QUALIDADE DE SERVICO da rotacao: encerrarConexoesAtivas (onda1)', () => {
+  it('(h) WebSocket ativo sob o acesso antigo morre e o listen continua', async () => {
+    const { proxyPort } = await setUpProxy()
+    const cookie = aberta!.emitirSessao()
+
+    // O upgrade sobe (101): a conexao fica VIVA sob o acesso antigo.
+    const { bruto, socket } = await abrirUpgrade(proxyPort, hostDoTunel(), cookie)
+    assert.match(bruto, /^HTTP\/1\.1 101 /u, 'o upgrade subiu (101)')
+
+    const fechou = esperarFecho(socket)
+
+    // O rotate completo: revoga sessoes, revoga a chave, e ENCERRA as conexoes.
+    aberta!.stack.secrets.rotate()
+    aberta!.linkStore.revogar()
+    proxy!.encerrarConexoesAtivas()
+    // Idempotente: a segunda chamada tambem nao lanca (Q-2).
+    proxy!.encerrarConexoesAtivas()
+
+    await fechou // a conexao ativa morreu (FIN/close/end no socket cru do cliente)
+
+    // O listener ficou de pe: as credenciais NOVAS autorizam outra vez.
+    const novaSessao = aberta!.emitirSessao()
+    const res = await pedirAoProxy(proxyPort, '/api/state', hostDoTunel(), { cookie: novaSessao })
+    assert.equal(res.status, 200, 'o proxy continua a aceitar com sessao nova')
+    assert.equal(res.body, 'UPSTREAM-OK')
+  })
+
+  it('(h2) encerrarConexoesAtivas mata um stream HTTP keep-alive em voo', async () => {
+    const { proxyPort } = await setUpProxy()
+    const cookie = aberta!.emitirSessao()
+
+    // Um stream HTTP keep-alive atravessou o proxy e fica aberto em voo.
+    const { bruto, socket } = await abrirKeepAlive(proxyPort, hostDoTunel(), cookie)
+    assert.match(bruto, /^HTTP\/1\.1 200 /u, 'o keep-alive autorizado chegou ao upstream')
+
+    const fechou = esperarFecho(socket)
+    // O rotate revoga sessoes + chave e encerra as conexoes (fail-closed).
+    aberta!.stack.secrets.rotate()
+    aberta!.linkStore.revogar()
+    proxy!.encerrarConexoesAtivas()
+    await fechou // o stream em voo morreu
+  })
+})
+
 /** Sobe um handshake cru de WebSocket e devolve a resposta bruta lida. */
 function empurrarUpgrade(port: number, host: string, cookie: string | undefined): Promise<string> {
   return new Promise<string>((resolve) => {
@@ -234,5 +278,78 @@ function empurrarUpgrade(port: number, host: string, cookie: string | undefined)
     })
     socket.on('error', tarde)
     socket.on('end', tarde)
+  })
+}
+
+/**
+ * Sobe um handshake cru de WebSocket e devolve o socket do lado do CLIENTE
+ * (para observar o fecho) e a resposta bruta lida. O socket fica aberto apos o
+ * 101 — a conexao ativa atravessou o proxy.
+ */
+function abrirUpgrade(port: number, host: string, cookie: string | undefined): Promise<{ bruto: string; socket: Socket }> {
+  return new Promise<{ bruto: string; socket: Socket }>((resolve) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      const extra = cookie === undefined ? '' : `Cookie: ${cookie}\r\n`
+      socket.write(
+        `GET /ws HTTP/1.1\r\nHost: ${host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: ${FAKE_TUNNEL_ORIGIN}\r\n${extra}\r\n`,
+      )
+    })
+    const pedacos: Buffer[] = []
+    socket.on('data', (d: Buffer) => {
+      pedacos.push(d)
+      const texto = Buffer.concat(pedacos).toString('utf8')
+      if (/HTTP\/1\.1 1\d\d/mu.test(texto) || /HTTP\/1\.1 4\d\d/mu.test(texto)) {
+        resolve({ bruto: texto, socket })
+      }
+    })
+    socket.on('error', () => resolve({ bruto: Buffer.concat(pedacos).toString('utf8'), socket }))
+  })
+}
+
+/**
+ * Abre um socket HTTP cru com sessao e pede keep-alive ao proxy, mantendo o
+ * socket aberto. Devolve o socket e a resposta bruta.
+ */
+function abrirKeepAlive(port: number, host: string, cookie: string | undefined): Promise<{ bruto: string; socket: Socket }> {
+  return new Promise<{ bruto: string; socket: Socket }>((resolve) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      const extra = cookie === undefined ? '' : `Cookie: ${cookie}\r\n`
+      socket.write(
+        `GET /api/state HTTP/1.1\r\nHost: ${host}\r\nConnection: keep-alive\r\n${extra}\r\n`,
+      )
+    })
+    const pedacos: Buffer[] = []
+    socket.on('data', (d: Buffer) => {
+      pedacos.push(d)
+      const texto = Buffer.concat(pedacos).toString('utf8')
+      if (/HTTP\/1\.1 \d\d\d/mu.test(texto)) resolve({ bruto: texto, socket })
+    })
+    socket.on('error', () => resolve({ bruto: Buffer.concat(pedacos).toString('utf8'), socket }))
+  })
+}
+
+/**
+ * Resolve quando o socket cru do cliente fecha (FIN/`close`/`end`), ou rejeita
+ * se nao fechar no prazo. O valor do pedido virado RST (`error`) tambem fecha.
+ */
+function esperarFecho(socket: Socket, timeoutMs = 1_000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (socket.destroyed) {
+      resolve()
+      return
+    }
+    const timer = setTimeout(() => {
+      socket.removeListener('close', noFecho)
+      socket.removeListener('end', noFecho)
+      reject(new Error('a conexao ativa nao encerrou dentro do prazo'))
+    }, timeoutMs)
+    const noFecho = (): void => {
+      clearTimeout(timer)
+      socket.removeListener('close', noFecho)
+      socket.removeListener('end', noFecho)
+      resolve()
+    }
+    socket.once('close', noFecho)
+    socket.once('end', noFecho)
   })
 }

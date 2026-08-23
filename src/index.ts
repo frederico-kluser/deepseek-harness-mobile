@@ -66,7 +66,7 @@ import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelCon
 import { criarRespondedorDeNonce, criarRespondedorIpc } from './control/surface-ipc.ts'
 import type { Context, Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
-import { createTunnelProxy } from './tunnel/proxy.ts'
+import { createTunnelProxy, type TunnelProxy } from './tunnel/proxy.ts'
 import {
   createGateAuthStack,
   createRequestOriginResolver,
@@ -780,6 +780,13 @@ export function apply(ctx: Context, config: Config): void {
   let magicStoreAtual: ReturnType<typeof createMagicStore> | undefined
   /** A chave no link do portao (onda 1), criada com o controlador (item 5). */
   let linkStoreAtual: ReturnType<typeof createLinkTokenStore> | undefined
+  /**
+   * O proxy do tunel (modelo expose-port), criado no efeito do controlador
+   * (item 5) e visto pelo efeito do worker (item 6) para o `encerrarConexoesAtivas`
+   * do `/rotacionar`. Holder partilhado no escopo de `apply` (a mesma fiacao
+   * pontual de `magicStoreAtual`/`linkStoreAtual`).
+   */
+  let tunnelProxyAtual: TunnelProxy | undefined
 
   /**
    * A difusao de estado host -> worker, com `seq` monotonico (CTL-010). A URL e
@@ -920,6 +927,8 @@ export function apply(ctx: Context, config: Config): void {
       issueSession: issueSessionDoPortao,
       upstreamPort: ctx.webServer.port,
     })
+    // Partilha o proxy com o rotacao do worker (efeito do item 6).
+    tunnelProxyAtual = tunnelProxy
 
     const supervisor = createTunnelSupervisor({
       ctx,
@@ -1214,10 +1223,16 @@ export function apply(ctx: Context, config: Config): void {
       // sessoes: `SecretStore.rotate` ja faz `revokeAll()` das sessoes; aqui
       // fecha tambem a porta do link. A ORDEM e contrato — sessoes e chave
       // caem ANTES de o novo digest ser publicado (o mesmo do rotate).
+      // Por fim, `encerrarConexoesAtivas()` mata as conexoes JA ESTABELECIDAS
+      // (WebSocket `101` e streams em voo) sob o acesso antigo: as credenciais
+      // caem primeiro, logo um pedido em voo que falhe a autenticacao nao e o
+      // unico motivo de o socket morrer — a ligacao ativa encerra de qualquer
+      // forma (fail-closed). O listener do proxy NAO e derrubado (o tunel fica).
       secretos: {
         rotate: () => {
           const resultado = authStack().secrets.rotate()
           linkStoreAtual?.revogar()
+          tunnelProxyAtual?.encerrarConexoesAtivas()
           return resultado
         },
       },

@@ -70,6 +70,14 @@ export interface TunnelProxyDeps {
 export interface TunnelProxy {
   /** O `node:http.Server` do proxy, em escuta em `127.0.0.1`. */
   readonly server: Server
+  /**
+   * Destroi TODAS as conexoes do lado cliente do proxy (sockets HTTP e
+   * WebSocket `upgraded`) SEM derrubar o listener — o tunel continua de pe.
+   * Idempotente, sincrono, nunca lanca. Usado pelo `/rotacionar` para encerrar
+   * as conexoes JA ESTABELECIDAS sob o acesso antigo (fail-closed: a autenticacao
+   * ja caiu, logo nada que continue ligado pode virar uma sessao reutilizavel).
+   */
+  encerrarConexoesAtivas(): void
   /** Disposer SINCRONO e idempotente (Q-2). */
   dispose(): void
 }
@@ -200,6 +208,20 @@ export function createTunnelProxy(deps: TunnelProxyDeps): TunnelProxy {
     void gateUpgrade(req, socket, head)
   })
 
+  // Rastreia TODAS as conexoes do lado cliente do proxy (unicamente no evento
+  // `connection` do servidor: sockets keep-alive reutilizados nao emitem novos
+  // requests mas continuam a ser a MESMA conexao). E este Set que o rotate usa
+  // para encerrar as conexoes JA ESTABELECIDAS sob o acesso antigo — o
+  // `closeAllConnections()` do Node NAO fecha sockets `upgraded` (WebSocket
+  // `101`), daí o rastreio manual ser obrigatorio.
+  const conexoesAtivas = new Set<Duplex>()
+  server.on('connection', (socket: Duplex) => {
+    conexoesAtivas.add(socket)
+    socket.once('close', () => {
+      conexoesAtivas.delete(socket)
+    })
+  })
+
   // Seta o erro de escuta no log: um proxy que nao sobe nao deve derrubar o
   // host, mas tem de ser visivel (o tunel sem guarda seria um buraco).
   server.on('error', (error: Error) => {
@@ -211,6 +233,19 @@ export function createTunnelProxy(deps: TunnelProxyDeps): TunnelProxy {
 
   return {
     server,
+    encerrarConexoesAtivas(): void {
+      // Sincrono e idempotente (Q-2). NUNCA derruba o listener (o tunel fica de
+      // pe: o proxy continua a aceitar novas ligacoes com as credenciais novas).
+      // NUNCA usa `server.close()` — isso desligaria o listener.
+      for (const socket of conexoesAtivas) {
+        if (!socket.destroyed) socket.destroy()
+      }
+      conexoesAtivas.clear()
+      // Cobre os que escaparem ao Set (ex.: ligados durante a iteracao):
+      // `closeAllConnections` fecha os sockets HTTP vivos; os `upgraded` nao os
+      // fecha, mas esses JÁ deviam estar no Set (o `connection` corre primeiro).
+      ;(server as Server & { closeAllConnections?: () => void }).closeAllConnections?.()
+    },
     dispose(): void {
       // Sincrono e idempotente (Q-2). `close()` deixa de aceitar; o
       // `closeAllConnections` termina os sockets activos.

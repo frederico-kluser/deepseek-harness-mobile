@@ -123,7 +123,8 @@ entra por **sessão** ou pela **chave no link**:
   apenas um **digest** (SHA-256), nunca a chave (`src/session/link-token.ts`).
 - **A chave é reutilizável até ser revogada** — não é de uso único. O mesmo link
   pode autenticar mais do que uma sessão. Ela deixa de valer apenas quando
-  `/rotacionar` gera uma chave nova (e invalida as sessões), quando o túnel é
+  `/rotacionar` gera uma chave nova (e invalida as sessões **e encerra também as
+  conexões ativas, como WebSockets já estabelecidos**), quando o túnel é
   derrubado (`/desligar`, `/emergencia`) ou ao desparear
   (`src/session/link-token.ts:17-22,141`, `src/control/surface-ipc.ts`).
 - Quem recebe o link abre `?key=<token>`; a chave válida é **trocada por uma
