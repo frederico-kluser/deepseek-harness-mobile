@@ -144,7 +144,7 @@
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
     <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator-agent-skill <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">vpainel-telegram-final@2026-08-23 · 2026-08-23</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">vdsh-guard-messenger@2026-08-23 · 2026-08-23</span>
   </div>
 </nav>
 
@@ -153,9 +153,9 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Painel do Telegram 100% via interface no DeepSeek Harness: aba 'Telegram Guard' no modal de settings (badge configurado/rodando, form de token com validacao getMe, instrucoes, metricas de acesso quem/quanto/IP/device), botao na sidebar abre o modal na aba, mecanismo de slots de plugin externo provado, CSRF proprio e instalacao por git funcional.</p>
+    <p class="lead text-white-50 mb-3">Botao da sidebar removido (acesso pela aba no rail do settings); cartao 'Como criar o bot' (@BotFather) no painel; projeto renomeado para dsh-guard-messenger (identidade multi-provedor) + docs/BRANDING.md com prompt do logo.</p>
     <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">vpainel-telegram-final@2026-08-23</span>
+      <span class="badge badge-accent">vdsh-guard-messenger@2026-08-23</span>
       <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-23</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
@@ -213,7 +213,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Painel do Telegram 100% via interface no DeepSeek Harness: aba 'Telegram Guard' no modal de settings (badge configurado/rodando, form de token com validacao getMe, instrucoes, metricas de acesso quem/quanto/IP/device), botao na sidebar abre o modal na aba, mecanismo de slots de plugin externo provado, CSRF proprio e instalacao por git funcional.</p>
+      <p class="text-body-secondary">Botao da sidebar removido (acesso pela aba no rail do settings); cartao 'Como criar o bot' (@BotFather) no painel; projeto renomeado para dsh-guard-messenger (identidade multi-provedor) + docs/BRANDING.md com prompt do logo.</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -225,7 +225,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">2</div>
+              <div class="display-6 fw-bold stat-value">1</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">8</div>
+              <div class="display-6 fw-bold stat-value">4</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -243,7 +243,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">7</div>
+              <div class="display-6 fw-bold stat-value">2</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -254,7 +254,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders painel-telegram-final@2026-08-23, 2026-08-23, main, ...</code></pre>
+# Ou preenche manualmente os placeholders dsh-guard-messenger@2026-08-23, 2026-08-23, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -296,13 +296,12 @@
   <table class="table table-hover align-middle">
     <thead><tr><th>Onda</th><th>Worktree</th><th>Tarefas</th><th class="text-end">Commits</th><th>Status</th></tr></thead>
     <tbody>
-      <tr><td><span class="badge badge-accent">1</span></td><td><code>onda1-painel-backend</code><br><code>onda1-client-spike</code></td><td>Backend: POST /api/token (getMe+gravar 0600+restart; 409 token-por-env honesto), GET /api/token-state e /api/access com tracking de sessão (UA+IP confiável), gravarSecretsEnv destino único; Spike: prova de que um plugin externo registra slots (dsh.client + exports ./package.json; sidebar.footer.action/settings.section + abrir modal na aba)</td><td class="text-end">6</td><td><span class="badge badge-ok">Concluída</span></td></tr>
-      <tr><td><span class="badge badge-accent">2</span></td><td><code>onda2-painel-telegram</code></td><td>Painel completo na aba "Telegram Guard" do settings (via interface): badge configurado/rodando, form de token com validação, instruções + comandos, métricas de acesso (quem/quanto/IP/device); botão sidebar abre o modal na aba; CSS guard-* com tokens --dsw-*</td><td class="text-end">1</td><td><span class="badge badge-ok">Concluída</span></td></tr>
-      <tr><td><span class="badge badge-accent">fix</span></td><td><code>fix-final-integra</code></td><td>HIGHS de integração: prepare gera lib/client.js no install por git (check-tarball exige); GET /__guard-ui/api/csrf = fonte CSRF própria do bundle com fallback; testes commitados (client smoke)</td><td class="text-end">1</td><td><span class="badge badge-ok">Concluída</span></td></tr>
+      <tr><td><span class="badge badge-accent">1a</span></td><td><code>onda1-remover-botao-e-botfather</code></td><td>Removido o botão Telegram da sidebar (sidebar.footer.action + affordance DOM) — acesso à aba pelo rail do settings padrão; cartão "Como criar o bot" (@BotFather: 6 passos + /token) no painel quando não configurado; testes client e docs</td><td class="text-end">1</td><td><span class="badge badge-ok">Concluída</span></td></tr>
+      <tr><td><span class="badge badge-accent">1b</span></td><td><code>onda1-rename-messenger</code></td><td>Rename dsh-guarded-bot-orchestrator → dsh-guard-messenger (48 arquivos: package/cordis/runtime/CI/docs/skills; PLUGIN_NAME/WORKER_LOG_NAME/registrant) + docs/BRANDING.md com o prompt do logo + resolução do conflito de merge com a UI</td><td class="text-end">2</td><td><span class="badge badge-ok">Concluída</span></td></tr>
     </tbody>
   </table>
 </div>
-<p class="text-body-secondary small">6 squash commits de feature + 4 fixes de infra (lockfile esbuild, allowBuilds, lint client). Gate completo verde em cada snapshot.</p>
+<p class="text-body-secondary small">Gate completo verde em cada snapshot (test 1860/1860, security 136/0, e2e 51/51, lint 0, pack → dsh-guard-messenger-0.1.1.tgz).</p>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
       <div class="d-flex flex-wrap gap-2">
@@ -379,13 +378,8 @@
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
 <ul class="list-group list-group-flush">
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">ba6a214</span><div><strong>Onda 1:</strong> backend do painel — POST /__guard-ui/api/token (getMe+gravar 0600+restart+409 env), GET /token-state, GET /access (tracking UA/IP), gravarSecretsEnv destino único</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">d9302fc</span><div><strong>Onda 1:</strong> spike client-half — dsh.client + slots (sidebar.footer.action, settings.section) + abrir modal na aba</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">df2f169</span><div><strong>Onda 1 fix:</strong> lockfile sincronizado (esbuild devDep do build do client)</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">03adbe6</span><div><strong>Onda 1 fix:</strong> allowBuilds esbuild: true (install frozen exit 0)</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">4352d97</span><div><strong>Onda 1 fix:</strong> lint no-unused-vars sectionId → _sectionId</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">148027a</span><div><strong>Onda 2:</strong> painel Telegram Guard (badge configurado/rodando, form token, instruções, métricas de acesso; CSS guard-* tokens dsw)</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">322130a</span><div><strong>fix-final:</strong> prepare no install por git gera lib/client.js; GET /api/csrf fonte própria de CSRF; testes commitados</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">d87542b</span><div><strong>Onda 1a:</strong> remove botão Telegram da sidebar + cartão @BotFather (6 passos + nota /token) no painel</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">a8d4262</span><div><strong>Onda 1b:</strong> rename dsh-guarded-bot-orchestrator → dsh-guard-messenger (48 arquivos) + BRANDING.md com prompt do logo + resolve merge com a UI</div></li>
 </ul>
     </div>
 
@@ -400,12 +394,11 @@
     <div class="card h-100 depara-antes">
       <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
       <div class="card-body">
-        <p class="card-text text-body-secondary">O bot do Telegram se configurava 100% por CLI, e o acesso era invisível.</p>
         <ul class="list-unstyled mb-0 d-grid gap-2">
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Token colado via <code>dsh-guard-setup</code> no terminal (sem nenhuma rota HTTP)</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Estado do bot era só um botão OFFLINE/ONLINE no chrome antigo via tapIndex</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Nenhuma forma de ver quem estava acessando o túnel (sockets opacos, sem IP/device/contagem)</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Plugin externo NUNCA tinha contribuído UI para os slots do DSH (mecanismo não provado)</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Botão "✈️ Telegram" no rodapé da sidebar (sem hover de clicável como o settings)</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Painel só dizia "cole o token que o @BotFather deu" — sem ensinar a criar o bot</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Nome do projeto: dsh-guarded-bot-orchestrator (amarrava a identidade a "bot", não à mensageria multi-provedor)</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Sem identidade visual documentada (logo inexistente)</li>
         </ul>
       </div>
     </div>
@@ -414,13 +407,11 @@
     <div class="card h-100 depara-depois">
       <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
       <div class="card-body">
-        <p class="card-text text-body-secondary">Painel completo dentro do modal de settings do DSH, 100% via interface.</p>
         <ul class="list-unstyled mb-0 d-grid gap-2">
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Aba "Telegram Guard" (slot settings.section): badge Configurado/Não configurado/Env + Bot ONLINE/OFFLINE</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Form de token (password + toggle) → valida getMe → grava 0600 → reinicia o worker; 409 honesto se o env manda</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Instruções copiáveis (/parear, /ligar, /status, /rotacionar, /desligar, /emergencia)</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Métricas de acesso: conexões ativas + sessões vivas + lista (device, tempo, IP quando confiável), refresh 15s</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Botão "Telegram" ao lado do settings (sidebar.footer.action) abre o modal já na aba nova</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Botão da sidebar removido; aba "Telegram Guard" continua no rail do modal de settings</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Cartão "Como criar o bot": 6 passos do @BotFather + nota /token, aparece só quando não configurado</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Projeto renomeado: dsh-guard-messenger (multi-provedor; Telegram hoje, WhatsApp/Discord/Matrix/etc. depois)</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>docs/BRANDING.md com o prompt de geração do logo + favicon</li>
         </ul>
       </div>
     </div>
@@ -430,11 +421,11 @@
       <h2 class="h4 pane-title">Impacto</h2>
       <p>O que cada mudança significa para quem usa o deep-orchestrator-agent-skill:</p>
 <div class="list-group list-group-flush mb-4">
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Configuração do Telegram sem terminal</strong> — o dono cola o token e valida direto na GUI do DSH; a CLI continua existindo mas deixa de ser a única via</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Visibilidade de quem acessa</strong> — conexões ativas, sessões vivas, device (user-agent normalizado), tempo de uso e IP (quando a borda é confiável); decisão informada para rotacionar/derrubar</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Prova do mecanismo de UI de plugin</strong> — primeiro plugin externo a contribuir slots no DSH (dsh.client + exports ./package.json + closure-factory), repetível por qualquer provedor futuro</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Honestidade do estado</strong> — o painel nunca afirma "configurado" quando o env TELEGRAM_BOT_TOKEN manda (409 com instrução) e nunca mostra handle de token não gravado</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Privacidade por construção</strong> — sessões expostas como hash truncado, UA normalizado, IP só de cf-connecting-ip confiável; token/?key nunca no bundle, na projeção ou no log</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Interface limpa</strong> — sem botão duplicado na sidebar; o acesso ao painel do bot é só pelo modal de settings (consistente com o shell)</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Onboarding guiado</strong> — quem nunca criou um bot consegue seguir os 6 passos do @BotFather dentro do próprio painel e revogar token depois</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Identidade multi-provedor</strong> — dsh-guard-messenger reflete que o guard de acesso + mensageria não é só Telegram; novo provedor = novo adaptador, sem rename futuro</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Marca pronta</strong> — prompt do logo persistido em docs/BRANDING.md (escudo + balão + dots multichannel), reutilizável para favicon e divulgacao</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Zero ruptura de contrato</strong> — binário, env var, entrada do worker, rotas e diretório de estado preservados; instalações existentes continuam funcionando</div></div>
 </div>
 
       <h2 class="h4 pane-title">Novas capacidades</h2>
@@ -479,12 +470,11 @@
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
 <ul class="list-group list-group-flush">
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">UI</span><div><strong>Slots nativos do DSH, zero patch no harness</strong> — client-half via dsh.client (exports ./client + ./package.json) + ctx.slots.register; a pedra de toque era o exports ./package.json (sem ele o registry rejeita silenciosamente)</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">modal</span><div><strong>Abrir o modal do settings já na aba nova</strong> — o open é estado local do SettingsRoot sem handle global; affluent DOM (clique no trigger escopado ao .settingsArea + clique no rail de 'Telegram Guard'), provado em headless</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">token</span><div><strong>Token 100% via interface com honestidade</strong> — POST valida formato→getMe→grava 0600 atômico→restart; 409 token-por-env quando o ambiente manda (nunca mentir que configurou)</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">privacidade</span><div><strong>Métricas sem vazar segredos</strong> — sessões expostas como hash truncado (8 chars), UA normalizado, IP só quando cf-connecting-ip confiável; ?key/token nunca no bundle nem na projeção</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">CSRF</span><div><strong>Fonte própria de CSRF</strong> — GET /api/csrf (HMAC stateless, mesmo binding) para o bundle não depender do meta do chrome antigo</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">dist</span><div><strong>Instalação por git funcional</strong> — prepare roda build:all (gera lib/client.js + dist); check-tarball exige lib/client.js</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">UI</span><div><strong>Botão da sidebar removido por completo</strong> (registro, componente e affordance DOM) — a aba "Telegram Guard" continua no modal, acessível pelo botão de settings padrão do shell</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">onboarding</span><div><strong>Onboarding completo no painel</strong> — cartão "Como criar o bot" com os 6 passos do @BotFather + nota de revogar (/token), visível só quando não configurado</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">naming</span><div><strong>dsh-guard-messenger</strong> — identidade multi-provedor (guard do acesso + mensageria); contrato estável preservado: bin dsh-guard-setup, DSH_GUARD_PROVIDER, worker/telegram-bot.ts, rotas /__guard-ui, estado ~/.dsh/guarded-bot</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">branding</span><div><strong>docs/BRANDING.md</strong> — prompt completo do logo (escudo + balão + dots multi-canal, paleta, o que não incluir, favicon) persistido no repo</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">história</span><div><strong>Rastro histórico anotado</strong> — docs/plano, relatórios e manual-runs mantêm o nome antigo com nota "(hoje: dsh-guard-messenger)"; zero vestígios em produto</div></li>
 </ul>
     </div>
 
@@ -495,17 +485,17 @@
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
 <ul class="timeline list-unstyled mb-0">
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>FASE 0 + pesquisa</strong> — fronteira resolvida (MODE=normal, BASE_BRANCH=main); 2 agentes de pesquisa mapeiam o modal de settings (ui-settings/contract/slots), o mecanismo de client plugin (dsh.client), o token CLI e o tracking de acesso.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1 (paralela)</strong> — backend (rotas token/token-state/access + tracking + gravarSecretsEnv destino único) e spike client-half (prova no runtime 3082: slots renderizam, modal abre na aba; exports ./package.json era a chave). Review APPROVE + fixes.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 2</strong> — painel completo na aba "Telegram Guard" com tokens --dsw-* (CSS guard-*), form de token, instruções, métricas; review WARNING → fix de classes camelCase/kebab.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>COMMIT-FINAL</strong> — revisão de integração WARNING → fix-final (prepare + GET /api/csrf próprio); gate final verde (1859/1859, security 136/0, e2e 51/51); prova no runtime: client.js servido + endpoints novos 200; EXPLAINER + relatório.</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>FASE 0 + plano</strong> — fronteira resolvida; escopo: remover botão, ensinar BotFather, rename multi-provedor + prompt de logo; naming decidido (dsh-guard-messenger; contrato estável preservado).</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1a (UI)</strong> — botão da sidebar removido (registro+componente+affordance) ; cartão @BotFather com 6 passos + nota /token no painel; testes client atualizados (só settings.section).</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1b (rename)</strong> — 48 arquivos renomeados (package/cordis/runtime/CI/docs/skills; PLUGIN_NAME/WORKER_LOG_NAME/registrant) ; docs/BRANDING.md com o prompt do logo; conflito de merge com a UI resolvido na filha (botão removido + registrant dsh-guard-messenger).</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>COMMIT-FINAL</strong> — revalidação adversarial APPROVE; gate final verde (1860/1860, security 136/0, e2e 51/51); EXPLAINER regenerado; push.</div></li>
 </ul>
     </div>
 
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator-agent-skill</strong> vpainel-telegram-final@2026-08-23 · 2026-08-23 · branch main.
+    Gerado por <strong>deep-orchestrator-agent-skill</strong> vdsh-guard-messenger@2026-08-23 · 2026-08-23 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
