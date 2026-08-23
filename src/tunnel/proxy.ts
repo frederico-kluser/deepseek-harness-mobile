@@ -190,9 +190,15 @@ export function createTunnelProxy(deps: TunnelProxyDeps): TunnelProxy {
 
   const server = createServer()
   // `createServer()` devolve a instancia; os handlers fecham sobre os delegates
-  // do reverse-proxy (ja guardados pelas politicas acima).
-  server.on('request', gateRequest)
-  server.on('upgrade', gateUpgrade)
+  // do reverse-proxy (ja guardados pelas politicas acima). Envolvidos em
+  // listeners void-return: a politica do gate e async e o EventEmitter espera
+  // `void` -- a Promise e drenada com `void`.
+  server.on('request', (req, res) => {
+    void gateRequest(req, res)
+  })
+  server.on('upgrade', (req, socket, head) => {
+    void gateUpgrade(req, socket, head)
+  })
 
   // Seta o erro de escuta no log: um proxy que nao sobe nao deve derrubar o
   // host, mas tem de ser visivel (o tunel sem guarda seria um buraco).

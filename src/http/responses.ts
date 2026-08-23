@@ -123,22 +123,14 @@ export function denyNotFound(res: ServerResponse): void {
 /**
  * Emite o desafio 401 com `WWW-Authenticate: Basic realm="..."`.
  *
- * ---------------------------------------------------------------------------
- * `Referrer-Policy: no-referrer` -- PORQUE ESTA NUM 401
- * ---------------------------------------------------------------------------
- * Sem ele, uma pagina servida SOB A URL DO TUNEL que carregue qualquer recurso
- * externo leva essa URL no `Referer` para o log do servidor de destino -- e a
- * URL do quick tunnel nao e um endereco, e a CAPACIDADE: quem a tem alcanca a
- * barreira. O painel deste plugin nao carrega recurso externo nenhum (CSP
- * `default-src 'none'`, provado em `src/panel/html.ts`), mas o corpo deste 401
- * e servido a TODA a superficie interceptada -- incluindo o fallback da SPA do
- * DSH, que nao e nosso e nao traz essa garantia.
- *
- * >>> ESTA FUNCAO E O 401 DO GATE **E** O 401 DO PAINEL, E ISSO E UMA
- * PROPRIEDADE DE SEGURANCA. <<< Os dois tem de sair BYTE A BYTE iguais: um
- * cabecalho a mais num deles e um oraculo que distingue "isto e o painel" de
- * "isto e o resto do DSH". Acrescentar o cabecalho AQUI mantem a igualdade por
- * construcao; acrescenta-lo em `src/panel/routes.ts` tinha-a quebrado.
+ * >>> MANTIDO A PEDIDO DA REVISAO; SO O PAINEL (OUTRA ONDA) O USA. <<<
+ * O portao do modelo novo ("expose-port") NUNCA emite `WWW-Authenticate` -- o
+ * seu 401 e `denyUnauthorized` (logo abaixo). Este desafio sobrevive SO porque
+ * `src/panel/routes.ts` (outra onda, fora do escopo desta sub-tarefa) ainda o
+ * importa e chama na porta de login: remove-lo QUEBRA a compilacao desse
+ * ficheiro. Provado: `pnpm build` -> `TS2305: Module "../http/responses.ts" has
+ * no exported member 'challengeBasicAuth'` em `src/panel/routes.ts:55`. Quando
+ * a onda dona do painel deixar de o usar, esta funcao e o import a saem juntos.
  */
 export function challengeBasicAuth(res: ServerResponse, realm: string): void {
   res.writeHead(401, {
@@ -154,16 +146,10 @@ export function challengeBasicAuth(res: ServerResponse, realm: string): void {
  * O 401 do PORTAO no modelo novo: TEXTO PURO, SEM `WWW-Authenticate`.
  *
  * ---------------------------------------------------------------------------
- * PORQUE ESTA FUNCAO EXISTE AO LADO DE `challengeBasicAuth`
- * ---------------------------------------------------------------------------
  * A Onda 1 remove o login do portao: o gate NUNCA emite `WWW-Authenticate`
  * (que dispara o popup de credenciais do navegador). Quando o acesso pelo
  * TUNEL falha -- sem sessao e sem `?key=` valida -- a resposta e um 401 em
  * texto puro, sem desafio. `denyUnauthorized` E esse 401.
- *
- * `challengeBasicAuth` continua a existir e a emitir o desafio porque o PAINEL
- * (`src/panel/routes.ts`, de outra onda) ainda o usa na sua porta de login. O
- * portao, por desenho novo, NAO a chama: o "401 do gate" e este.
  *
  * ---------------------------------------------------------------------------
  * REGRA DE FICHEIRO PRESERVADA
