@@ -19,7 +19,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
   },
   "//bin": "PENDENCIA DE `06-REPO-E-CI.md` §9.1 FECHADA (antecipada do COMMIT PREP 7). O alvo e o ARTEFACTO EMITIDO, nunca o `.ts`: um `bin` a apontar para fonte TypeScript e um symlink que o Node recusa executar. A emissao vem de `tsconfig.bin.json`, terceiro projeto de build — `bin/` nao cabe em `tsconfig.build.json` porque `rootDir` la e `src` e o `tsc` responde TS6059 (medido). O ficheiro so e executavel se `bin/dsh-guard-setup.ts` comecar por `#!/usr/bin/env node`; o `tsc` preserva o shebang mas nao o inventa.",
   "bin": {
@@ -27,6 +31,7 @@
   },
   "files": [
     "dist",
+    "lib",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
@@ -44,6 +49,8 @@
     "lint": "oxlint . && eslint .",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.bin.json",
+    "build:client": "node scripts/build-client.mjs",
+    "build:all": "pnpm build && pnpm build:client",
     "test": "node --test --test-reporter=spec 'test/unit/**/*.test.ts' 'test/integration/**/*.test.ts'",
     "test:contract": "node --test 'test/contract/**/*.test.ts'",
     "test:security": "node --test --test-reporter=spec 'test/security/**/*.test.ts'",
@@ -53,7 +60,8 @@
     "test:all": "pnpm test && pnpm test:contract && pnpm test:security && pnpm test:e2e",
     "types:fetch": "node scripts/fetch-dsh-types.mjs",
     "package:check": "publint && attw --pack . && node scripts/check-tarball.mjs && node scripts/fetch-dsh-types.mjs --check",
-    "prepublishOnly": "pnpm run build && pnpm run package:check",
+    "prepack": "pnpm run build:all",
+    "prepublishOnly": "pnpm run build:all && pnpm run package:check",
     "changeset": "changeset",
     "test:mutation": "stryker run"
   },
@@ -61,6 +69,9 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
     }
   },
   "keywords": [
@@ -91,6 +102,7 @@
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/tap-runner": "10.0.0",
     "@types/node": "24.13.3",
+    "esbuild": "0.24.2",
     "eslint": "10.8.1",
     "oxlint": "1.79.0",
     "publint": "0.3.24",
