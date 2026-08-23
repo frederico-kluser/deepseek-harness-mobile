@@ -18,7 +18,13 @@ import type { IncomingMessage } from 'node:http'
 import type { TunnelSnapshot } from '../../src/contracts/tunnel.ts'
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
 import { apply, criarFanoutDeEstado, inject, name, type Config } from '../../src/index.ts'
-import { createFakeLogger, FakeContext } from '../support/ctx-double.ts'
+import { UI_PATH_TELEGRAM } from '../../src/ui-contrib/routes.ts'
+import {
+  createFakeLogger,
+  FakeContext,
+  FakeResponse,
+  makeRequest,
+} from '../support/ctx-double.ts'
 import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
 
 describe('manifesto do plugin', () => {
@@ -136,6 +142,117 @@ describe('ciclo de vida sob ctx.effect', () => {
     const workerDisposer = ctx.effects[EFFECT.worker]
     assert.equal(typeof workerDisposer, 'function')
     assert.equal(workerDisposer?.(), undefined, 'disposer no-op sincrono')
+  })
+
+  /* ---------------------------------------------------------------------- */
+  /* O token resolver (_config.worker.token_ OU _secrets.env_) e o botao     */
+  /* Telegram: a MESMA fonte na UI e no spawn do worker.                     */
+  /* ---------------------------------------------------------------------- */
+  const CHAVE = 'TELEGRAM_BOT_TOKEN'
+
+  /** Um `$DSH_HOME` temporario com `guarded-bot/secrets.env` opcional. */
+  function comSecretsEnv(
+    tokenDoSecrets: string,
+    opcoes: { withPairing?: boolean } = {},
+  ): { dir: string; limpar: () => void } {
+    const casa = join(tmpdir(), 'dsh-guard-secrets-' + process.pid + '-' + Math.random().toString(36).slice(2))
+    const dir = join(casa, 'guarded-bot')
+    mkdirSync(dir, { recursive: true })
+    chmodSync(dir, 0o700)
+    writeFileSync(join(dir, 'secrets.env'), `${CHAVE}=${tokenDoSecrets}\n`, { mode: 0o600 })
+    if (opcoes.withPairing === true) {
+      writeFileSync(
+        join(dir, 'state.json'),
+        JSON.stringify({
+          version: 1,
+          desiredState: 'STOPPED',
+          pairing: { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 },
+        }),
+        { mode: 0o600 },
+      )
+    }
+    process.env.DSH_HOME = casa
+    return {
+      dir,
+      limpar: (): void => {
+        delete process.env.DSH_HOME
+        rmSync(casa, { recursive: true, force: true })
+      },
+    }
+  }
+
+  /** Invoca o handler da rota GET /__guard-ui/api/telegram do plugin montado. */
+  function estadoTelegramaDoUi(ctx: FakeContext): { online: boolean; motivo?: string } {
+    const rota = ctx.webServer.routes.find((r) => r.path === UI_PATH_TELEGRAM)
+    assert.ok(rota !== undefined, `rota do Telegram nao registada: ${UI_PATH_TELEGRAM}`)
+    const handler = rota.handler as (req: IncomingMessage, res: FakeResponse) => void
+    const res = new FakeResponse()
+    handler(makeRequest({ url: UI_PATH_TELEGRAM, method: 'GET' }), res)
+    assert.equal(res.statusCode, 200)
+    return JSON.parse(res.body) as { online: boolean; motivo?: string }
+  }
+
+  describe('o resolvedor do token (config OU secrets.env) ligou a UI ao spawn do worker', () => {
+    it('(a) config.worker.token vazio + secrets.env com token -> o WORKER SPAWNA com o token resolvido e a UI mostra ONLINE', () => {
+      const { limpar } = comSecretsEnv('123456789:AAsegredoDoSecretsEnv', { withPairing: true })
+      let ctx: FakeContext | undefined
+      try {
+        const config = makeConfig()
+        config.worker.token = ''
+        config.tunnel = { mode: 'quick', ttlMinutes: 60 } // para o surface da UI montar
+        ctx = new FakeContext()
+        apply(ctx.asContext(), config)
+
+        // O spawn usa o token RESOLVIDO (vindo do secrets.env), nao o vazio do config.
+        assert.equal(ctx.subprocess.calls.length, 1, 'o worker tem de spawnar com o token do secrets.env')
+        const spec = ctx.subprocess.calls[0]
+        assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], '123456789:AAsegredoDoSecretsEnv')
+
+        // A UI reflete o MESMO resolvedor: token presente E dono pareado -> ONLINE.
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true })
+      } finally {
+        for (const disposer of ctx?.effects ?? []) disposer()
+        limpar()
+      }
+    })
+
+    it('(b) config vazio E secrets.env ausente -> OFFLINE sem-chave e sem worker', () => {
+      const { limpar } = comSecretsEnv('', { withPairing: true })
+      let ctx: FakeContext | undefined
+      try {
+        const config = makeConfig()
+        config.worker.token = ''
+        config.tunnel = { mode: 'quick', ttlMinutes: 60 }
+        ctx = new FakeContext()
+        apply(ctx.asContext(), config)
+
+        // Mesmo pareado, SEM token (config e secrets.env vazios) -> sem-chave.
+        assert.equal(ctx.subprocess.calls.length, 0, 'sem token em lado nenhum nao ha worker')
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: false, motivo: 'sem-chave' })
+      } finally {
+        for (const disposer of ctx?.effects ?? []) disposer()
+        limpar()
+      }
+    })
+
+    it('(c) config.worker.token nao-vazio -> ONLINE (o config manda) e o spawn usa o token do config', () => {
+      const { limpar } = comSecretsEnv('', { withPairing: true })
+      let ctx: FakeContext | undefined
+      try {
+        // makeConfig() traz worker.token: 'token-de-teste'; o secrets.env esta vazio.
+        const config = makeConfig()
+        config.tunnel = { mode: 'quick', ttlMinutes: 60 }
+        ctx = new FakeContext()
+        apply(ctx.asContext(), config)
+        assert.equal(ctx.subprocess.calls.length, 1)
+        const spec = ctx.subprocess.calls[0]
+        assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], 'token-de-teste')
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true })
+      } finally {
+        for (const disposer of ctx?.effects ?? []) disposer()
+        limpar()
+      }
+    })
   })
 
   it('em modo tunnel o controlador nasce com o supervisor e morre sem deixar handles', async () => {

@@ -28,6 +28,16 @@
  *   GET  /__guard-ui/client.js         — o script da superficie, como recurso
  *                                        externo (CSP-friendly).
  *
+ * DUAS rotas do Telegram (OFELINE/ONLINE), acrescidas para o botao da UI:
+ *   GET  /__guard-ui/api/telegram      — o estado Telegram: `online`+`motivo`
+ *                                        (offline) ou `online`+`handle`
+ *                                        (online). O disco e lido pela costura
+ *                                        a cada pedido; o token NUNCA sai.
+ *   POST /__guard-ui/api/telegram/click — o clique no botao: devolve o TEXTO
+ *                                        das instrucoes (conectar se offline,
+ *                                        uso se online). Exige CSRF, como todo
+ *                                        POST desta superficie.
+ *
  * Toda rota POST exige o token anti-CSRF desta superficie (cabecalho
  * `x-dsh-csrf` ou campo `csrf` do corpo) — doutrina NIST SP 800-63B-4 5.1.1.
  * O metodo errado responde 405 (o despacho do host e por caminho, nao por
@@ -41,6 +51,7 @@ import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import { CSRF_FIELD_NAME, CSRF_HEADER_NAME, type CsrfGuard } from './csrf.ts'
 import { createClientScript } from './html.ts'
 import { buildControlIntent, projectResultado } from './intents.ts'
+import { passosDoTelegram, type TelegramEstado } from './telegram-state.ts'
 
 export const UI_PREFIX = '/__guard-ui'
 export const UI_PATH_STATE = `${UI_PREFIX}/api/state`
@@ -50,6 +61,10 @@ export const UI_PATH_STOP = `${UI_PREFIX}/api/stop`
 export const UI_PATH_RESET = `${UI_PREFIX}/api/reset`
 export const UI_PATH_RESET_CONFIRM = `${UI_PREFIX}/api/reset/confirm`
 export const UI_PATH_CLIENT = `${UI_PREFIX}/client.js`
+/** O estado Telegram OFFLINE/ONLINE — GET, so le. NUNCA carrega o token. */
+export const UI_PATH_TELEGRAM = `${UI_PREFIX}/api/telegram`
+/** O clique no botao Telegram — POST, CSRF como as demais escritas. */
+export const UI_PATH_TELEGRAM_CLICK = `${UI_PREFIX}/api/telegram/click`
 
 /** O vinculo do token anti-CSRF: a superficie inteira. */
 export const UI_CSRF_BINDING = 'ui-contrib'
@@ -82,6 +97,12 @@ export interface UiContribCore {
   readonly seq: () => number
   /** A ultima expiracao READY vista — a base da nota de TTL. */
   readonly lastReady: () => { readonly expiresAt: number } | undefined
+  /**
+   * O estado Telegram OFFLINE/ONLINE, lido do disco a cada pedido pela costura
+   * em `src/index.ts` (config.worker.token/secrets.env + state.json pairing).
+   * So boleanos e motivos; o token NUNCA passa por aqui.
+   */
+  readonly telegramState: () => TelegramEstado
   readonly csrf: CsrfGuard
   readonly now: () => number
   readonly requestedBy: string
@@ -414,5 +435,58 @@ export function createClientHandler(_core: UiContribCore): UiContribRequestHandl
       'cache-control': 'no-store',
     })
     res.end(createClientScript())
+  }
+}
+
+/* ========================================================================== */
+/* O estado e o clique do Telegram (OFFLINE/ONLINE)                           */
+/* ========================================================================== */
+
+/**
+ * Projeta o estado Telegram para a rota GET. FUNCAO PURA e exportada: e o
+ * coracao da pergunta falsificavel "o token sai nesta resposta?" — o corpo so
+ * tem `online`/`motivo` (offline) ou `online`/`handle` (online); o valor do
+ * token e injetado na costura e nunca chega ate aqui.
+ */
+export function projetarEstadoTelegrama(estado: TelegramEstado): Record<string, unknown> {
+  if (!estado.online) return { online: false, motivo: estado.motivo }
+  return {
+    online: true,
+    ...(estado.handle === undefined ? {} : { handle: estado.handle }),
+  }
+}
+
+/**
+ * GET /__guard-ui/api/telegram — o estado OFFLINE/ONLINE. SO LE: o motivo
+ * aproximado ("sem pareamento" / "sem chave do bot") quando offline, o estado
+ * online quando pronto. O disco e lido pela costura a cada pedido.
+ */
+export function createTelegramHandler(core: UiContribCore): UiContribRequestHandler {
+  return (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    json(res, 200, projetarEstadoTelegrama(core.telegramState()))
+  }
+}
+
+/**
+ * POST /__guard-ui/api/telegram/click — o CLIQUE no botao Telegram. E uma
+ * ESCRITA (abre o painel de instrucoes), por isso exige o token anti-CSRF da
+ * superficie como qualquer outro POST (NIST SP 800-63B-4 5.1.1). Devolve o
+ * TEXTO de instrucoes — a rota de conectar (offline) ou dicas de uso (online).
+ * O texto nunca traz a chave do bot nem o codigo de pareamento real.
+ */
+export function createTelegramClickHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    if (!exigeMetodo(req, res, 'POST')) return
+    const corpo = await lerCorpo(req)
+    if (!corpo.ok) {
+      json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' })
+      return
+    }
+    if (!csrfValido(core, req, corpo.corpo)) {
+      recusarCsrf(res)
+      return
+    }
+    json(res, 200, { passos: passosDoTelegram(core.telegramState()) })
   }
 }

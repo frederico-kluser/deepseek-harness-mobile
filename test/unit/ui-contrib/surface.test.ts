@@ -45,6 +45,8 @@ import {
   UI_PATH_START,
   UI_PATH_STATE,
   UI_PATH_STOP,
+  UI_PATH_TELEGRAM,
+  UI_PATH_TELEGRAM_CLICK,
   type UiContribRoute,
 } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -140,6 +142,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
       }
     },
     now: () => clock.now(),
+    telegramState: () => ({ online: false, motivo: 'sem-chave' }),
     ...overrides,
   }
 
@@ -244,7 +247,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 /* ========================================================================== */
 
 describe('registo da contribuicao', () => {
-  it('regista um tap, SETE rotas (W3: reset) e a assinatura do broadcast', () => {
+  it('regista um tap, NOVE rotas (telegram + reset) e a assinatura do broadcast', () => {
     const bancada = criarBancada()
     assert.equal(bancada.taps.length, 1)
     assert.deepEqual(
@@ -257,6 +260,8 @@ describe('registo da contribuicao', () => {
         UI_PATH_RESET,
         UI_PATH_RESET_CONFIRM,
         UI_PATH_CLIENT,
+        UI_PATH_TELEGRAM,
+        UI_PATH_TELEGRAM_CLICK,
       ].toSorted(),
     )
     for (const rota of bancada.rotas.values()) {
@@ -268,7 +273,7 @@ describe('registo da contribuicao', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-    assert.equal(bancada.rotaDesmontadas, 7, 'as sete rotas (incluindo o reset/W3) sao removidas')
+    assert.equal(bancada.rotaDesmontadas, 9, 'as nove rotas (telegram + reset) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 

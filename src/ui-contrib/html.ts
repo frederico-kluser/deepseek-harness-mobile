@@ -73,6 +73,17 @@ export function renderChrome(input: { readonly csrfToken: string; readonly scrip
     '</div>' +
     '<p style="margin: 0; color: #666666;" id="dsh-guard-ui-seq"></p>' +
     '</div>' +
+    // O bloco do Telegram. O TEXTO das instrucoes NUNCA viaja neste HTML (o
+    // indice servido fica sem `https://` e sem segredo): o clique devolve-o
+    // (POST /telegram/click) e o script poe-o no DOM por `textContent`.
+    '<p style="margin: 14px 0 6px; font-weight: 600;">Telegram — o bot</p>' +
+    '<p style="margin: 0 0 4px;" id="dsh-guard-ui-telegram-estado">…</p>' +
+    '<p style="margin: 0 0 8px;">' +
+    '<button type="button" id="dsh-guard-ui-telegram-botao">Telegram · …</button>' +
+    '</p>' +
+    '<div id="dsh-guard-ui-telegram-instrucoes" hidden style="margin: 0;">' +
+    '</div>' +
+    '</div>' +
     `<meta name="dsh-guard-ui-csrf" content="${escapeHtml(input.csrfToken)}">` +
     `<script src="${escapeHtml(input.scriptSrc)}" defer></script>`
   )
@@ -138,6 +149,9 @@ export function createClientScript(): string {
     texto: 'dsh-guard-ui-texto',
     confirmar: 'dsh-guard-ui-confirmar',
     cancelar: 'dsh-guard-ui-cancelar',
+    telegramEstado: 'dsh-guard-ui-telegram-estado',
+    telegramBotao: 'dsh-guard-ui-telegram-botao',
+    telegramInstrucoes: 'dsh-guard-ui-telegram-instrucoes',
   };
   const meta = document.querySelector('meta[name="dsh-guard-ui-csrf"]');
   const CSRF = meta ? meta.getAttribute('content') || '' : '';
@@ -222,6 +236,58 @@ export function createClientScript(): string {
     mostrar('falha', true);
   }
 
+  // --- Telegram (OFFLINE/ONLINE) ------------------------------------------
+  // O estado vem do disco via GET /telegram; o texto das instrucoes vem do
+  // clique via POST /telegram/click. Todas as strings entram no DOM por
+  // textContent — nunca por interpolacao de marcacao (a mesma doutrina da
+  // URL do tunel).
+  const ROTULOS_TELEGRAM = {
+    online: 'Telegram · online',
+    offline: 'Telegram · offline',
+  };
+
+  function pintarTelegrama(s) {
+    const estado = el('telegramEstado');
+    if (estado) estado.textContent = s && s.online
+      ? (s.handle ? ROTULOS_TELEGRAM.online + '  ' + s.handle : ROTULOS_TELEGRAM.online)
+      : ROTULOS_TELEGRAM.offline;
+  }
+
+  function renderInstrucoes(passos) {
+    const caixa = el('telegramInstrucoes');
+    if (!caixa) return;
+    while (caixa.firstChild) caixa.removeChild(caixa.firstChild);
+    if (!Array.isArray(passos) || passos.length === 0) return;
+    const heading = document.createElement('p');
+    heading.style.cssText = 'margin: 0 0 6px; font-weight: 600;';
+    heading.textContent = 'Como ligar o bot do Telegram';
+    caixa.appendChild(heading);
+    for (const passo of passos) {
+      if (!passo || typeof passo.titulo !== 'string' || typeof passo.texto !== 'string') continue;
+      const titulo = document.createElement('p');
+      titulo.style.cssText = 'margin: 6px 0 2px; font-weight: 600; white-space: pre-wrap; word-break: break-word;';
+      titulo.textContent = passo.titulo;
+      caixa.appendChild(titulo);
+      const corpo = document.createElement('p');
+      corpo.style.cssText = 'margin: 0 0 4px; white-space: pre-wrap; word-break: break-word;';
+      corpo.textContent = passo.texto;
+      caixa.appendChild(corpo);
+    }
+    mostrar('telegramInstrucoes', true);
+  }
+
+  async function telegramaTick() {
+    let resposta;
+    try {
+      resposta = await fetch(BASE + '/telegram', { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    } catch (ignorado) {
+      pintarTelegrama({ online: false });
+      return;
+    }
+    if (!resposta.ok) { pintarTelegrama({ online: false }); return; }
+    try { pintarTelegrama(await resposta.json()); } catch (ignorado) { pintarTelegrama({ online: false }); }
+  }
+
   async function tick() {
     let resposta;
     try {
@@ -282,8 +348,25 @@ export function createClientScript(): string {
   });
   el('cancelar').addEventListener('click', fecharConfirmacao);
 
+  const telegramBotao = el('telegramBotao');
+  if (telegramBotao) {
+    telegramBotao.addEventListener('click', async () => {
+      // O clique e uma ESCRITA (abre as instrucoes) e envia o token anti-CSRF
+      // desta superficie, como qualquer outro POST da UI.
+      const r = await pedir('/telegram/click', {});
+      if (r.status !== 200 || !Array.isArray(r.dados.passos)) {
+        texto('falha', (r.dados && r.dados.motivo) || 'o servidor não respondeu — recarregue a página');
+        mostrar('falha', true);
+        return;
+      }
+      renderInstrucoes(r.dados.passos);
+    });
+  }
+
   tick();
+  telegramaTick();
   setInterval(tick, 2000);
+  setInterval(telegramaTick, 2000);
 })();
 `
 }

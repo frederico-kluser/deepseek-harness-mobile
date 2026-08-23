@@ -80,7 +80,14 @@ import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
 import { createOneTimeTokenStore } from './secret/ott.ts'
 import { createMagicStore } from './session/magic.ts'
 import { createNativeUiSurface } from './ui-contrib/surface.ts'
+import { derivarEstadoTelegram } from './ui-contrib/telegram-state.ts'
 import type { WebRoute } from './dsh/adapter.ts'
+import {
+  CHAVE_DO_TOKEN,
+  analisarSecretsEnv,
+  caminhoDoSecretsEnv,
+  lerSecretsEnv,
+} from './telegram/onboarding.ts'
 
 /**
  * O RESOLUTOR DE ORIGEM DO PAINEL -- reexportado, e agora o UNICO que existe.
@@ -547,6 +554,39 @@ export function apply(ctx: Context, config: Config): void {
   const auditPath = resolveAuditLogPath()
   log.info(`Estado em ${statePaths.file}; auditoria em ${auditPath}.`)
 
+  /**
+   * RESOLVEDOR DO TOKEN DO BOT — fonte de verdade UNICA, usada nas DUAS pontas
+   * que precisam de saber se ha bot: a decisao de spawn do worker (efeito 6,
+   * `createWorkerSupervisor` + injeção do env) e o estado do botao Telegram da
+   * UI (`telegramState`). Antes esta resolucao existia duplicada e divergente —
+   * o worker so subia com `config.worker.token`, mas a UI tambem acendia o
+   * botao com um token apenas em `secrets.env`, mentindo sobre o bot estar
+   * ligado.
+   *
+   * A ordem e a do onboarding (`resolverToken` em `src/telegram/onboarding.ts`):
+   * `config.worker.token` PRIMEIRO (o que o host injeta via env),
+   * `secrets.env` a seguir (o que `dsh-guard-setup --pedir-token` grava). Um
+   * token so existe se QUALQUER uma das fontes o der; vazio = SEM BOT.
+   *
+   * O VALOR RAPIDO NUNCA sai para a UI: esta funcao existe para DECIDIR, e os
+   * consumidores UI transformam o resultado em boleano/motivo.
+   */
+  const resolverTokenDoBot = (): string | undefined => {
+    const doConfig = typeof config.worker.token === 'string' ? config.worker.token.trim() : ''
+    if (doConfig.length > 0) return doConfig
+    let env: string | undefined
+    try {
+      env = lerSecretsEnv(caminhoDoSecretsEnv(statePaths))
+    } catch (error) {
+      // secrets.env ilegivel/exposto -> trata como ausente (fail-closed: nao
+      // se inventa um bot de um segredo que nem se consegue ler).
+      void error
+      return undefined
+    }
+    const valor = env === undefined ? undefined : analisarSecretsEnv(env).get(CHAVE_DO_TOKEN)?.trim()
+    return valor !== undefined && valor.length > 0 ? valor : undefined
+  }
+
   const tunnelOrigin = createTunnelOriginRegistry()
 
   let stack: GateAuthStack | undefined
@@ -1002,6 +1042,23 @@ export function apply(ctx: Context, config: Config): void {
       issueNonce: (action) => controlador.emitirNonce(action),
       subscribe: (listener) => fanoutDeEstado.assinar(listener),
       now: agora,
+      // O ESTADO DO BOTAO Telegram, do disco a cada pedido. S6/S4: o token NUNCA
+      // sai daqui para a UI — esta funcao so decide se "existe" e se ha dono
+      // pareado, e devolve boleanos + motivo. Token configurado = o MESMO
+      // resolvedor que decide o spawn do worker (`resolverTokenDoBot`), para o
+      // botao nunca mentir sobre o bot estar ligado; pareamento = `pairing` do
+      // `state.json`. Falha de leitura fecha para OFFLINE (fail-closed).
+      telegramState: () => {
+        const tokenConfigurado = resolverTokenDoBot() !== undefined
+        let pairing: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+        try {
+          pairing = authStack().state.read().pairing
+        } catch (error) {
+          void error
+          return { online: false, motivo: tokenConfigurado ? 'sem-pareamento' : 'sem-chave' }
+        }
+        return derivarEstadoTelegram({ tokenConfigurado, pairing })
+      },
     })
 
     /* 2c. NOTIFICACOES (T5.4, costura): o relatorio periodico de tunel aberto
@@ -1096,12 +1153,17 @@ export function apply(ctx: Context, config: Config): void {
    * (EMENDA-COSTURA-5) e do dono persistido no boot (8c).
    */
   ctx.effect((): Disposable => {
+    // O token resolvido decide se ha bot: `config.worker.token` ou
+    // `secrets.env`. E o MESMO resolvedor do botao da UI — um token que o CLI
+    // gravou em `secrets.env` (e que a UI mostra ONLINE) faz o worker SPAWNAR
+    // de facto. Nao ha divergencia a corrigir a mao.
+    const tokenDoBot = resolverTokenDoBot()
     // Token vazio/ausente = "telegram nao configurado" (contrato INSTALL.md
     // Passo 2/4): o portao HTTP funciona sem o bot. Nao ha worker, nem
     // supervisor, nem subprocesso, nem backoff -- so a linha de boot
     // documentada. O efeito continua registado (os 5 efeitos sao contrato de
     // ordem/LIFO) mas devolve um disposer no-op sincrono.
-    if (!config.worker.token) {
+    if (tokenDoBot === undefined) {
       log.info('telegram: não configurado — rode /parear <código> no bot')
       return (): void => undefined
     }
@@ -1130,6 +1192,10 @@ export function apply(ctx: Context, config: Config): void {
     const supervisor = createWorkerSupervisor(ctx, config, defaultSupervisorDeps, {
       onIntent: responder,
       onNonceRequest: responderDeNonce,
+      // O token RESOLVIDO (config ou secrets.env) — o supervisor injeta-o no
+      // env do filho. Sem o override, ele usaria so `config.worker.token` e um
+      // token apenas em `secrets.env` nao ligaria o worker (o bug HIGH do botao).
+      token: tokenDoBot,
     })
     workerSupervisor = supervisor
     supervisor.start()

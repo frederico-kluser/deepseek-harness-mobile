@@ -48,6 +48,8 @@ import {
   createStartHandler,
   createStateHandler,
   createStopHandler,
+  createTelegramClickHandler,
+  createTelegramHandler,
   UI_CSRF_BINDING,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
@@ -56,9 +58,12 @@ import {
   UI_PATH_START,
   UI_PATH_STATE,
   UI_PATH_STOP,
+  UI_PATH_TELEGRAM,
+  UI_PATH_TELEGRAM_CLICK,
   type UiContribCore,
   type UiContribRoute,
 } from './routes.ts'
+import type { TelegramEstado } from './telegram-state.ts'
 import { createUlidFactory } from './ulid.ts'
 
 /** A difusao de estado que esta superficie consome. */
@@ -92,6 +97,13 @@ export interface UiContribDeps {
   readonly issueNonce: (action: ControlAction) => Nonce
   readonly subscribe: (listener: (broadcast: UiContribBroadcast) => void) => () => void
   readonly now: () => number
+  /**
+   * O estado Telegram OFFLINE/ONLINE, lido do disco pela costura em
+   * `src/index.ts`. A superficie so o reencaminha; nao guarda estado proprio
+   * para o telegram (cada pedido le o disco de novo — o pareamento muda pela
+   * CLI/worker, nao por esta superficie).
+   */
+  readonly telegramState: () => TelegramEstado
   readonly requestedBy?: string
 }
 
@@ -128,6 +140,7 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     projection: () => lastSnapshot,
     seq: () => lastSeq,
     lastReady: () => lastReady,
+    telegramState: deps.telegramState,
     csrf,
     now: deps.now,
     requestedBy,
@@ -146,6 +159,9 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     { kind: 'exact', path: UI_PATH_RESET, handler: createResetHandler(core) },
     { kind: 'exact', path: UI_PATH_RESET_CONFIRM, handler: createResetConfirmHandler(core) },
     { kind: 'exact', path: UI_PATH_CLIENT, handler: createClientHandler(core) },
+    // O botao Telegram: estado (GET) e clique (POST com CSRF).
+    { kind: 'exact', path: UI_PATH_TELEGRAM, handler: createTelegramHandler(core) },
+    { kind: 'exact', path: UI_PATH_TELEGRAM_CLICK, handler: createTelegramClickHandler(core) },
   ]
 
   const rotaDisposers: Array<() => void> = []

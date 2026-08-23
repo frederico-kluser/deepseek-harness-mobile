@@ -56,6 +56,9 @@ describe('o tap do indice', () => {
     assert.ok(chrome.includes('id="dsh-guard-ui-desligar"'), 'falta o botao de desligar')
     assert.ok(chrome.includes('id="dsh-guard-ui-estado"'), 'falta a area de estado')
     assert.ok(chrome.includes('id="dsh-guard-ui-falha"'), 'falta a area de falha')
+    assert.ok(chrome.includes('id="dsh-guard-ui-telegram-botao"'), 'falta o botao Telegram')
+    assert.ok(chrome.includes('id="dsh-guard-ui-telegram-estado"'), 'falta o estado Telegram')
+    assert.ok(chrome.includes('id="dsh-guard-ui-telegram-instrucoes"'), 'falta a area de instrucoes')
   })
 
   it('preserva o documento original INTACTO — os taps do host nao morrem', () => {
@@ -167,5 +170,15 @@ describe('o script da superficie (client.js)', () => {
     const fonte = createClientScript()
     assert.ok(fonte.includes("texto('url',"))
     assert.equal(fonte.includes('innerHTML'), false)
+  })
+
+  it('o Telegram: fala com as rotas /telegram e /telegram/click e desenha as instrucoes via textContent', () => {
+    const fonte = createClientScript()
+    assert.ok(fonte.includes("'/telegram'"), 'o script le o estado Telegram')
+    assert.ok(fonte.includes("'/telegram/click'"), 'o script faz o clique Telegram')
+    assert.ok(fonte.includes('Telegram · offline'))
+    assert.ok(fonte.includes('Telegram · online'))
+    assert.ok(fonte.includes('passo.texto'), 'o script usa o texto de cada passo (textContent)')
+    assert.ok(fonte.includes('textContent'), 'o script usa textContent, nunca marcacao interpolada')
   })
 })

@@ -62,6 +62,16 @@ export interface WorkerSupervisor extends ProcessSupervisor {
 /** O que distingue este supervisor do generico, alem do `argv`. */
 export interface WorkerSupervisorOptions {
   /**
+   * O TOKEN do bot, RESOLVIDO pela costura (`config.worker.token` ou o
+   * `secrets.env` gravado pelo CLI). AUSENTE, o supervisor usa `config.worker.token`.
+   *
+   * PORQUE EXISTE: o botao da UI e o spawn do worker tem de PARTILHAR a MESMA
+   * resolucao do token, ou o botao acenderia com um token que nunca chega ao
+   * worker (`config.worker.token` vazio mas `secrets.env` preenchido). A costura
+   * em `src/index.ts` resolve uma vez e passa-o para as duas pontas.
+   */
+  readonly token?: string | undefined
+  /**
    * Decide UMA intencao vinda do worker e devolve a resposta.
    *
    * SINCRONO e TOTAL (devolve sempre uma mensagem), porque o contrato diz que o
@@ -135,6 +145,14 @@ export function createWorkerSupervisor(
   const log = createGuardLogger(ctx)
 
   /**
+   * O token do bot: o da costura (`options.token`, resolvido de
+   * `config.worker.token`/`secrets.env`) ou o do proprio `config` quando
+   * aquele e omitido (os testes, por exemplo). Uma so fonte para o segredo,
+   * o env do filho E a mascara de logs.
+   */
+  const tokenDoBot = options.token ?? worker.token
+
+  /**
    * FORNECEDOR de segredos, PARTILHADO pelo encaminhamento de log do filho e
    * pelo canal IPC.
    *
@@ -143,7 +161,7 @@ export function createWorkerSupervisor(
    * filho a imprimi-lo e EM CLARO quando era o host a registar a excecao de um
    * decisor de intencoes. Duas listas eram duas politicas.
    */
-  const secrets = (): readonly string[] => [worker.token]
+  const secrets = (): readonly string[] => [tokenDoBot]
 
   /**
    * O canal da INSTANCIA CORRENTE. Estado de CLOSURE, nunca de modulo: dois
@@ -216,7 +234,7 @@ export function createWorkerSupervisor(
         // Ambiente CONSTRUIDO a partir de uma allowlist, nunca herdado inteiro:
         // `process.env` levava `ADMIN_USER`/`ADMIN_PASS` do plano de controlo
         // para dentro do worker. Ver `buildWorkerEnv`.
-        env: buildWorkerEnv(process.env, worker.token),
+        env: buildWorkerEnv(process.env, tokenDoBot),
       }),
       /**
        * O CANAL, ligado e desligado pelo supervisor generico -- ver
