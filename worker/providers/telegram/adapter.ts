@@ -165,7 +165,13 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
       ): Promise<SurfaceEditOutcome> {
         const api = botAtual().api as InlineKeyboardApi
         const alvo = { chatId: Number(chatKey), messageId: Number(messageId) }
-        const markup = opcoes?.actionRows === undefined ? undefined : renderActionRowLayout(opcoes.actionRows, log)
+        // CONTRATO §4 Regra 2 / §5 Regra 5: editar sem `actionRows` DESTROI o
+        // teclado (anti duplo-toque; o resultado apos a accao fica sem botoes).
+        // O Telegram PRESERVA o reply_markup se nao for passado, por isso um
+        // vazio explicito (`inline_keyboard: []`) e o unico modo fiel.
+        const markup = opcoes?.actionRows === undefined
+          ? { inline_keyboard: [] as never[] }
+          : renderActionRowLayout(opcoes.actionRows, log)
         const outcome: SurfaceEditOutcome = await editMessageTextInPlace(
           api,
           alvo,
@@ -238,11 +244,34 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
         log.warn('publishCommands antes do start: sem bot para publicar')
         return undefined
       }
-      // `setMyCommands` do grammY recebe a lista DIRECTAMENTE como primeiro
-      // argumento, e cada item como `{ command, description }`.
-      return atual.api.setMyCommands(
-        comandos.map((c) => ({ command: c.command, description: c.description })),
-      )
+      // CONTRATO §2: scopes de `setMyCommands`. A descoberta segura para toda a
+      // gente (default = grupos e privado) e so `start`/`ajuda`; as acoes/estado
+      // (`menu`/`status`/`parear`/`emergencia`) vao ao PRIVATE (so DM). O `start`
+      // nao sai no menu (PAIR-006), mas respeita-se o escopo default se surgir.
+      const scopeDefault = ['start', 'ajuda']
+      const scopePrivate = ['menu', 'status', 'parear', 'emergencia']
+      const conhecidas = new Set([...scopeDefault, ...scopePrivate])
+      const total = comandos.map((c) => ({ command: c.command, description: c.description }))
+
+      // Se alguem passar uma lista fora do mapa de scopes (ex.: testes com
+      // comandos a custume), publicar TUDO num unico `setMyCommands` sem escopo —
+      // nunca cair em silencio (caso real: 78 comandos quebram em silencio).
+      if (!comandos.every((c) => conhecidas.has(c.command))) {
+        return atual.api.setMyCommands(total)
+      }
+
+      const porNome = (nomes: readonly string[]): { command: string; description: string }[] =>
+        comandos.filter((c) => nomes.includes(c.command)).map((c) => ({ command: c.command, description: c.description }))
+
+      const defaultCmds = porNome(scopeDefault)
+      const privateCmds = porNome(scopePrivate)
+      if (defaultCmds.length > 0) {
+        await atual.api.setMyCommands(defaultCmds, { scope: { type: 'default' } })
+      }
+      if (privateCmds.length > 0) {
+        await atual.api.setMyCommands(privateCmds, { scope: { type: 'all_private_chats' } })
+      }
+      return undefined
     },
     sender: () => sender,
     descartados: () => parse.descartados(),

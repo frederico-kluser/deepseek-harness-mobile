@@ -171,10 +171,14 @@ describe('provider/telegram/parse — gramatica g1 e o limite de 64 BYTES', () =
     assert.throws(() => buildCallbackData('tunnel.up', 'a'.repeat(70)), /bytes/u)
   })
 
-  it('parseCallbackData aceita so o vocabulario FECHADO de IpcIntentName', () => {
+  it('parseCallbackData aceita so o vocabulario FECHADO de SurfaceAction (intents + navegacao)', () => {
     assert.equal(parseCallbackData('g1:tunnel.up:tok').ok, true)
     assert.equal(parseCallbackData('g1:nao-existe:tok').ok, false)
     assert.equal(parseCallbackData('g1:tunnel.down:tok').ok, true)
+    // Onda 3 — navegacao LOCAL do cartao/fallback tambem e uma SurfaceAction.
+    assert.equal(parseCallbackData('g1:menu:tok').ok, true)
+    assert.equal(parseCallbackData('g1:ajuda:tok').ok, true)
+    assert.equal(parseCallbackData('g1:inicio:tok').ok, true)
   })
 
   it('a unidade e BYTE, nao caractere: acento custa 2', () => {

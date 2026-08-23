@@ -68,7 +68,6 @@ import type {
   IpcAckMessage,
   IpcErrorCode,
   IpcErrorMessage,
-  IpcIntentName,
   IpcNotifyMessage,
   IpcPairingChallengeMessage,
   IpcPairingOwnerMessage,
@@ -77,6 +76,7 @@ import type {
 
 import { botoesDeAlerta, extrairAlerta } from './actions.ts'
 import {
+  type ActionRow,
   type EmitirNonce,
   type IntencaoNeutra,
   type SurfaceAction,
@@ -94,9 +94,14 @@ import {
   type SurfaceSender,
   type SurfaceTunnelState,
 } from './contract.ts'
-import { cortarTexto, textoDeEstado } from './text.ts'
+import {
+  cortarTexto,
+  estreitarEstado,
+  formatarDuracao,
+  textoDeEstadoCurto,
+} from './text.ts'
 import { criarOutbox } from './outbox.ts'
-import { gerarRequestId } from './tokens.ts'
+import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
 import { COMANDOS_PUBLICADOS } from './commands.ts'
 
 // Re-export da lista canonica (dono unico em commands.ts, onda 5a): o nucleo
@@ -166,23 +171,23 @@ function indiceDeEspacoAscii(valor: string): number {
 export function textoDeRecusa(codigo: IpcErrorCode): string {
   switch (codigo) {
     case 'SHUTDOWN_IN_PROGRESS':
-      return 'O túnel está a desligar. Mande o comando de novo em alguns segundos.'
+      return 'Túnel a mudar de estado. Tenta de novo em alguns segundos.'
     case 'EXPOSURE_DISABLED':
-      return 'A exposição está desligada na configuração (exposure.mode não é "tunnel").'
+      return 'A exposição remota está desligada nesta máquina. Não dá para ligar pelo bot.'
     case 'RESTRICTED_MODE':
-      return 'O modo restrito está ativo; não é possível ligar pelo bot.'
+      return 'O modo restrito está ativo nesta máquina. Usa o painel local.'
     case 'PROBE_FAILED':
-      return 'A barreira de segurança não passou no teste; o túnel não sobe.'
+      return 'A verificação de segurança falhou; o túnel não sobe. Vê o painel.'
     case 'TUNNEL_FAILED':
-      return 'O túnel está em estado de falha; é preciso ação sua na máquina.'
+      return 'Túnel parado por erro. Precisa de ação tua na máquina.'
     case 'NOT_PAIRED':
-      return 'Este bot ainda não está pareado.'
+      return 'Ainda não está pareado. Gera um código no painel e envia `/parear`.'
     case 'NONCE_INVALID':
-      return 'Confirmação inválida ou expirada. Mande o comando de novo.'
+      return 'Confirmação expirada. Envia o comando de novo.'
     case 'RATE_LIMITED':
-      return 'Demasiados pedidos; tente mais tarde.'
+      return 'Pedidos demais. Espera um pouco e tenta de novo.'
     case 'INTERNAL':
-      return 'Ocorreu um erro interno.'
+      return 'Algo falhou no meu lado. Tenta de novo.'
   }
 }
 
@@ -365,24 +370,32 @@ export interface Nucleo {
   onOwner(msg: IpcPairingOwnerMessage): void
 }
 
-/** `ms` -> texto do "em progresso" por intent (o mesmo vocabulario do router). */
-function acaoEmProgresso(acao: IpcIntentName): string {
+function descrever(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * O RESULTADO de uma accao confirmada, em 1-2 linhas (CONTRATO §5 "Ações
+ * destrutivas — respostas finais claras"). `accepted` apos o OK; `noop` quando
+ * o tunel ja estava no estado pedido. O texto e NEUTRO/exato do contrato.
+ */
+function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop'): string {
   switch (acao) {
     case 'tunnel.up':
-      return 'A ligar o túnel…'
+      return result === 'noop' ? 'Túnel já estava ligado.' : 'Túnel ligado. Link enviado aqui.'
     case 'tunnel.down':
-      return 'A desligar o túnel…'
+      return result === 'noop' ? 'Túnel já estava desligado.' : 'Túnel desligado. Nada ficou exposto.'
     case 'secret.rotate':
-      return 'A gerar chave nova…'
+      return 'Chave nova gerada. O link antigo deixou de funcionar.'
     case 'tunnel.status':
     case 'session.issue':
     case 'emergency':
-      return 'Pedido aceite.'
+    case 'menu':
+    case 'ajuda':
+    case 'inicio':
+      // Nav e leituras nao confirmam accao destrutiva; generico.
+      return result === 'noop' ? 'Já estava assim.' : 'Pedido aceite.'
   }
-}
-
-function descrever(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function criarNucleo(deps: NucleoDeps): Nucleo {
@@ -423,6 +436,12 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
   }
 
   async function mostrarEstado(chat: string, texto: string): Promise<string> {
+    // Onda 3 / CONTRATO §4 Regra 3: com o cartao de controlo a vista, a
+    // difusao de estado / /status re-renderiza o CARTAO in-place (estado +
+    // teclado) em vez de gravar um texto solto por cima dele.
+    if (cartaoEstaVisivel(chat)) {
+      return exibirCartao(chat, time.now())
+    }
     const registada = ultimaMensagemDeEstado.get(chat)
     if (registada === undefined) {
       const id = await enviarPara(chat, texto)
@@ -524,6 +543,80 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
   // (a facao da onda 4 liga a factory de `worker/surface/commands.ts`).
   const comandos = deps.comandos(contexto)
 
+  // ---- O CARTAO DE CONTROLO (/menu + pos-pareamento) ----------------------
+  // A mensagem edit-in-place do dono: estado visivel + teclado de botoes
+  // (CONTRATO §4). O id da mensagem do cartao por chat deixa distinguir um
+  // clique NOS BOTOES DO CARTAO (que INICIAM o fluxo) de um clique nos botoes
+  // de CONFIRMACAO (que CONFIRMAM) — e permite re-renderizar o cartao quando o
+  // estado muda (Regra 3). So o dono chega aqui (o /menu passa pelo guard).
+  const cartoesDoControle = new Map<string, string>()
+
+  /** O texto do cartao na linha de estado (Regra 3). So para o DONO. */
+  function linhaDeEstadoDoCartao(agora: number): string {
+    const projecaoAtual = projecao.ler()
+    const estado = estreitarEstado(projecaoAtual.state)
+    if (estado === 'READY') {
+      const duracao = formatarDuracao(agora - (projecaoAtual.readyDesde ?? agora))
+      return `Túnel: ✅ Ligado · link no ar há ${duracao}`
+    }
+    if (estado === 'STOPPED') return 'Túnel: ⬜ Desligado — nada exposto'
+    // Estados de transicao/falha — o dono ve um estado a mudar, sem segredo.
+    return 'Túnel: estado a mudar…'
+  }
+
+  /** O teclado do cartao (CONTRATO §4, rotulos EXATOS). Os botoes INICIAM. */
+  function tecladoDoCartao(): readonly (readonly ActionRow[])[] {
+    return [
+      [
+        linhaDeBotao('🟢 Ligar', 'tunnel.up', 'confirm'),
+        linhaDeBotao('🔴 Desligar', 'tunnel.down', 'emergency'),
+      ],
+      [
+        linhaDeBotao('📶 Status', 'tunnel.status'),
+        linhaDeBotao('🔗 Link de acesso', 'session.issue', 'confirm'),
+        linhaDeBotao('⇄ Nova chave', 'secret.rotate', 'confirm'),
+      ],
+      [linhaDeBotao('🚨 Emergência', 'emergency', 'emergency')],
+      [linhaDeBotao('🏠 Início', 'inicio')],
+    ]
+  }
+
+  function linhaDeBotao(label: string, acao: SurfaceAction, kind?: 'confirm' | 'emergency'): ActionRow {
+    return { label, action: acao, token: gerarTokenOpaque(), ...(kind === undefined ? {} : { kind }) }
+  }
+
+  /** Monta o texto do cartao (titulo + linha de estado). */
+  function textoDoCartao(agora: number): string {
+    return `🎛️ Controlo do Harness\n\n${linhaDeEstadoDoCartao(agora)}`
+  }
+
+  /**
+   * Envia ou edita o cartao in-place para o chat do dono, com o teclado. A
+   * primeira chamada cria a mensagem; as seguintes editam-na no lugar.
+   */
+  async function exibirCartao(chat: string, agora: number): Promise<string> {
+    const texto = textoDoCartao(agora)
+    const opcoes: Parameters<SurfaceSender['send']>[2] = { actionRows: tecladoDoCartao() }
+    const registado = cartoesDoControle.get(chat)
+    if (registado === undefined) {
+      const id = await enviarPara(chat, texto, opcoes)
+      cartoesDoControle.set(chat, id)
+      // O cartao tambem passa a ser a "ultima mensagem de estado" edit-in-place:
+      // a difusao de estado re-renderiza-o (Regra 3).
+      ultimaMensagemDeEstado.set(chat, id)
+      return id
+    }
+    await editarPara(chat, registado, texto, opcoes)
+    return registado
+  }
+
+  /** Distingue (via `mostrarEstado`) que a difusao de estado re-renderiza o cartao. */
+  function cartaoEstaVisivel(chat: string): boolean {
+    return cartoesDoControle.get(chat) !== undefined
+  }
+
+  // ---- fim do bloco do cartao -----------------------------------------------
+
   function auditoria(campos: Readonly<Record<string, unknown>>): void {
     log.info('auditoria', campos)
   }
@@ -614,33 +707,82 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       case 'emergencia':
         await comandos.emergencia(identidade)
         return
-      case undefined:
       case 'start':
       case 'parear':
-        // `start`/`parear` sao consumidos pelo receptor; texto sem comando nao e assunto.
+        // `start`/`parear` sao consumidos pelo receptor (correctness: nao deviam
+        // chegar aqui; manter a guarda e defensivo).
         return
+      case 'menu':
+        // CONTRATO §4: /menu abre o cartao de controlo do dono (guard-gated).
+        await exibirCartao(identidade.chatKey, time.now())
+        return
+      case 'ajuda':
+        // CONTRATO §2: ajuda curta (owner-only; a um estranho, silencio — aqui
+        // quem chega ja passou pela allowlist).
+        await enviarPara(
+          identidade.chatKey,
+          'ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.\n' +
+            'Usa /menu para o cartão de controlo e /status para ver o túnel.',
+        )
+        return
+      case undefined:
       default:
-        // TG-081: comando morto ou desconhecido — NENHUM intent. So uma palavra ao dono.
-        await enviarPara(identidade.chatKey, 'Não conheço este comando.')
+        // TG-081: comando morto/desconhecido OU texto livre. NENHUM intent.
+        // Contrato §6: acusa + chuta + oferece saída, só ao dono (já passou a
+        // allowlist; a um estranho o guard descartou antes).
+        await enviarPara(identidade.chatKey, 'Não entendi. Queres fazer o quê?', {
+          actionRows: [
+            [
+              { label: '🔘 Abrir menu', action: 'menu', token: gerarTokenOpaque() },
+              { label: '📶 Estado', action: 'tunnel.status', token: gerarTokenOpaque() },
+              { label: 'ℹ️ Ajuda', action: 'ajuda', token: gerarTokenOpaque() },
+            ],
+          ],
+        })
     }
   }
 
   /* ---- o despacho de accoes (port fiel de `tratarCallback`) -------------- */
 
   async function tratarAcao(event: SurfaceActionEvent): Promise<void> {
+    const chat = event.identity.chatKey
+    // Distingue um clique NO CARTAO de controlo (que INICIA um fluxo, toast do
+    // §4) de um clique num botao de CONFIRMACAO/tela (que CONFIRMA). Os botoes
+    // do cartao vivem na mensagem que `cartoesDoControle` guarda.
+    const vindaDoCartao = event.messageTarget !== undefined && event.messageTarget === cartoesDoControle.get(chat)
+
+    // --- NAVEGACAO LOCAL (nao vai ao host; so o dono a alcanca — guard-gated).
+    if (event.action === 'menu' || event.action === 'inicio' || event.action === 'ajuda') {
+      // TG-027: responder ao clique SEMPRE. NAVEGACAO nao aumenta exposicao e
+      // nao leva nonce — o answer e vazio (o feedback e o que se mostra).
+      await deps.sender.answer(event.answerTarget)
+      if (event.action === 'menu' || event.action === 'inicio') {
+        await exibirCartao(chat, time.now())
+      } else {
+        await enviarPara(
+          chat,
+          'ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.\n' +
+            'Usa /menu para o cartão de controlo e /status para ver o túnel.',
+        )
+      }
+      return
+    }
+
     switch (event.action) {
       case 'tunnel.up':
       case 'secret.rotate': {
-        // A CONFIRMACAO. O token viaja OPACO (S5): o worker nao o valida — o
-        // host consome. Um token ja consumido ou forjado e recusado LA, e o
-        // ack devolve a recusa para renderizar. O answer vem sem texto: o
-        // feedback do clique e a edicao in-place da mensagem (a do botao).
+        // Botao do CARTAO que INICIA (pede nonce e mostra a tela de confirmacao).
+        if (vindaDoCartao) {
+          await deps.sender.answer(event.answerTarget, {
+            text: event.action === 'tunnel.up' ? 'Ligando…' : 'Gerando chave nova…',
+          })
+          if (event.action === 'tunnel.up') await comandos.ligar(event.identity)
+          else await comandos.rotacionar(event.identity)
+          return
+        }
+        // A CONFIRMACAO ([✅ ...] da tela 2 etapas). O token viaja OPACO (S5).
+        // O answer vem SEM texto: o feedback e a edicao in-place (a do botao).
         await deps.sender.answer(event.answerTarget)
-        // AUTOLINK (onda1): o /ligar confirmado arma o envio automatico do
-        // link da chave de acesso, CHAVEADO pelo requestId DESTA ligacao. O
-        // slot so e armado se nao houver outra ligacao em curso (so a PRIMEIRA
-        // confirmacao pode vir a ser a que sobe — o host serializa os starts).
-        // Um tap sobreposto (double-tap) nao sobrescreve a ligacao boa.
         const requestIdUp = gerarRequestId(time.now())
         if (event.action === 'tunnel.up' && autolink === null) {
           autolink = {
@@ -660,7 +802,13 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         )
         return
       }
-      case 'tunnel.down':
+      case 'tunnel.down': {
+        // Botao do CARTAO que INICIA o fluxo de /desligar (tela de confirmacao).
+        if (vindaDoCartao) {
+          await deps.sender.answer(event.answerTarget, { text: 'Desligando…' })
+          await comandos.desligar(event.identity)
+          return
+        }
         await comandos.confirmarDesligar(
           event.identity,
           event.token,
@@ -668,16 +816,33 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
           event.messageTarget,
         )
         return
-      case 'emergency':
-        // Os botoes dos notify de T5.4 (sessao-nova/auth-falha/ttl/relatorio).
-        await deps.sender.answer(event.answerTarget)
-        await comandos.emergencia(event.identity)
-        return
-      case 'tunnel.status':
-      case 'session.issue':
-        // Nunca renderizamos botoes destas acoes.
+      }
+      case 'session.issue': {
+        // Botao do CARTAO "Link de acesso": acusa e pede a sessao (o link real
+        // chega por notify, TG-085; o toast evita o botao morto — §4).
+        if (vindaDoCartao) {
+          await deps.sender.answer(event.answerTarget, { text: 'A enviar o link…' })
+          await comandos.acessar(event.identity)
+          return
+        }
         log.warn('acao de botao sem botao renderizado; descartada', { action: event.action })
         await deps.sender.answer(event.answerTarget)
+        return
+      }
+      case 'tunnel.status':
+        // So o dono a pressiona (card / fallback): estado. O answer vazio; a
+        // edicao (ou o cartao re-renderizado) mostra o estado real.
+        await deps.sender.answer(event.answerTarget)
+        await comandos.status(event.identity)
+        return
+      case 'emergency':
+        // Card/notify: reducer de exposicao, sem nonce (CTL-024). Toast no card.
+        await deps.sender.answer(
+          event.answerTarget,
+          vindaDoCartao ? { text: 'A derrubar tudo…' } : undefined,
+        )
+        await comandos.emergencia(event.identity)
+        return
     }
   }
 
@@ -730,7 +895,20 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
           return
         }
         if (pareamento.kind === 'boas-vindas') {
-          if (pareamento.chat !== undefined) await enviarPara(pareamento.chat, pareamento.reply)
+          // CONTRATO §3: o /start (IGUAL para todos) ganha os 2 botoes —
+          // `[🔘 Abrir menu]` (/menu) e `[ℹ️ Ajuda]` (/ajuda). O botao do menu
+          // so RESOLVE para o dono (guard); a um estranho, o guard descarta em
+          // silencio (TG-089). O texto da boas-vindas nunca diferencia dono.
+          if (pareamento.chat !== undefined) {
+            await enviarPara(pareamento.chat, pareamento.reply, {
+              actionRows: [
+                [
+                  { label: '🔘 Abrir menu', action: 'menu', token: gerarTokenOpaque() },
+                  { label: 'ℹ️ Ajuda', action: 'ajuda', token: gerarTokenOpaque() },
+                ],
+              ],
+            })
+          }
           return
         }
         // recusado
@@ -778,7 +956,11 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       else if (autolink !== null && (projecao.ler().state === 'FAILED' || projecao.ler().state === 'STOPPED')) {
         autolink = null
       }
-      emSegundoPlano(chat, () => mostrarEstadoSerializado(chat, textoDeEstado(projecao.ler(), time.now())))
+      // O que o dono ve e o CURTO (§5); o texto de estado completo (com seq e
+      // codigo EN) fica na linha de debug do LOG de auditoria.
+      const projecaoAtual = projecao.ler()
+      log.debug('estado difundido', { seq: projecaoAtual.seq, state: projecaoAtual.state })
+      emSegundoPlano(chat, () => mostrarEstadoSerializado(chat, textoDeEstadoCurto(projecaoAtual, time.now())))
     } catch (error) {
       log.error('falha ao renderizar difusao de estado', { detail: descrever(error) })
     }
@@ -820,9 +1002,9 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         return
       }
       if (pendente.acao === 'tunnel.status') {
-        // A resposta de /status: o ack trouxe o estado autoritativo.
+        // A resposta de /status: o ack trouxe o estado autoritativo. Texto CURTO (§5).
         emSegundoPlano(pendente.chatKey, () =>
-          mostrarEstado(pendente.chatKey, textoDeEstado(projecao.ler(), time.now())),
+          mostrarEstado(pendente.chatKey, textoDeEstadoCurto(projecao.ler(), time.now())),
         )
         return
       }
@@ -833,8 +1015,7 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         // ultima mensagem de estado in-place e destroi o painel.
         return
       }
-      const texto =
-        msg.result === 'noop' ? 'Já estava assim.' : acaoEmProgresso(pendente.acao)
+      const texto = msg.result === 'noop' ? textoDeResultadoDoAck(pendente.acao, 'noop') : textoDeResultadoDoAck(pendente.acao, 'accepted')
       if (pendente.messageTarget !== undefined) {
         emSegundoPlano(pendente.chatKey, () => editarPara(pendente.chatKey, pendente.messageTarget!, texto))
         ultimaMensagemDeEstado.set(pendente.chatKey, pendente.messageTarget)

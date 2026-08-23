@@ -57,13 +57,11 @@ import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
  * `ProviderAdapter.publishCommands` recebe esta lista).
  */
 export const COMANDOS_PUBLICADOS: readonly SurfacePublishedCommand[] = Object.freeze([
-  { command: 'ligar', description: 'Liga o túnel de acesso (pede confirmação)' },
-  { command: 'desligar', description: 'Desliga o túnel (pede confirmação)' },
-  { command: 'status', description: 'Estado atual: túnel, tempo no ar e quando expira' },
-  { command: 'acessar', description: 'Envia o link com a sua chave de acesso' },
-  { command: 'rotacionar', description: 'Gera chave nova e invalida a anterior (pede confirmação)' },
-  { command: 'parear', description: 'Parear com o código <código> mostrado no terminal' },
-  { command: 'emergencia', description: 'Emergência: desliga o túnel e este bot' },
+  { command: 'menu', description: 'Abrir o painel de controlo' },
+  { command: 'status', description: 'Ver estado do túnel' },
+  { command: 'parear', description: 'Parear com um código' },
+  { command: 'emergencia', description: 'Derrubar tudo de imediato' },
+  { command: 'ajuda', description: 'Ver como usar' },
 ])
 
 /** A lista canonica, como um array mutavel para o adaptador espalhar. */
@@ -187,7 +185,7 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
       }
       await ctx.enviar(
         identidade.chatKey,
-        'Ligar o túnel de acesso? Quando abrir, o link com a sua chave de acesso (entra direto, sem senha) será enviado aqui automaticamente.',
+        '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.',
         { actionRows: [[acao]] },
       )
     },
@@ -197,12 +195,12 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
       // de confirmacao nao carrega campo `nonce`.
       const token = emitirTokenDeDesligar(identidade.userKey, identidade.chatKey)
       const acao: ActionRow = {
-        label: '⛔ Sim, desligar',
+        label: '✅ Sim, desligar',
         action: 'tunnel.down',
         token,
         kind: 'emergency',
       }
-      await ctx.enviar(identidade.chatKey, 'Desligar o túnel?', { actionRows: [[acao]] })
+      await ctx.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', { actionRows: [[acao]] })
     },
 
     async confirmarDesligar(identidade, token, answerTarget, messageTarget): Promise<void> {
@@ -248,11 +246,14 @@ export interface ComandosAccess {
 export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
   return {
     async acessar(identidade): Promise<void> {
-      // Sem nonce: a emissao de sessao nao esta na lista de CTL-023. O pendente
-      // existe para a RECUSA renderizar como mensagem propria; o aceite e
-      // invisivel (a resposta vem por notify, TG-085).
+      // CONTRA TO TG-085 (Onda 3 — CONTRATO §5): o aceite DEIXA de ser invisível.
+      // Acusa o pedido para o botão não parecer morto; o link real chega por
+      // notify, como hoje (TG-085 preservado). Sem nonce: session.issue nao esta
+      // na lista de CTL-023. O pendente existe para a RECUSA renderizar como
+      // mensagem própria.
       const requestId = gerarRequestId(ctx.time.now())
       emitirIntent(ctx, identidade, { intent: 'session.issue', requestId })
+      await ctx.enviar(identidade.chatKey, '🔗 A enviar-te o link de acesso por aqui…')
     },
 
     async rotacionar(identidade): Promise<void> {
@@ -264,14 +265,14 @@ export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
       }
       // 2a etapa: o teclado. O clique envia secret.rotate com o nonce opaco.
       const acao: ActionRow = {
-        label: '✅ Sim, rodar',
+        label: '✅ Sim, gerar',
         action: 'secret.rotate',
         token: nonce,
         kind: 'confirm',
       }
       await ctx.enviar(
         identidade.chatKey,
-        'Gerar uma chave de acesso nova? A anterior será revogada e as sessões atuais invalidadas.',
+        '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?',
         { actionRows: [[acao]] },
       )
     },
@@ -304,7 +305,7 @@ export function criarStatus(ctx: SurfaceCommandContext): ComandosStatus {
       }
       emergenciaDisparada = true
       emitirIntent(ctx, identidade, { intent: 'emergency', requestId: gerarRequestId(ctx.time.now()) })
-      await ctx.enviar(identidade.chatKey, 'Emergência: a desligar o túnel e este bot.')
+      await ctx.enviar(identidade.chatKey, '🚨 Emergência disparada. Túnel a desligar e este bot vai encerrar.')
       await ctx.parar()
     },
   }

@@ -300,7 +300,7 @@ async function ciclo(s: Superficie, b: Bancada): Promise<readonly ResultadoObser
 describe('CTL-040 (S4): paridade das tres superficies', () => {
   it('a lista canonica (D5) tem par de controlo nas tres superficies', () => {
     const comandos = COMANDOS_PUBLICADOS.map((c) => c.command)
-    assert.deepEqual(comandos, ['ligar', 'desligar', 'status', 'acessar', 'rotacionar', 'parear', 'emergencia'])
+    assert.deepEqual(comandos, ['menu', 'status', 'parear', 'emergencia', 'ajuda'])
     // As tres superficies expoem as tres acoes de CONTROL (ligar/desligar/status).
     // `acessar`/`rotacionar` sao intencoes de sessao/segredo (item 5), `parear`
     // vive no worker e `emergencia` e o kill switch do worker — nenhum deles e

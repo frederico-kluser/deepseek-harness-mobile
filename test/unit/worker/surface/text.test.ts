@@ -17,6 +17,7 @@ import {
   formatarDuracao,
   formatarHora,
   textoDeEstado,
+  textoDeEstadoCurto,
 } from '../../../../worker/surface/text.ts'
 
 /* ========================================================================== */
@@ -124,5 +125,59 @@ describe('textoDeEstado', () => {
     )
     assert.ok(!texto.includes(digest), 'o digest nao pode aparecer')
     assert.ok(!texto.includes('sha256'), 'nenhum material de verificacao')
+  })
+})
+
+/* ========================================================================== */
+/* textoDeEstadoCurto — o texto CURTO do /status/cartao (CONTRATO §5)         */
+/* ========================================================================== */
+
+describe('textoDeEstadoCurto — boa-vindas ao dono, 1-3 linhas PT-BR (§5)', () => {
+  it('sem estado ainda, diz que o estado ainda e desconhecido', () => {
+    const texto = textoDeEstadoCurto({ state: undefined, seq: 0 }, 1_000)
+    assert.match(texto, /Estado ainda desconhecido do host/u)
+  })
+
+  it('em READY mostra online, link e quando expira — sem Sequencia nem codigo EN', () => {
+    const agora = 5 * 60_000
+    const texto = textoDeEstadoCurto(
+      {
+        state: 'READY',
+        seq: 7,
+        url: 'https://exemplo.trycloudflare.com',
+        readyDesde: agora - 3 * 60_000,
+        expiresAt: agora + 30 * 60_000,
+      },
+      agora,
+    )
+    assert.match(texto, /Túnel \*online\* há 3 min/u)
+    assert.match(texto, /Link: https:\/\/exemplo\.trycloudflare\.com/u)
+    assert.match(texto, /Expira daqui a 30 min/u)
+    assert.ok(!texto.includes('Sequência'), 'o seq/codigo EN termina no log, nao aqui')
+    assert.ok(!texto.includes('READY'), 'o codigo EN nao aparece')
+  })
+
+  it('STOPPED: nada ficou exposto', () => {
+    assert.equal(textoDeEstadoCurto({ state: 'STOPPED', seq: 2 }, 1_000), 'Túnel desligado. Nada ficou exposto.')
+  })
+
+  it('FAILED: precisa de accao tua', () => {
+    assert.match(textoDeEstadoCurto({ state: 'FAILED', seq: 4 }, 1_000), /Túnel parado por um erro/u)
+  })
+
+  it('STARTING/STOPPING/DEGRADED: uma linha curta de transicao, sem segredo', () => {
+    assert.match(textoDeEstadoCurto({ state: 'STARTING', seq: 1 }, 1_000), /Túnel a ligar/u)
+    assert.match(textoDeEstadoCurto({ state: 'STOPPING', seq: 1 }, 1_000), /Túnel a desligar/u)
+    assert.match(textoDeEstadoCurto({ state: 'DEGRADED', seq: 1 }, 1_000), /instável/u)
+  })
+
+  it('nunca expoe o digest (TG-084): a URL so em READY', () => {
+    const digest = 'a'.repeat(64)
+    const texto = textoDeEstadoCurto(
+      { state: 'READY', seq: 9, url: 'https://exemplo.trycloudflare.com', readyDesde: 1_000, expiresAt: 61_000 },
+      1_000,
+    )
+    assert.ok(!texto.includes(digest), 'o digest nao pode aparecer')
+    assert.ok(!textoDeEstadoCurto({ state: 'STARTING', seq: 1 }, 1_000).includes('https://'), 'URL so em READY')
   })
 })

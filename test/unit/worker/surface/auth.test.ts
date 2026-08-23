@@ -783,7 +783,7 @@ describe('criarGuardDeIdentidade — decisao por evento, descartado CONTADO', ()
     }
   })
 
-  it('a tabela de exposicao cobre TODO o vocabulario (SurfaceAction = IpcIntentName)', () => {
+  it('a tabela de exposicao cobre TODO o vocabulario (SurfaceAction = IpcIntentName + navegacao)', () => {
     assert.deepEqual(AUMENTA_EXPOSICAO, {
       'tunnel.up': true,
       'tunnel.down': false,
@@ -791,8 +791,14 @@ describe('criarGuardDeIdentidade — decisao por evento, descartado CONTADO', ()
       'session.issue': true,
       'secret.rotate': true,
       emergency: false,
+      menu: false,
+      ajuda: false,
+      inicio: false,
     })
     assert.equal(AUMENTA_EXPOSICAO.emergency, false, 'em panico, o botao tem de funcionar a primeira')
+    assert.equal(AUMENTA_EXPOSICAO.menu, false, 'navegacao local nunca aumenta exposicao')
+    assert.equal(AUMENTA_EXPOSICAO.ajuda, false, 'navegacao local nunca aumenta exposicao')
+    assert.equal(AUMENTA_EXPOSICAO.inicio, false, 'navegacao local nunca aumenta exposicao')
   })
 
   it('acumula por motivo, e a auditoria nunca pode carregar o token', () => {

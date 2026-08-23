@@ -115,6 +115,42 @@ export function textoDeEstado(projecao: SurfaceProjectionState, agora: number): 
   return linhas.join('\n')
 }
 
+/**
+ * O texto CURTO do /status/cartão (Onda 3 — CONTRATO §5): 1-3 linhas PT-BR, sem
+ * `Sequência:` nem código EN. `textoDeEstado` mantém-se para o LOG de auditoria
+ * (a soma `seq`/código EN à linha de debug é responsabilidade de quem loga);
+ * este mostra só o essencial que o dono lê.
+ *
+ * NAO expoe segredo nem digest (TG-084): só estado, URL (sse READY), tempo no
+ * ar e expiração do TTL. `agora` é o instante actual — injectado para ser
+ * determinístico em teste.
+ */
+export function textoDeEstadoCurto(projecao: SurfaceProjectionState, agora: number): string {
+  const estado = estreitarEstado(projecao.state)
+  switch (estado) {
+    case 'READY': {
+      const linhas = [`📶 Túnel *online* há ${formatarDuracao(agora - (projecao.readyDesde ?? agora))}.`]
+      if (projecao.url !== undefined) linhas.push(`Link: ${projecao.url}`)
+      if (projecao.expiresAt !== undefined) {
+        linhas.push(`Expira daqui a ${formatarDuracao(projecao.expiresAt - agora)}.`)
+      }
+      return linhas.join('\n')
+    }
+    case 'STOPPED':
+      return 'Túnel desligado. Nada ficou exposto.'
+    case 'FAILED':
+      return 'Túnel parado por um erro. Precisa de ação tua — vê o painel.'
+    case undefined:
+      return 'Estado ainda desconhecido do host. Tenta de novo em alguns segundos.'
+    case 'STARTING':
+      return '📶 Túnel a ligar…'
+    case 'STOPPING':
+      return '📶 Túnel a desligar…'
+    case 'DEGRADED':
+      return '📶 Túnel instável, tentando de novo.'
+  }
+}
+
 /* ========================================================================== */
 /* 4. CORTE DE TEXTO                                                          */
 /* ========================================================================== */

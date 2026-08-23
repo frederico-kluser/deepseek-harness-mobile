@@ -37,13 +37,29 @@ import { gerarRequestId } from '../../../../worker/surface/tokens.ts'
 const DM: SurfaceIdentity = OWNER
 
 describe('TG-080: a lista canonica neutra, publicada pelo adaptador', () => {
-  it('tem EXATAMENTE sete comandos, na ordem de D5, e /start NAO esta la (PAIR-006)', () => {
-    assert.equal(COMANDOS_PUBLICADOS.length, 7)
+  it('tem EXATAMENTE cinco comandos, na ordem de D5, e /start NAO esta la (PAIR-006)', () => {
+    assert.equal(COMANDOS_PUBLICADOS.length, 5)
     assert.deepEqual(
       COMANDOS_PUBLICADOS.map((c) => c.command),
-      ['ligar', 'desligar', 'status', 'acessar', 'rotacionar', 'parear', 'emergencia'],
+      ['menu', 'status', 'parear', 'emergencia', 'ajuda'],
     )
     assert.equal(COMANDOS_PUBLICADOS.some((c) => c.command === 'start'), false)
+  })
+
+  it('descricoes imperativas, 1-4 palavras, sem ponto (CONTRATO §2)', () => {
+    assert.deepEqual(
+      COMANDOS_PUBLICADOS.map((c) => c.description),
+      [
+        'Abrir o painel de controlo',
+        'Ver estado do túnel',
+        'Parear com um código',
+        'Derrubar tudo de imediato',
+        'Ver como usar',
+      ],
+    )
+    for (const c of COMANDOS_PUBLICADOS) {
+      assert.ok(!c.description.endsWith('.'), `descricao com ponto: ${c.description}`)
+    }
   })
 
   it('`command` e [a-z0-9_]{1,32} e `description` entre 1 e 256 caracteres', () => {
@@ -71,7 +87,7 @@ describe('TG-082: /ligar — 1a etapa: nonce do host + actionRow de confirmacao'
     assert.equal(botao.label, '✅ Sim, ligar')
     assert.equal(botao.kind, 'confirm')
     assert.ok(bancada.host.foiEmitido(botao.token), 'o nonce do botao foi emitido pelo host')
-    assert.match(bancada.emissor.mensagens[0]?.texto ?? '', /Ligar o túnel de acesso\?/u)
+    assert.match(bancada.emissor.mensagens[0]?.texto ?? '', /Ligar o túnel agora\?/u)
   })
 
   it('CTL-023 (face worker): sem nonce do host, falha FECHADO — nenhum intent', async () => {
@@ -94,7 +110,7 @@ describe('TG-083: /desligar — 2 etapas, intent REDUZ sem nonce (CTL-024)', () 
     const botao = bancada.emissor.botao(0)
     assert.ok(botao !== undefined)
     assert.equal(botao.action, 'tunnel.down')
-    assert.equal(botao.label, '⛔ Sim, desligar')
+    assert.equal(botao.label, '✅ Sim, desligar')
     assert.equal(botao.kind, 'emergency')
     assert.ok(!bancada.host.foiEmitido(botao.token), 'o token e LOCAL do worker, nao do host')
   })
@@ -196,8 +212,8 @@ describe('TG-083: /desligar — 2 etapas, intent REDUZ sem nonce (CTL-024)', () 
   })
 })
 
-describe('TG-085: /acessar — session.issue sem nonce, aceite invisivel', () => {
-  it('envia o intent session.issue sem nonce e nao responde no chat antes do host', async () => {
+describe('TG-085: /acessar — session.issue sem nonce, aceite acusado no chat', () => {
+  it('envia o intent session.issue sem nonce e acusa o pedido no chat', async () => {
     const bancada = montarBancada()
     const comandos = criarComandosDaSuperficie(bancada.ctx)
     await comandos.access.acessar(DM)
@@ -207,7 +223,9 @@ describe('TG-085: /acessar — session.issue sem nonce, aceite invisivel', () =>
     assert.ok(intent !== undefined)
     assert.equal(intent.intent, 'session.issue')
     assert.equal(Object.hasOwn(intent, 'nonce'), false)
-    assert.equal(bancada.emissor.mensagens.length, 0, 'o aceite e invisivel; a resposta vem por notify')
+    // CONTRATO §5: o botoes/clique nao parece morto — acusa antes de o host
+    // notificar o link real por notify (TG-085 preservado).
+    assert.match(bancada.emissor.mensagens.at(-1)?.texto ?? '', /A enviar-te o link de acesso/u)
   })
 })
 
@@ -221,7 +239,7 @@ describe('TG-086: /rotacionar — 1a etapa: nonce do host + actionRow', () => {
     const botao = bancada.emissor.botao(0)
     assert.ok(botao !== undefined)
     assert.equal(botao.action, 'secret.rotate')
-    assert.equal(botao.label, '✅ Sim, rodar')
+    assert.equal(botao.label, '✅ Sim, gerar')
     assert.equal(botao.kind, 'confirm')
     assert.ok(bancada.host.foiEmitido(botao.token))
   })
@@ -260,7 +278,7 @@ describe('TG-087: /emergencia — derruba tunel e worker, idempotente', () => {
     assert.ok(intent !== undefined)
     assert.equal(intent.intent, 'emergency')
     assert.equal(Object.hasOwn(intent, 'nonce'), false, 'CTL-024: a acao que reduz nao exige nonce')
-    assert.match(bancada.emissor.mensagens.at(-1)?.texto ?? '', /Emergência: a desligar o túnel e este bot/u)
+    assert.match(bancada.emissor.mensagens.at(-1)?.texto ?? '', /Emergência disparada\. Túnel a desligar/u)
     assert.equal(bancada.emissor.paradas, 1, 'o worker foi derrubado')
   })
 

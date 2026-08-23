@@ -69,13 +69,11 @@ describe('TG-080: os comandos publicados chegam inteiros, na ordem de D5', () =>
 
     assert.equal(registos.length, 1)
     assert.deepEqual(registos[0], [
-      { command: 'ligar', description: 'Liga o túnel de acesso (pede confirmação)' },
-      { command: 'desligar', description: 'Desliga o túnel (pede confirmação)' },
-      { command: 'status', description: 'Estado atual: túnel, tempo no ar e quando expira' },
-      { command: 'acessar', description: 'Envia o link com a sua chave de acesso' },
-      { command: 'rotacionar', description: 'Gera chave nova e invalida a anterior (pede confirmação)' },
-      { command: 'parear', description: 'Parear com o código <código> mostrado no terminal' },
-      { command: 'emergencia', description: 'Emergência: desliga o túnel e este bot' },
+      { command: 'menu', description: 'Abrir o painel de controlo' },
+      { command: 'status', description: 'Ver estado do túnel' },
+      { command: 'parear', description: 'Parear com um código' },
+      { command: 'emergencia', description: 'Derrubar tudo de imediato' },
+      { command: 'ajuda', description: 'Ver como usar' },
     ])
   })
 })
@@ -127,7 +125,7 @@ describe('TG-081: comandos mortos nao sao roteados para intent nenhum', () => {
 
     await bancada.tratar(comandoDoDono('/parar'))
 
-    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Não conheço este comando.')
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Não entendi. Queres fazer o quê?')
   })
 
   it('os nomes mortos so existem nesta tabela de correcao, nunca no nucleo', () => {
@@ -266,7 +264,7 @@ describe('o funil: o pareamento corre ANTES da allowlist (PAIR-006/007)', () => 
     })
 
     assert.equal(bancada.sender.mensagens.length, 1)
-    assert.match(bancada.sender.mensagens[0]?.texto ?? '', /Nao foi possivel parear/u)
+    assert.match(bancada.sender.mensagens[0]?.texto ?? '', /Código errado ou expirado/u)
     assert.ok(bancada.time.now() >= antes, 'o atraso passou pelo relogio injetado')
     assert.ok(!bancada.sender.mensagens[0]?.texto?.includes('000000'), 'o candidato nao e ecoado')
   })
@@ -281,7 +279,7 @@ describe('o funil: o pareamento corre ANTES da allowlist (PAIR-006/007)', () => 
     })
 
     assert.equal(bancada.sender.mensagens.length, 1)
-    assert.match(bancada.sender.mensagens[0]?.texto ?? '', /Ola/u)
+    assert.match(bancada.sender.mensagens[0]?.texto ?? '', /Olá/u)
     assert.equal(bancada.ipc.intents.length, 0)
     // E o estranho continua sem comandar.
     await bancada.tratar({
@@ -394,10 +392,11 @@ describe('caminhos de erro e difusao', () => {
   it('texto sem comando do dono: silencio total', async () => {
     const bancada = montarBancada()
     await paired(bancada)
-    const antes = bancada.sender.mensagens.length
+    const antes = bancada.ipc.intents.length
     await bancada.tratar(comandoDoDono('olá, isto não é um comando'))
-    assert.equal(bancada.ipc.intents.length, 0, 'nenhum intent')
-    assert.equal(bancada.sender.mensagens.length, antes, 'nenhuma resposta')
+    assert.equal(bancada.ipc.intents.length, antes, 'nenhum intent')
+    // CONTRATO §6: texto livre (nao-comando) com o dono recebe o fallback.
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Não entendi. Queres fazer o quê?')
   })
 })
 
@@ -476,11 +475,11 @@ describe('TG-084: /status — estado, seq, tunel, tempo no ar e expiracao do TTL
     const edicao = bancada.sender.edicoes.at(-1)
     assert.ok(edicao !== undefined)
     const texto = edicao.texto
-    assert.match(texto, /Estado: online \(READY\)/u)
-    assert.match(texto, /Sequência: 7/u)
-    assert.match(texto, /Túnel: https:\/\/exemplo\.trycloudflare\.com/u)
-    assert.match(texto, /No ar há: 2 min/u)
-    assert.match(texto, /Expira: em 3 min/u)
+    // CONTRATO §5: /status usa o texto CURTO (1-3 linhas PT-BR, sem Sequencia).
+    assert.match(texto, /Túnel \*online\* há 2 min/u)
+    assert.match(texto, /Link: https:\/\/exemplo\.trycloudflare\.com/u)
+    assert.match(texto, /Expira daqui a 3 min/u)
+    assert.ok(!texto.includes('Sequência'), 'a linha de debug/seq fica so no log')
   })
 
   it('fora de READY nao ha URL: a difusao de STARTING nao a divulga', async () => {
@@ -498,9 +497,9 @@ describe('TG-084: /status — estado, seq, tunel, tempo no ar e expiracao do TTL
     const edicao = bancada.sender.edicoes.at(-1)
     assert.ok(edicao !== undefined)
     const texto = edicao.texto
-    assert.match(texto, /Estado: ligando \(STARTING\)/u)
+    assert.match(texto, /Túnel a ligar/u)
     assert.ok(!texto.includes('https://'), 'a URL so existe em READY')
-    assert.ok(!texto.includes('Túnel:'), 'a URL so existe em READY')
+    assert.ok(!texto.includes('Túnel: https'), 'a URL so existe em READY')
   })
 
   it('o intent tunnel.status nao estende o TTL (leitura pura)', async () => {
@@ -530,7 +529,7 @@ describe('TG-087: /emergencia — derruba tunel e worker, responde uma vez, idem
     assert.ok(intent !== undefined)
     assert.equal(intent.intent, 'emergency')
     assert.equal(Object.hasOwn(intent, 'nonce'), false, 'CTL-024: a acao que reduz nao exige nonce')
-    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Emergência: a desligar o túnel e este bot/u)
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Emergência disparada\. Túnel a desligar/u)
     assert.equal(bancada.paradas(), 1, 'o worker foi derrubado')
   })
 
@@ -717,5 +716,117 @@ describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
     const intent = bancada.ipc.intents[0]
     assert.ok(intent !== undefined)
     assert.equal(intent.nonce, token, 'o token do botao vai tal e qual no nonce do intent (S5)')
+  })
+})
+/* ========================================================================== */
+/* CONTRATO §4/: /menu (cartao de controlo), /ajuda, cartao edit-in-place e   */
+/* os botoes do cartao que INICIAM os fluxos, com toast do §4                */
+/* ========================================================================== */
+
+describe('CONTRATO §4/: cartao de controlo (/menu), ajudas e navegacao local', () => {
+  /** Abre o cartao e devolve o `messageTarget` (id) da mensagem do cartao. */
+  async function abrirCartao(bancada: Bancada): Promise<string> {
+    await bancada.tratar(comandoDoDono('/menu'))
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined, 'o /menu manda o cartao')
+    return cartao.id
+  }
+
+  it('/menu abre o cartao de controlo com o titulo e o teclado do §4 (só o dono)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('/menu'))
+
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined)
+    assert.match(cartao.texto, /🎛️ Controlo do Harness/u)
+    const linhas = cartao.opcoes?.actionRows
+    assert.ok(linhas !== undefined)
+    const rotulos = linhas.flat().map((b) => b.label)
+    assert.deepEqual(rotulos, [
+      '🟢 Ligar',
+      '🔴 Desligar',
+      '📶 Status',
+      '🔗 Link de acesso',
+      '⇄ Nova chave',
+      '🚨 Emergência',
+      '🏠 Início',
+    ])
+  })
+
+  it('um estranho NAO abre o cartao: /menu e descartado em silencio (TG-089)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.sender.mensagens.length
+    await bancada.tratar({
+      kind: 'comando',
+      identity: { userKey: ESTRANHO, chatKey: ESTRANHO },
+      text: '/menu',
+    })
+    assert.equal(bancada.sender.mensagens.length, antes, 'o estranho nao ve o cartao')
+    assert.match(bancada.log.all(), /deny:not-allowlisted/u)
+  })
+
+  it('o botao `🟢 Ligar` DO CARTAO INICIA o fluxo de ligar (tela de confirmacao) e toast `Ligando…`', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const cartaoId = await abrirCartao(bancada)
+    const antes = bancada.ipc.intents.length
+    const botao = bancada.sender.mensagens.at(-1)?.opcoes?.actionRows?.flat().find((b) => b.label === '🟢 Ligar')
+    assert.ok(botao !== undefined)
+
+    await bancada.tratar(accaoDoDono('tunnel.up', botao.token, cartaoId))
+
+    // Iniciou: pediu o nonce e mandou a tela de confirmacao NO CARD nao no intent.
+    assert.equal(bancada.ipc.intents.length, antes, 'a iniciacao ainda nao envia o intent (2a etapa)')
+    const resp = bancada.sender.respostas.at(-1)
+    assert.equal(resp?.outras?.text, 'Ligando…', 'toast do §4 no clique do cartao')
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Ligar o túnel agora\?/u)
+  })
+
+  it('o botao `🔴 Desligar` DO CARTAO INICIA /desligar (confirmacao destrutiva) e toast `Desligando…`', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const cartaoId = await abrirCartao(bancada)
+    const botao = bancada.sender.mensagens.at(-1)?.opcoes?.actionRows?.flat().find((b) => b.label === '🔴 Desligar')
+    assert.ok(botao !== undefined)
+
+    await bancada.tratar(accaoDoDono('tunnel.down', botao.token, cartaoId))
+
+    assert.equal(bancada.ipc.intents.length, 0, 'a iniciacao ainda nao confirma')
+    const resp = bancada.sender.respostas.at(-1)
+    assert.equal(resp?.outras?.text, 'Desligando…', 'toast do §4 no clique do cartao')
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Desligar o túnel derruba o acesso remoto/u)
+  })
+
+  it('o botao `🏠 Início` re-exibe o cartao (nav local, sem intent)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const cartaoId = await abrirCartao(bancada)
+    const botao = bancada.sender.mensagens.at(-1)?.opcoes?.actionRows?.flat().find((b) => b.label === '🏠 Início')
+    assert.ok(botao !== undefined)
+
+    await bancada.tratar(accaoDoDono('inicio', botao.token, cartaoId))
+
+    assert.equal(bancada.ipc.intents.length, 0, 'nav nunca vai ao host')
+  })
+
+  it('/ajuda mostra a ajuda curta ao dono (sem intent)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('/ajuda'))
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /ℹ️ Este bot controla o acesso/u)
+    assert.equal(bancada.ipc.intents.length, 0)
+  })
+
+  it('o fallback (`Não entendi…`) so ao dono; um texto livre do dono ganha os botoes do §6', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('texto de graca'))
+    const msg = bancada.sender.mensagens.at(-1)
+    assert.ok(msg !== undefined)
+    assert.equal(msg.texto, 'Não entendi. Queres fazer o quê?')
+    const rotulos = msg.opcoes?.actionRows?.flat().map((b) => b.label) ?? []
+    assert.deepEqual(rotulos, ['🔘 Abrir menu', '📶 Estado', 'ℹ️ Ajuda'])
   })
 })

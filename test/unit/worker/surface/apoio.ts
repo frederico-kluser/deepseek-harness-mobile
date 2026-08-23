@@ -301,7 +301,11 @@ export class FakeAuth implements SurfaceAuth {
     if (comando.nome === 'start') {
       return {
         kind: 'boas-vindas',
-        reply: 'Ola. Este bot e privado e responde apenas ao dono da maquina onde esta instalado.',
+        reply:
+          '👋 Olá. Este bot controla o acesso ao teu Harness pelo Telegram.\n\n' +
+          'Antes de mais nada, pareie-o: gere um código no painel e envie:\n' +
+          '   /parear 123456\n\n' +
+          'Depois, abra o menu para ligar e desligar o túnel.',
         chat: identidade.chatKey,
       }
     }
@@ -312,13 +316,17 @@ export class FakeAuth implements SurfaceAuth {
         return {
           kind: 'pareado',
           dono: this.dono,
-          reply: 'Pareado. Este chat passa a ser o unico autorizado a comandar este bot.',
+          reply:
+            '✓ Pareado com sucesso! Agora:\n' +
+            '  • /menu — painel de controlo\n' +
+            '  • /status — estado do túnel\n\n' +
+            'Segurança: só este chat pode comandar o bot.',
         }
       }
       this.audit.push('auditoria evento=pareamento resultado=negado')
       return {
         kind: 'recusado',
-        reply: 'Nao foi possivel parear. Confirme o codigo no terminal da maquina e tente de novo.',
+        reply: 'Código errado ou expirado. Confere no painel e tenta de novo.',
         delayMs: 250,
         chat: identidade.chatKey,
       }
@@ -410,7 +418,7 @@ export class FakeComandos implements SurfaceComandos {
       await this.ctx?.enviar(identidade.chatKey, 'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.')
       return
     }
-    await this.ctx?.enviar(identidade.chatKey, 'Ligar o túnel de acesso? Quando abrir, o link com a sua chave de acesso (entra direto, sem senha) será enviado aqui automaticamente.', {
+    await this.ctx?.enviar(identidade.chatKey, '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.', {
       actionRows: [[{ label: '✅ Sim, ligar', action: 'tunnel.up', token: nonce }]],
     })
   }
@@ -418,8 +426,8 @@ export class FakeComandos implements SurfaceComandos {
   async desligar(identidade: SurfaceIdentity): Promise<void> {
     this.estado.chamadas.push({ nome: 'desligar', identidade })
     const token = gerarTokenOpaque()
-    await this.ctx?.enviar(identidade.chatKey, 'Desligar o túnel?', {
-      actionRows: [[{ label: '⛔ Sim, desligar', action: 'tunnel.down', token }]],
+    await this.ctx?.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', {
+      actionRows: [[{ label: '✅ Sim, desligar', action: 'tunnel.down', token }]],
     })
   }
 
@@ -478,8 +486,8 @@ export class FakeComandos implements SurfaceComandos {
     this.estado.chamadas.push({ nome: 'rotacionar', identidade })
     const nonce = await this.ctx?.emitirNonce('secret.rotate')
     if (nonce !== undefined) {
-      await this.ctx?.enviar(identidade.chatKey, 'Gerar uma chave de acesso nova? A anterior será revogada e as sessões atuais invalidadas.', {
-        actionRows: [[{ label: '✅ Sim, rodar', action: 'secret.rotate', token: nonce }]],
+      await this.ctx?.enviar(identidade.chatKey, '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?', {
+        actionRows: [[{ label: '✅ Sim, gerar', action: 'secret.rotate', token: nonce }]],
       })
     }
   }
@@ -496,7 +504,7 @@ export class FakeComandos implements SurfaceComandos {
       userKey: identidade.userKey,
       chatKey: identidade.chatKey,
     })
-    await this.ctx?.enviar(identidade.chatKey, 'Emergência: a desligar o túnel e este bot.')
+    await this.ctx?.enviar(identidade.chatKey, '🚨 Emergência disparada. Túnel a desligar e este bot vai encerrar.')
     await this.ctx?.parar()
   }
 

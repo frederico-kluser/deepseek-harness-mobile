@@ -25,8 +25,7 @@
  * quando o payload nao os carrega validamente.
  */
 
-import type { IpcIntentName } from '../../../src/contracts/ipc.ts'
-import type { SurfaceEvent, SurfaceActionEvent, SurfaceActionRejectedEvent, SurfaceCommandEvent, SurfaceIdentity } from '../../surface/contract.ts'
+import type { SurfaceAction, SurfaceEvent, SurfaceActionEvent, SurfaceActionRejectedEvent, SurfaceCommandEvent, SurfaceIdentity } from '../../surface/contract.ts'
 
 /* ========================================================================== */
 /* Ids numericos do Telegram                                                  */
@@ -69,13 +68,17 @@ const TOKEN_ALPHABET = /^[A-Za-z0-9_-]+$/u
  * deixa de compilar, obrigando alguem a decidir aqui. O valor `boolean` e a
  * marca "aumenta exposicao" do guard (informativa; o host decide na mesma).
  */
-export const INCREASES_EXPOSURE: Readonly<Record<IpcIntentName, boolean>> = Object.freeze({
+export const INCREASES_EXPOSURE: Readonly<Record<SurfaceAction, boolean>> = Object.freeze({
   'tunnel.up': true,
   'tunnel.down': false,
   'tunnel.status': false,
   'session.issue': true,
   'secret.rotate': true,
   emergency: false,
+  // NAVEGACAO LOCAL (Onda 3): o worker resolve-a; nunca chega ao host.
+  menu: false,
+  ajuda: false,
+  inicio: false,
 })
 
 /** Bytes UTF-8. A unidade em que a Bot API conta, e a unica que nao mente. */
@@ -90,7 +93,7 @@ export function utf8Bytes(value: string): number {
  * O `token` viaja OPACO (S5): esta funcao nao sabe nem quer saber que ele e um
  * nonce. Nao o gera, nao o guarda e nao o valida.
  */
-export function buildCallbackData(action: IpcIntentName, token: string): string {
+export function buildCallbackData(action: SurfaceAction, token: string): string {
   if (token.length === 0) {
     throw new Error(`accao ${action} sem token: todo botao deste bolt carrega um token emitido pelo host (S5)`)
   }
@@ -120,7 +123,7 @@ export type CallbackDataRejection =
   | 'deny:callback-data-malformed-token'
 
 export type CallbackDataParse =
-  | { readonly ok: true; readonly action: IpcIntentName; readonly token: string }
+  | { readonly ok: true; readonly action: SurfaceAction; readonly token: string }
   | { readonly ok: false; readonly reason: CallbackDataRejection }
 
 /**
@@ -151,7 +154,7 @@ export function parseCallbackData(data: unknown): CallbackDataParse {
   }
   if (!TOKEN_ALPHABET.test(token)) return { ok: false, reason: 'deny:callback-data-malformed-token' }
 
-  return { ok: true, action: action as IpcIntentName, token }
+  return { ok: true, action: action as SurfaceAction, token }
 }
 
 /* ========================================================================== */

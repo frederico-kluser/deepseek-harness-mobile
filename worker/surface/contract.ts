@@ -112,8 +112,22 @@ export type SurfacePairingOwnerLike = Readonly<{
  * delas (`worker/commands/router.ts` `tratarCallback`: «Nunca renderizamos
  * botoes destas acoes»). O tipo preserva essa possibilidade para o proximo
  * agente decidir, sem obrigar a renderizar hoje.
+ *
+ * As {@link SurfaceNavAction} (Onda 3 — CONTRATO §4/§6) sao acoes de NAVEGACAO
+ * LOCAIS do worker: `menu` (abre o cartao de controlo), `ajuda` (ajuda curta) e
+ * `inicio` (re-abre o cartao). NAO sao intents do host — o nucleo resolve-as em
+ * local e nunca as envia pela ponte IPC. Por isso `AUMENTA_EXPOSICAO`
+ * (`worker/surface/auth.ts`) e `INCREASES_EXPOSURE` (`worker/providers/telegram/
+ * parse.ts`) cobrem-nas como `false` ("nao aumenta exposicao").
  */
-export type SurfaceAction = IpcIntentName
+export type SurfaceNavAction = 'menu' | 'ajuda' | 'inicio'
+
+/**
+ * O vocabulario que um botao da superficie pode carregar: a intencao do host
+ * (que o nucleo envia pela ponte IPC) OU uma navegacao local (que o nucleo
+ * resolve sem sair do worker).
+ */
+export type SurfaceAction = IpcIntentName | SurfaceNavAction
 
 /**
  * O payload serializado que o adaptador coloca no botao de um provedor — o

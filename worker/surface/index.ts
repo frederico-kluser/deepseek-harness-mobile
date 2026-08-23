@@ -77,6 +77,7 @@ export {
   MAX_TEXTO_MENSAGEM,
   ROTULOS_DE_ESTADO,
   textoDeEstado,
+  textoDeEstadoCurto,
   type EstadoDoTunel,
 } from './text.ts'
 
@@ -101,6 +102,7 @@ export {
   RESPOSTA_BOAS_VINDAS,
   RESPOSTA_JA_PAREADO,
   RESPOSTA_PAREAMENTO_RECUSADO,
+  RESPOSTA_PAREAR_VAZIO_JA_PAREADO,
   SurfaceAuthError,
   type SurfaceAllowlist,
   type SurfaceAuthorization,

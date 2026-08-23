@@ -357,15 +357,25 @@ export type SurfacePairingOutcome =
 
 /** A resposta UNICA a qualquer tentativa falhada durante a janela aberta. */
 export const RESPOSTA_PAREAMENTO_RECUSADO =
-  'Nao foi possivel parear. Confirme o codigo no terminal da maquina e tente de novo.'
+  'Código errado ou expirado. Confere no painel e tenta de novo.'
 
 /** A resposta ao DONO que manda `/parear` outra vez (so o dono a ve). */
 export const RESPOSTA_JA_PAREADO =
-  'Este bot ja esta pareado. Para trocar de dono, rode `--reset-pairing` na maquina onde o DSH esta instalado.'
+  'Este bate-papo já é o dono deste bot. Para trocar o dono, reset na máquina.'
+
+/**
+ * A resposta ao DONO-JA-PAREADO quando envia `/parear` SEM codigo: nao usa
+ * codigos porque este chat ja e o dono. So o dono a ve (o estranho e silencio).
+ */
+export const RESPOSTA_PAREAR_VAZIO_JA_PAREADO =
+  'Ainda não usas códigos — este chat já está pareado.'
 
 /** Boas-vindas de `/start`, INOCUA e IGUAL para toda a gente (PAIR-006). */
 export const RESPOSTA_BOAS_VINDAS =
-  'Ola. Este bot e privado e responde apenas ao dono da maquina onde esta instalado.'
+  '👋 Olá. Este bot controla o acesso ao teu Harness pelo Telegram.\n\n' +
+  'Antes de mais nada, pareie-o: gere um código no painel e envie:\n' +
+  '   /parear 123456\n\n' +
+  'Depois, abra o menu para ligar e desligar o túnel.'
 
 // -- Estado e contadores --
 
@@ -499,6 +509,11 @@ export function criarReceptorDePareamento(deps: SurfacePairingDeps): SurfacePair
           identity !== undefined &&
           identity.userKey === state.owner.userKey &&
           identity.chatKey === state.owner.chatKey
+        // CONTRATO §7: ao dono ja pareado, `/parear` SEM codigo nao tenta
+        // parear — avisa que este chat ja e o dono. A um estranho, SILENCIO.
+        if (eDono && command.arg.length === 0) {
+          return recusar('refuse:already-paired', RESPOSTA_PAREAR_VAZIO_JA_PAREADO, 0, identity, 'nenhum')
+        }
         // Ao dono, explicacao; a qualquer outro identidade, SILENCIO.
         return recusar(
           'refuse:already-paired',
@@ -568,7 +583,11 @@ export function criarReceptorDePareamento(deps: SurfacePairingDeps): SurfacePair
         kind: 'paired',
         owner,
         // Nao ecoa o codigo.
-        reply: 'Pareado. Este chat passa a ser o unico autorizado a comandar este bot.',
+        reply:
+          '✓ Pareado com sucesso! Agora:\n' +
+          '  • /menu — painel de controlo\n' +
+          '  • /status — estado do túnel\n\n' +
+          'Segurança: só este chat pode comandar o bot.',
         audit: {
           evento: 'surface.pareamento.concluido',
           resultado: 'permitido',
@@ -668,6 +687,10 @@ export const AUMENTA_EXPOSICAO: Readonly<Record<SurfaceAction, boolean>> = Objec
   'session.issue': true,
   'secret.rotate': true,
   emergency: false,
+  // NAVEGACAO LOCAL (Onda 3): nunca aumenta exposicao; o nucleo resolve em local.
+  menu: false,
+  ajuda: false,
+  inicio: false,
 })
 
 /* ========================================================================== */
