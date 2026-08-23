@@ -174,6 +174,25 @@ describe('TG-089: comando de identidade nao pareada e descartado e contado', () 
     assert.match(bancada.log.all(), /deny:not-allowlisted/u)
   })
 
+  it('um estranho manda `/ligar` com o pareamento fechado: silencio (sem intent) e CONTADO', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.sender.mensagens.length
+
+    await bancada.tratar({
+      kind: 'comando',
+      identity: { userKey: ESTRANHO, chatKey: ESTRANHO },
+      text: '/ligar',
+    })
+
+    // O comando de estranho NAO chega ao canal: nenhum intent (TG-024 revalida
+    // a identidade em todo evento) e nenhuma resposta na conversa (silencio).
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.equal(bancada.sender.mensagens.length, antes, 'silencio total: o estranho nao ve nada')
+    // Mas E CONTADO na auditoria (TG-089).
+    assert.match(bancada.log.all(), /deny:not-allowlisted/u)
+  })
+
   it('accao de estranho: answer SEMPRE (TG-027), mas nenhum intent', async () => {
     const bancada = montarBancada()
     await paired(bancada)

@@ -72,6 +72,12 @@ export const UI_PATH_TELEGRAM_CLICK = `${UI_PREFIX}/api/telegram/click`
 export const UI_PATH_TOKEN = `${UI_PREFIX}/api/token`
 /** O estado do token (configurado/handle/fonte), SEM o valor — GET. */
 export const UI_PATH_TOKEN_STATE = `${UI_PREFIX}/api/token-state`
+/**
+ * A privacidade do bot AO VIVO (GET): o `getMe` real decide se o bot tem
+ * `@username` (encontrável na busca) ou não. GET sem CSRF, como as demais
+ * leituras. NUNCA transporta o token.
+ */
+export const UI_PATH_PRIVACIDADE = `${UI_PREFIX}/api/privacidade`
 /** Quem/quanto esta a acessar (sessoes e conexoes do proxy) — GET. */
 export const UI_PATH_ACCESS = `${UI_PREFIX}/api/access`
 /**
@@ -164,6 +170,17 @@ export interface EstadoDoToken {
 }
 
 /**
+ * A checagem AO VIVO de descoberta (cartão "Privacidade"). `ok:true` com
+ * `handle` = o bot TEM `@username` (encontrável na busca); `ok:true` com
+ * `handle === null` = o `getMe` REAL confirmou que o bot NÃO tem `@username`
+ * (genuinamente não encontrável). `ok:false` = o `getMe` falhou (rede/token
+ * revogado) — NUNCA inventa estado. O valor do token nunca sai no corpo.
+ */
+export type UiPrivacidade =
+  | { readonly ok: true; readonly handle: string | null; readonly fonte: FonteDoToken }
+  | { readonly ok: false; readonly erro: 'indisponivel' }
+
+/**
  * O servico de configuracao do token fiado a superficie. Cada operacao e
  * executada pela costura em `src/index.ts` (que detem `config`, `statePaths` e
  * o supervisor do worker); este modulo so orquestra o HTTP.
@@ -198,6 +215,15 @@ export interface UiTokenOps {
   readonly gravar: (token: string, handle: string) => void
   /** Estado do token (fonte+handle) para o `token-state`; le o disco a cada chamada. */
   readonly estado: () => EstadoDoToken
+  /**
+   * Checagem AO VIVO de descoberta (cartão "Privacidade"): resolve o token
+   * EFETIVO (env → secrets.env) e faz `getMe` na rede para saber se o bot tem
+   * `@username`. `handle` `null` = o bot NÃO tem `@username`; `ok:false` = o
+   * `getMe` falhou. Com `forcar` (do botão "Verificar de novo"), contorna o
+   * cache curto; sem ele, serve um resultado cacheado de ~30s para não bater
+   * `getMe` a cada poll do painel. O token nunca é logado nem devolvido.
+   */
+  readonly privacidade: (forcar?: boolean) => Promise<UiPrivacidade>
 }
 
 /**
@@ -656,6 +682,34 @@ export function createTokenStateHandler(core: UiContribCore): UiContribRequestHa
   return (req, res) => {
     if (!exigeMetodo(req, res, 'GET')) return
     json(res, 200, projetarEstadoToken(core.tokenOps.estado()))
+  }
+}
+
+/**
+ * Projeta o resultado da checagem de privacidade para a rota GET. FUNCAO PURA
+ * e exportada: e o coracao das perguntas falsificaveis "o token sai nesta
+ * resposta?" e "o `ok:false` nao vira verde?" — o corpo so tem
+ * `ok`+`handle`+`fonte`; o valor do token nunca entra aqui.
+ */
+export function projetarPrivacidade(resultado: UiPrivacidade): Record<string, unknown> {
+  if (!resultado.ok) return { ok: false, erro: 'indisponivel' }
+  return { ok: true, handle: resultado.handle, fonte: resultado.fonte }
+}
+
+/**
+ * GET /__guard-ui/api/privacidade — a privacidade do bot AO VIVO. SO LE (GET
+ * sem CSRF, como as demais): a costura resolve o token efetivo e faz `getMe`
+ * para decidir se o bot tem `@username`. `handle:null` = bot SEM username
+ * (não encontrável); `ok:false` = getMe falhou (nunca inventa estado). O
+ * `forcar:true` na query contorna o cache curto da costura (botão "Verificar
+ * de novo"). NUNCA devolve nem loga o token.
+ */
+export function createPrivacidadeHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const forcar = url.searchParams.get('forcar') === 'true'
+    json(res, 200, projetarPrivacidade(await core.tokenOps.privacidade(forcar)))
   }
 }
 

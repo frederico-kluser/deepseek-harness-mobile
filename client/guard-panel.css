@@ -172,6 +172,79 @@
   padding-top: 8px;
 }
 
+/* A dica de privacidade do cartão "Como criar o bot" (@BotFather). */
+.guard-privacy-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Cartão "Privacidade — só para você": estado de descoberta (handle presente
+ * vs removido) + bloco de garantias deny-by-default.
+ * ---------------------------------------------------------------- */
+
+.guard-privacy-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* A nota "sem username …" após os passos de remoção. */
+.guard-privacy-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Badge verde "Não encontrável na busca ✓". */
+.guard-badge-ok {
+  align-self: flex-start;
+  border: 1px solid var(--dsw-alias-state-success-primary);
+  color: var(--dsw-alias-state-success-primary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+/* O bloco "Se alguém achar o bot assim mesmo:" — caixa discreta. */
+.guard-privacy-block {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-state-warn-primary);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.guard-block-title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.guard-privacy-list {
+  list-style: disc;
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guard-privacy-item {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* Linha de comando copiável com botão ("copiar"). */
 .guard-cmd-row {
   display: flex;

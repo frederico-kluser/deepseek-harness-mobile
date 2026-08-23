@@ -81,6 +81,7 @@ import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
 import { createOneTimeTokenStore } from './secret/ott.ts'
 import { createMagicStore } from './session/magic.ts'
 import { createNativeUiSurface, type FonteDoToken, type UiAcessoBruto } from './ui-contrib/surface.ts'
+import type { UiPrivacidade } from './ui-contrib/routes.ts'
 import type { SessaoDePareamento } from './telegram/pairing.ts'
 import { criarSessaoDePareamento } from './telegram/pairing.ts'
 import { derivarEstadoDoBot } from './ui-contrib/bot-state.ts'
@@ -1133,6 +1134,13 @@ export function apply(ctx: Context, config: Config): void {
       // aqui um handle estale que o token-state depois mostraria como se fosse
       // o bot vigente (LOW-1 do revisor).
       let handleAtual: string | undefined
+      // Cache curto do `/api/privacidade`: o getMe AO VIVO e caro para bater a
+      // cada poll (~15s) do painel. Guarda-se o resultado + quando foi medido;
+      // o `forcar` do botao "Verificar de novo" contorna este cache.
+      const CACHE_PRIVACIDADE_MS = 30_000
+      let cachePrivacidade:
+        | { readonly quando: number; readonly resultado: UiPrivacidade }
+        | undefined
       // A FONTE EFETIVA, partilhada por `fonte` e `estado` para nunca
       // divergirem: `config.worker.token` (env) PRIMEIRO (precedencia sobre o
       // `secrets.env`), `secrets.env` a seguir. A MESMA logica de
@@ -1186,6 +1194,35 @@ export function apply(ctx: Context, config: Config): void {
           ...(handleAtual === undefined ? {} : { handle: handleAtual }),
           fonte: fonteEfetiva(),
         }),
+        privacidade: async (forcar = false): Promise<UiPrivacidade> => {
+          // Cache curto: no poll (~15s) do painel, NAO bater getMe a cada vez.
+          if (!forcar && cachePrivacidade !== undefined) {
+            if (agora() - cachePrivacidade.quando < CACHE_PRIVACIDADE_MS) {
+              return cachePrivacidade.resultado
+            }
+          }
+          const fonte = fonteEfetiva()
+          const token = resolverTokenDoBot()
+          const calcular = async (): Promise<UiPrivacidade> => {
+            if (token === undefined) return { ok: true, handle: null, fonte: 'nenhum' }
+            const resposta = await sonda.getMe(token)
+            // `ok:true` = ha @username; `ok:false` com HTTP 200 = o bot EXISTE
+            // e nao tem @username (o contrato do getMe colapsa o "sem username"
+            // em `falha.httpStatus === 200` — um bot valido sem `username`). So
+            // com esse 200 e que reportamos `handle:null` (verde legitimo);
+            // qualquer outra falha e "indisponivel" (nunca inventa estado).
+            if (resposta.ok) {
+              return { ok: true, handle: resposta.bot.username, fonte }
+            }
+            if (resposta.falha.httpStatus === 200) {
+              return { ok: true, handle: null, fonte }
+            }
+            return { ok: false, erro: 'indisponivel' }
+          }
+          const resultado = await calcular()
+          cachePrivacidade = { quando: agora(), resultado }
+          return resultado
+        },
       }
     })()
 
@@ -1228,7 +1265,6 @@ export function apply(ctx: Context, config: Config): void {
         // (a politica anti-dobra do CLI e "um codigo de cada vez").
         let sessaoAtiva: SessaoDePareamento | undefined
         const relogio = { now: agora }
-
         return {
           estado: () => {
             // `pareadoAtual` = ha `pairing` persistido no state.json.

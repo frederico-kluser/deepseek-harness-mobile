@@ -45,6 +45,7 @@ import {
   createClientHandler,
   createConfirmHandler,
   createCsrfHandler,
+  createPrivacidadeHandler,
   createPairHandler,
   createPairStateHandler,
   createResetConfirmHandler,
@@ -61,6 +62,7 @@ import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
+  UI_PATH_PRIVACIDADE,
   UI_PATH_PAIR,
   UI_PATH_PAIR_STATE,
   UI_PATH_RESET,
@@ -201,6 +203,8 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     // O painel de configuracao do token (POST com CSRF) e o estado sem valor.
     { kind: 'exact', path: UI_PATH_TOKEN, handler: createTokenHandler(core) },
     { kind: 'exact', path: UI_PATH_TOKEN_STATE, handler: createTokenStateHandler(core) },
+    // A privacidade AO VIVO do bot (GET): getMe real decide se ha @username.
+    { kind: 'exact', path: UI_PATH_PRIVACIDADE, handler: createPrivacidadeHandler(core) },
     // O pareamento VIA PAINEL: gerar codigo (POST com CSRF) + estado (GET).
     { kind: 'exact', path: UI_PATH_PAIR, handler: createPairHandler(core) },
     { kind: 'exact', path: UI_PATH_PAIR_STATE, handler: createPairStateHandler(core) },
@@ -247,6 +251,7 @@ export type {
   FonteDoToken,
   RegistroAcessoBruto,
   UiAcessoBruto,
+  UiPrivacidade,
   UiPairOps,
   UiTokenOps,
 } from './routes.ts'

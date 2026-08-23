@@ -221,6 +221,7 @@ function superficieUi(b: Bancada): Superficie {
         token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
       gravar: () => undefined,
       estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+      privacidade: async () => ({ ok: true, handle: null, fonte: 'nenhum' } as const),
     },
     pairOps: {
       estado: () => ({ pareado: false }),

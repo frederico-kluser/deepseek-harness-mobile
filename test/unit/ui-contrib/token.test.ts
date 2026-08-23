@@ -1,6 +1,7 @@
 /**
  * O painel de configuracao do token e as metricas de acesso da superficie de
- * UI nativa (`/__guard-ui/api/token`, `/token-state` e `/access`).
+ * UI nativa (`/__guard-ui/api/token`, `/token-state`, `/access` e, Onda 2,
+ * `/privacidade` — a checagem AO VIVO de descoberta do bot).
  *
  * As perguntas falsificaveis desta suite:
  *  - POST SEM token (vazio/em branco) -> 400 `token-vazio`, e o `sondar` nao e
@@ -11,7 +12,11 @@
  *  - SEM CSRF o POST e recusado com 403, antes de tocar o token;
  *  - O TOKEN NUNCA VAI PARA O CORPO DA RESPOSTA: nem no 200, nem nas recusas.
  *  - `/token-state` devolve so `configurado`+`handle`+`fonte`, nunca o valor;
- *  - `/access` devolve sessoes redigidas (hash, nunca o id) e NUNCA o ?key.
+ *  - `/access` devolve sessoes redigidas (hash, nunca o id) e NUNCA o ?key;
+ *  - `/privacidade` (Onda 2) consulta AO VIVO: `ok+handle` (encontrável),
+ *    `ok+null` (getMe confirmou sem username -> verde legitimo) e `ok:false`
+ *    (indisponivel, NUNCA vira verde); `forcar=true` contorna o cache; o corpo
+ *    so tem `ok`+`handle`+`fonte`, nunca o token.
  */
 
 import assert from 'node:assert/strict'
@@ -29,10 +34,13 @@ import { CSRF_HEADER_NAME } from '../../../src/ui-contrib/csrf.ts'
 import {
   projetarAcesso,
   projetarEstadoToken,
+  projetarPrivacidade,
   UI_PATH_ACCESS,
+  UI_PATH_PRIVACIDADE,
   UI_PATH_TOKEN,
   UI_PATH_TOKEN_STATE,
   type UiAcessoBruto,
+  type UiPrivacidade,
   type UiTokenOps,
 } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -78,6 +86,7 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
       handlesGravados.push(handle)
     },
     estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' }),
+    privacidade: async () => ({ ok: true, handle: null, fonte: 'nenhum' } satisfies UiPrivacidade),
     ...opOverrides,
   }
 
@@ -126,8 +135,11 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
     caminho: string,
     opcoes: { metodo?: string; token?: string; corpo?: unknown } = {},
   ): Promise<RespostaCapturada> => {
-    const rota = rotas.get(caminho)
-    assert.ok(rota !== undefined, `rota nao registada: ${caminho}`)
+    // A rota registada e por PATH (sem query); a query (ex.: `?forcar=true`)
+    // viaja no `req.url` para o handler ler, nao na chave do mapa de rotas.
+    const pathSemQuery = caminho.split('?')[0]!
+    const rota = rotas.get(pathSemQuery)
+    assert.ok(rota !== undefined, `rota nao registada: ${pathSemQuery}`)
     const req = new EventEmitter() as unknown as IncomingMessage
     const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
     bruto.method = opcoes.metodo ?? 'GET'
@@ -362,5 +374,87 @@ describe('GET /__guard-ui/api/access — quem/quanto acessa', () => {
     assert.equal(sessoes[0]?.ip, '203.0.113.7')
     assert.equal(sessoes[1]?.ip, null)
     assert.equal(sessoes[1]?.userAgent, null)
+  })
+})
+
+describe('GET /__guard-ui/api/privacidade — a checagem AO VIVO de descoberta', () => {
+  it('projeta ok+handle (encontrável), ok+null (não encontrável) e ok:false (indisponível)', () => {
+    // Encontrável.
+    assert.deepEqual(projetarPrivacidade({ ok: true, handle: 'meu_bot', fonte: 'secrets' }), {
+      ok: true,
+      handle: 'meu_bot',
+      fonte: 'secrets',
+    })
+    // Não encontrável (getMe real confirmou sem username).
+    assert.deepEqual(projetarPrivacidade({ ok: true, handle: null, fonte: 'secrets' }), {
+      ok: true,
+      handle: null,
+      fonte: 'secrets',
+    })
+    // Indisponível — NUNCA vira verde.
+    assert.deepEqual(projetarPrivacidade({ ok: false, erro: 'indisponivel' }), {
+      ok: false,
+      erro: 'indisponivel',
+    })
+  })
+
+  it('a rota GET devolve o resultado da operacao AO VIVO, sem CSRF e sem token', async () => {
+    const chamadas: boolean[] = []
+    const bancada = criarBancada({
+      privacidade: async (forcar) => {
+        chamadas.push(forcar === true)
+        return { ok: true, handle: 'meu_bot', fonte: 'secrets' }
+      },
+    })
+    const resposta = await bancada.enviar(UI_PATH_PRIVACIDADE)
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, { ok: true, handle: 'meu_bot', fonte: 'secrets' })
+    assert.equal(resposta.texto.includes('meu_bot'), true)
+    // GET sem CSRF: sem token no pedido, devolve o handle (público), nunca o token.
+    assert.deepEqual(chamadas, [false], 'sem forcar (poll automático) passa forcar=false')
+  })
+
+  it('handle null — o getMe real confirmou que o bot NAO tem @username (verde legitimo)', async () => {
+    const bancada = criarBancada({
+      privacidade: async () => ({ ok: true, handle: null, fonte: 'secrets' }),
+    })
+    const resposta = await bancada.enviar(UI_PATH_PRIVACIDADE)
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.corpo.handle, null)
+    assert.equal(resposta.corpo.ok, true)
+  })
+
+  it('getMe falhou -> ok:false indisponivel (o painel NAO inventa estado verde)', async () => {
+    const bancada = criarBancada({
+      privacidade: async () => ({ ok: false, erro: 'indisponivel' }),
+    })
+    const resposta = await bancada.enviar(UI_PATH_PRIVACIDADE)
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, { ok: false, erro: 'indisponivel' })
+    assert.ok('handle' in resposta.corpo === false, 'sem handle por cima de um erro')
+  })
+
+  it('`forcar=true` na query contorna o cache (botão "Verificar de novo")', async () => {
+    const chamadas: boolean[] = []
+    const bancada = criarBancada({
+      privacidade: async (forcar) => {
+        chamadas.push(forcar === true)
+        return { ok: true, handle: null, fonte: 'secrets' }
+      },
+    })
+    const resposta = await bancada.enviar(`${UI_PATH_PRIVACIDADE}?forcar=true`)
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(chamadas, [true], 'a query forcar=true tem de chegar à operação')
+  })
+
+  it('sem token configurado: ok + handle null + fonte nenhum (o painel mostra "não encontrável")', async () => {
+    const bancada = criarBancada({
+      privacidade: async () => ({ ok: true, handle: null, fonte: 'nenhum' }),
+    })
+    const resposta = await bancada.enviar(UI_PATH_PRIVACIDADE)
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.corpo.ok, true)
+    assert.equal(resposta.corpo.handle, null)
+    assert.equal(resposta.corpo.fonte, 'nenhum')
   })
 })

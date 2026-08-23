@@ -42,6 +42,7 @@ import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
+  UI_PATH_PRIVACIDADE,
   UI_PATH_PAIR,
   UI_PATH_PAIR_STATE,
   UI_PATH_RESET,
@@ -158,6 +159,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
         token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
       gravar: () => undefined,
       estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+      privacidade: async () => ({ ok: true, handle: null, fonte: 'nenhum' } as const),
     },
     pairOps: {
       estado: () => ({ pareado: false }),
@@ -290,6 +292,7 @@ describe('registo da contribuicao', () => {
         UI_PATH_TELEGRAM_CLICK,
         UI_PATH_TOKEN,
         UI_PATH_TOKEN_STATE,
+        UI_PATH_PRIVACIDADE,
         UI_PATH_ACCESS,
         UI_PATH_CSRF,
         UI_PATH_PAIR,
@@ -305,7 +308,7 @@ describe('registo da contribuicao', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-    assert.equal(bancada.rotaDesmontadas, 15, 'as quinze rotas (telegram + token + par + acesso + csrf) sao removidas')
+assert.equal(bancada.rotaDesmontadas, 16, 'as dezasseis rotas (telegram + token + privacidade + parear + acesso + csrf) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
@@ -347,6 +350,7 @@ describe('registo da contribuicao', () => {
           token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
         gravar: () => undefined,
         estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+        privacidade: async () => ({ ok: true, handle: null, fonte: 'nenhum' } as const),
       },
       pairOps: {
         estado: () => ({ pareado: false }),

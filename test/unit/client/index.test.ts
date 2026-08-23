@@ -170,6 +170,58 @@ test('bundle: o botão da sidebar foi removido e o cartão @BotFather está pres
   assert.ok(codigo.includes('/newbot'), 'o bundle deve conter o passo /newbot')
   assert.ok(codigo.includes('Validar e configurar'), 'o bundle deve conter o botão "Validar e configurar"')
   assert.ok(codigo.includes('use /token no @BotFather'), 'o bundle deve conter a nota de revogação /token')
+  // O passo opcional de privacidade (remover username) tem de estar no cartão do BotFather.
+  assert.ok(codigo.includes('bot privado'), 'o bundle deve conter a nota de privacidade do BotFather')
+})
+
+/**
+ * O cartão "Privacidade — só para você" (Onda 2 — bot privado), nos TRÊS
+ * estados, verificado como conteúdo compilado do bundle (mesma fidelidade de
+ * smoke dos restantes cartões — o repo não monta React em DOM; ver a nota
+ * "FORA DE ESCOPO" do docs/PANEL-TELEGRAM.md).
+ *
+ * O esbuild foge os caracteres não-ASCII (ex.: `\xE1`, `\u2014`) no bundle,
+ * por isso as assertions usam SUBSTRINGS ASCII-ONLY present e distintivos.
+ *
+ *  - ok + handle presente  → aviso "encontrável na busca" + passo `/setusername`;
+ *  - ok + handle ausente   → badge verde "Não encontrável na busca" (getMe real
+ *    confirmou sem username);
+ *  - !ok                   → estado neutro "não foi possível verificar agora" +
+ *    botão "Verificar de novo" (nunca um verde mentiroso).
+ * É o cartão ao VIVO: o client NÃO decide a descoberta por `token?.handle`,
+ * consulta a rota `/api/privacidade` (com `?forcar=true` no botão).
+ */
+test('bundle: o cartão Privacidade existe nos TRÊS estados (ao vivo, não por token-state)', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // Título fixo do cartão.
+  assert.ok(codigo.includes('Privacidade'), 'o bundle deve conter o título do cartão Privacidade')
+
+  // O cartão consulta AO VIVO: a rota /api/privacidade e o forcar do botão.
+  assert.ok(codigo.includes('/privacidade'), 'o bundle deve consultar a rota /api/privacidade')
+  assert.ok(codigo.includes('forcar=true'), 'o botão "Verificar de novo" deve forçar o recálculo')
+
+  // Estado A — handle presente: aviso + passo-a-passo de remoção do username.
+  assert.ok(codigo.includes('na busca do Telegram como @'), 'aviso de descoberta com handle')
+  assert.ok(codigo.includes('/setusername'), 'o passo de remoção deve referenciar /setusername do BotFather')
+  assert.ok(codigo.includes('remova o username'), 'o aviso/passo deve mandar remover o username')
+
+  // Estado B — handle ausente/null: badge positivo (verde legítimo).
+  assert.ok(codigo.includes('acha o bot no Telegram'), 'o bundle deve conter o badge positivo sem handle')
+
+  // Estado C — !ok (indisponível): estado NEUTRO honesto + botão "Verificar de novo".
+  assert.ok(codigo.includes('verificar agora'), 'o bundle deve conter o estado neutro de indisponível')
+  assert.ok(codigo.includes('Verificar de novo'), 'o bundle deve conter o botão "Verificar de novo"')
+
+  // Bloco de garantias, presente em TODOS os estados.
+  assert.ok(codigo.includes('Se algu'), 'o bloco de garantias tem de existir')
+  assert.ok(codigo.includes('default deny'), 'a garantia de deny-by-default deve estar listada')
+  assert.ok(codigo.includes('contados na auditoria'), 'a garantia de recusa silenciosa/contada deve estar listada')
+
+  // O @handle é público (mostrado noutro ponto do painel); mas o bundle nunca
+  // contém um valor real de código/token (só a placeholder estática do input,
+  // pre-existente — que não é um valor real).
+  assert.ok(!/TELEGRAM_BOT_TOKEN\s*=\s*[0-9]+:[A-Za-z0-9_-]+/u.test(codigo), 'nenhum valor de token real no bundle')
 })
 
 test('bundle: o pareamento VIA PAINEL está presente (botão + código + espera) e NÃO loga o código', { skip: BUNDLE_AUSENTE }, () => {

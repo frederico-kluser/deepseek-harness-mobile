@@ -8,7 +8,7 @@
  * Toda a lógica de negócio/servidor continua no backend; o client é SÓ UI +
  * fetch + CSRF.
  *
- * O QUE O PAINEL MOSTRA (5 blocos):
+ * O QUE O PAINEL MOSTRA (6 blocos):
  *   1. Estado "configurado?" — chip (configurado / não configurado / env manda),
  *      consumindo `GET /token-state` + `GET /telegram`.
  *   2. "Como criar o bot" — cartão passo-a-passo do @BotFather, visível só no
@@ -18,7 +18,14 @@
  *      CSRF, e os estados de resposta renderizados DENTRO da aba (nunca alert).
  *   4. Instruções + marcador do bot — cartão com passos copiáveis (`/parear
  *      <código>` + comandos) e badge ONLINE/OFFLINE com `motivo`.
- *   5. Métricas de acesso — `GET /access`: KPIs (conexões ativas, sessões
+ *   5. "Privacidade — só para você" (quando configurado) — consulta o Telegram
+ *      AO VIVO (`GET /api/privacidade` → getMe real) para decidir a descoberta:
+ *      `@handle` presente → encontrável na busca (guia a remoção do username no
+ *      @BotFather); `handle:null` → badge verde "Não encontrável na busca ✓"
+ *      (SÓ quando o getMe confirmou sem username); `ok:false` → estado neutro
+ *      honesto + botão "Verificar de novo" (nunca um verde mentiroso). Liga a
+ *      re-checagem AO montar e a cada refresh (~15s).
+ *   6. Métricas de acesso — `GET /access`: KPIs (conexões ativas, sessões
  *      vivas), lista de sessões vivas (userAgent→device, tempos relativos, ip
  *      só quando `ipConfiavel`), refresh manual + automático a cada ~15s.
  *
@@ -177,6 +184,16 @@ interface EstadoDoToken {
   readonly handle?: string | null
   readonly fonte: FonteDoToken
 }
+
+/**
+ * A checagem AO VIVO de descoberta (GET /api/privacidade): o backend faz um
+ * `getMe` real. `ok && handle` = o bot TEM @username (encontrável); `ok &&
+ * handle === null` = getMe real confirmou que o bot NÃO tem @username; `!ok` =
+ * o getMe falhou (indisponível) — NUNCA se assume verde sem confirmação.
+ */
+type EstadoPrivacidade =
+  | { readonly ok: true; readonly handle: string | null; readonly fonte: FonteDoToken }
+  | { readonly ok: false; readonly erro: 'indisponivel' }
 
 interface EstadoTelegrama {
   readonly online: boolean
@@ -363,6 +380,21 @@ const PASSOS_BOTFATHER: readonly string[] = [
 /** Nota curta mostrada no fim do cartão do @BotFather. */
 const NOTA_BOTFATHER = 'Se precisar trocar o token depois, use /token no @BotFather para revogar e gerar outro.'
 
+/**
+ * Nota OPCIONAL do cartão "Como criar o bot": a privacidade por desenho. Como o
+ * plugin nunca mexeu no `@username`, o dono é quem decide se remove o handle no
+ * @BotFather — sem `@username` o bot deixa de aparecer na busca do Telegram.
+ *
+ * FONTE (remover username via BotFather /setusername): a documentação do
+ * BotFather confirma que o comando `/setusername` é o ponto de edição/remoção
+ * do `@username` de um bot (em vez de tratar `username` como fixo e permanente)
+ * — ver https://www.grambots.com/bots/botfather e
+ * https://cnvrse.com/what-is-botfather . Como o prompt de remoção do BotFather
+ * pode variar, o passo é escrito de forma conservadora (não inventa prompts
+ * exatos): "no @BotFather, em /setusername, remova o username".
+ */
+const NOTA_BOTFATHER_PRIVADO = 'Opcional — bot privado: remova o username do bot no @BotFather para ele não aparecer na busca do Telegram.'
+
 /* ========================================================================== */
 /* Render helpers (React puro, sem JSX)                                       */
 /* ========================================================================== */
@@ -426,6 +458,95 @@ function CartaoBotFather(): React.ReactNode {
       PASSOS_BOTFATHER.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
     ),
     paragrafo('guard-botfather-note', NOTA_BOTFATHER),
+    paragrafo('guard-privacy-hint', NOTA_BOTFATHER_PRIVADO),
+  )
+}
+
+/* ========================================================================== */
+/* Cartão "Privacidade" — o bot é só para o dono                              */
+/* ========================================================================== */
+
+/**
+ * As garantias de deny-by-default, em linguagem de dono. Cada item é coberto
+ * por teste (auth.test.ts / core.test.ts: PAIR-005, PAIR-006, PAIR-007,
+ * TG-007, TG-089) — este bloco só as mostra ao dono, não as implementa.
+ */
+const GARANTIAS_PRIVACIDADE: readonly string[] = [
+  'Sem o código de pareamento (que só aparece neste painel), nenhum comando funciona — o bot recusa por omissão (default deny).',
+  '/start responde apenas "Olá. Este bot é privado…" — boas-vindas inócuas, iguais para todos, sem parear ninguém.',
+  'Comandos de estranhos são recusados em silêncio (nenhuma resposta na conversa) e contados na auditoria.',
+  'Uma segunda parelha é recusada mesmo com um código válido: só existe UM dono, definido na primeira parelha.',
+  'Tentativas erradas de /parear têm tetos (por conversa e globais) e um atraso crescente, para travar força bruta.',
+]
+
+/**
+ * O passo-a-passo ENXUTO para remover o username via @BotFather, mostrado
+ * quando o bot AINDA tem `handle`. Escrito de forma conservadora (sem inventar
+ * prompts exatos do BotFather) conforme o fluxo confirmado no web_search:
+ *   https://www.grambots.com/bots/botfather · https://cnvrse.com/what-is-botfather
+ * O comando `/setusername` do BotFather é onde o `@username` se edita/remove.
+ */
+const PASSOS_REMOVER_USERNAME: readonly string[] = [
+  'No Telegram, abra a conversa com @BotFather.',
+  'Envie /setusername e escolha o teu bot na lista.',
+  'Remova o username (a opção "delete current username"/"remover username").',
+]
+
+/**
+ * O cartão "Privacidade" (renderizado SÓ quando configurado). Dois vértices:
+ *  - A descoberta (encontrável vs não) NÃO usa o `handle` do token-state (que só
+ *    vive em memória após um `POST /api/token`) — usa a rota `/api/privacidade`,
+ *    que faz um `getMe` AO VIVO. Um bot só é encontrado na busca do Telegram SE
+ *    tiver `@username`; sem ele desaparece.
+ *  - O bloco de garantias deny-by-default é estático (coberto por testes).
+ *
+ * Estados:
+ *  - `ok && handle`  → aviso "encontrável" + passos de remoção;
+ *  - `ok && null`    → badge verde (getMe REAL confirmou sem username);
+ *  - `!ok`           → neutro honesto + botão "Verificar de novo";
+ *  - `estado === null` (ainda a carregar) → "verificando…".
+ */
+function CartaoPrivacidade({
+  estado,
+  aoVerificar,
+}: {
+  readonly estado: EstadoPrivacidade | null
+  readonly aoVerificar: () => void
+}): React.ReactNode {
+  const titulo = h('span', { className: 'guard-card-title' }, 'Privacidade — só para você')
+
+  const corpo =
+    estado === null
+      ? paragrafo('guard-intro', 'A verificar a descoberta do bot…')
+      : estado.ok
+        ? estado.handle !== null && estado.handle.length > 0
+          ? h('div', { className: 'guard-privacy-body' },
+              paragrafo('guard-intro', `O bot é encontrável na busca do Telegram como @${estado.handle}. Se não quiser isso, remova o username:`),
+              h('ol', { className: 'guard-botfather-steps' },
+                PASSOS_REMOVER_USERNAME.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
+              ),
+              paragrafo('guard-privacy-note', `Sem username o bot deixa de aparecer na busca e o link t.me/@${estado.handle} morre — a conversa já aberta e o pareamento continuam a funcionar.`),
+            )
+          : h('div', { className: 'guard-privacy-body' },
+              h('span', { className: 'guard-badge-ok' }, 'Não encontrável na busca ✓ — ninguém acha o bot no Telegram.'),
+            )
+        : h('div', { className: 'guard-privacy-body' },
+            paragrafo('guard-intro', 'Não foi possível verificar agora (bot offline ou token inválido?).'),
+            h('div', { className: 'guard-actions' },
+              h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: aoVerificar },
+                'Verificar de novo'),
+            ),
+          )
+
+  return h('div', { className: 'guard-card' },
+    titulo,
+    corpo,
+    h('div', { className: 'guard-privacy-block' },
+      h('span', { className: 'guard-block-title' }, 'Se alguém achar o bot assim mesmo:'),
+      h('ul', { className: 'guard-privacy-list' },
+        GARANTIAS_PRIVACIDADE.map((g, i) => h('li', { className: 'guard-privacy-item', key: i }, g)),
+      ),
+    ),
   )
 }
 
@@ -541,6 +662,9 @@ function TelegramGuardSection(): React.ReactNode {
   const [acesso, setAcesso] = useState<EstadoDeAcesso | null>(null)
   const [acessoFalhou, setAcessoFalhou] = useState(false)
   const [tokenErro, setTokenErro] = useState<string | null>(null)
+  // A checagem AO VIVO de descoberta (GET /api/privacidade); `null` = ainda a
+  // carregar (ou o fetch falhou e mantemos o último resultado honesto).
+  const [privacidade, setPrivacidade] = useState<EstadoPrivacidade | null>(null)
 
   // Formulário de token.
   const [valor, setValor] = useState('')
@@ -603,9 +727,22 @@ function TelegramGuardSection(): React.ReactNode {
     }
   }, [])
 
+  // A checagem AO VIVO de descoberta. `forcar` contorna o cache curto do
+  // backend (botão "Verificar de novo"); sem `forcar`, o backend serve um
+  // resultado cacheado de ~30s para não bater getMe a cada poll de ~15s.
+  const buscarPrivacidade = React.useCallback(async (forcar: boolean): Promise<void> => {
+    const link = forcar ? '/privacidade?forcar=true' : '/privacidade'
+    try {
+      const dados = await apiGet<EstadoPrivacidade>(link)
+      if (vivo.current) setPrivacidade(dados)
+    } catch {
+      /* mantém o último resultado (honesto); sem estado inventado */
+    }
+  }, [])
+
   const recarregarTudo = React.useCallback(async (): Promise<void> => {
-    await Promise.all([buscarToken(), buscarTelegrama(), buscarAcesso()])
-  }, [buscarToken, buscarTelegrama, buscarAcesso])
+    await Promise.all([buscarToken(), buscarTelegrama(), buscarAcesso(), buscarPrivacidade(false)])
+  }, [buscarToken, buscarTelegrama, buscarAcesso, buscarPrivacidade])
 
   // Sonda /pair-state a cada ~3s enquanto houver um código a aguardar (ou a
   // gerar), até o `pareado:true` chegar (o dono digitou /parear no Telegram).
@@ -749,6 +886,9 @@ function TelegramGuardSection(): React.ReactNode {
         setMostrarToken(false)
         setFeedback({ tipo: 'ok', texto: handle ? `Configurado ✓ @${handle}` : 'Configurado ✓' })
         await recarregarTudo()
+        // Token recém-aplicado: força a checagem AO VIVO de descoberta (contorna
+        // o cache de ~30s que podia ainda guardar o "sem token/não configurado").
+        void buscarPrivacidade(true)
         break
       }
       case 400: {
@@ -876,6 +1016,14 @@ function TelegramGuardSection(): React.ReactNode {
             ),
           ),
         )
+      : null,
+
+    // --- Cartão "Privacidade" (só quando configurado) ----------------------
+    configurado
+      ? h(CartaoPrivacidade, {
+          estado: privacidade,
+          aoVerificar: () => void buscarPrivacidade(true),
+        })
       : null,
 
     // --- Métricas de acesso -------------------------------------------------

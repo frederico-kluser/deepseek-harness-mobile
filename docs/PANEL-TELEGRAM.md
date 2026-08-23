@@ -12,7 +12,7 @@ com look-and-feel herdado dos ui-settings do harness (mesmos tokens `--dsw-*`).
 O botão **"✈️ Telegram"** (rodapé da sidebar, slot `sidebar.footer.action`) foi
 **REMOVIDO** — o acesso ao painel agora é pelo **botão padrão de settings** do
 shell: o modal abre e a aba **Telegram Guard** (slot `settings.section`) aparece
-no rail. O client contribui SÓ com essa aba. Ela mostra cinco blocos, todos a
+no rail. O client contribui SÓ com essa aba. Ela mostra seis blocos, todos a
 "falar" com o backend:
 
 | Bloco | O que mostra | Endpoint |
@@ -21,6 +21,7 @@ no rail. O client contribui SÓ com essa aba. Ela mostra cinco blocos, todos a
 | **Como criar o bot** | Cartão passo-a-passo do **@BotFather** (só quando NÃO configurado) com os passos numerados para criar o token novo, + nota de revogação `/token` | — (estático, só quando `configurado === false`) |
 | **Chave do bot** | Campo `type="password"` com toggle mostrar/ocultar e botão **"Validar e configurar"** (POST com CSRF, estados renderizados na própria aba) | `POST /token` |
 | **Instruções + marcador do bot** | Cartão com comandos copiáveis (`/parear <código>`, `/acessar`, `/ligar`, `/status`, `/rotacionar`, `/desligar`, `/emergencia`) e badge **Bot ONLINE / OFFLINE** com o `motivo` | `GET /telegram` (marcador) |
+| **Privacidade — só para você** | (Quando configurado) checagem **AO VIVO** via `getMe`: aviso "encontrável na busca" + passo-a-passo para remover o `@username` no @BotFather; badge verde **"Não encontrável na busca ✓"** SÓ quando o getMe confirmou sem handle; estado neutro + botão **"Verificar de novo"** quando o getMe falha; + bloco "o que um estranho consegue (nada)" | `GET /privacidade` (`getMe` AO VIVO) |
 | **Acesso agora** | KPIs **Conexões ativas** e **Sessões vivas** + lista de sessões vivas (userAgent→device, tempos relativos, `ip` quando confiável), aviso de "IP não confiável", botão **Atualizar** + refresh automático ~15s | `GET /access` |
 
 ### Atualização automática
@@ -61,6 +62,86 @@ use `/token` no @BotFather para revogar e gerar outro."*
 O cartão **desaparece** assim que o token é validado (o estado passa a
 configurado) — nessa altura o painel mostra o cartão **Instruções** (comandos) e
 o marcador do bot.
+
+> **Opcional — bot privado:** a nota do cartão do @BotFather lembra que, se
+> quiser, pode **remover o `@username`** do bot para ele não aparecer na busca
+> do Telegram. Veja a secção **"Bot privado (só para você)"** abaixo.
+
+---
+
+## BOT PRIVADO (SÓ PARA VOCÊ)
+
+O bot é **do dono por desenho**: mesmo que alguém o encontre, não há nada que
+possa fazer. Mas há um vetor que o teu código **não pode** fechar sozinho — a
+**descoberta**. Um bot só aparece na busca do Telegram se tiver `@username`. O
+plugin não pode remover o username (isso é uma acção de conta que só o
+[@BotFather](https://www.grambots.com/bots/botfather) pode fazer), por isso o
+painel mostra o estado real do teu bot e guia-te.
+
+### O que o dono pode fazer (remover o username)
+
+O cartão **"Privacidade — só para você"** NÃO adivinha a descoberta pelo token:
+consulta o Telegram **AO VIVO** (`GET /api/privacidade` → `getMe` real) quando
+configurado, e re-checa ao montar e a cada refresh (~15s). O botão **"Verificar
+de novo"** força um `getMe` novo na hora.
+
+Se o `getMe` confirma que o bot **tem** `@username`, o cartão mostra o aviso
+*"O bot é encontrável na busca do Telegram como `@<handle>`"* e um passo-a-passo
+ENXUTO para o remover via BotFather:
+
+1. No Telegram, abra a conversa com **@BotFather**.
+2. Envie **/setusername** e escolhe o teu bot na lista.
+3. Remova o username (a opção *"delete current username"* / *"remover username"*).
+
+> A fonte do fluxo (remover username via `/setusername` do BotFather) está aí
+> como comentário do código. Como o prompt exato do BotFather pode variar, o
+> passo é propositadamente conservador — não inventa respostas exactas.
+
+Efeitos de remover o username:
+
+- o bot deixa de aparecer na **busca** do Telegram (o único jeito de ser achado);
+- o link `t.me/@<handle>` morre;
+- a **conversa já aberta** e o **pareamento** continuam a funcionar — nada quebra.
+
+O **verde só aparece quando um `getMe` REAL confirmou que o bot não tem
+`@username`**: nesse caso o cartão mostra o badge **"Não encontrável na busca ✓ —
+ninguém acha o bot no Telegram"**. Se o `getMe` falha (bot offline/token
+inválido), o cartão mostra um estado **neutro e honesto** — *"Não foi possível
+verificar agora"* + botão **"Verificar de novo"* — **nunca um verde mentiroso**.
+
+### O que já é garantido pelo código (deny-by-default)
+
+Mesmo que um estranho encontre o bot de alguma forma, estas invariantes estão
+implementadas e **testadas** (auth.test.ts / core.test.ts):
+
+- **Allowlist default-DENY (TG-007)** — até o dono nega se a allowlist estiver
+  vazia; ausência de um eixo (utilizador **ou** conversa) é negação (TG-004).
+- **Sem código de pareamento, nada funciona** — o código de 6 dígitos só aparece
+  no teu painel local (PAIR-010); o claro nunca sai do host. `/parear` sem o
+  código correcto é recusado.
+- **`/start` é inócuo** (PAIR-006) — devolve boas-vindas **iguais para todos**,
+  sem parear ninguém.
+- **Uma segunda parelha é recusada** (PAIR-005) — mesmo com um código válido; só
+  existe UM dono, definido na primeira parelha.
+- **Força bruta travada** (PAIR-007) — tentativas erradas têm **tetos** (por
+  conversa e globais, `LIMITES_PAREAMENTO_PADRAO`) e um **atraso exponencial**.
+- **Comandos de estranho são descartados em silêncio e contados** (TG-089) — o
+  bot não responde nada na conversa e regista a recusa na auditoria
+  (`surface.evento.descartado`).
+- **Identidade revalidada em todo evento** (TG-024) — até cliques/teclados
+  exigem os dois eixos.
+
+### O que um estranho que encontrar o bot **consegue** vs. **vê**
+
+| Estrangeiro faz… | Consegue | Vê |
+|---|---|---|
+| `/start` | Nada — não pareia | Boas-vindas inócuas, iguais às do dono |
+| `/parear <código errado>` | Nada — recusado, teto de tentativas | Resposta genérica (nunca revela se o código existe) |
+| `/parear <código válido>` (já pareado) | Nada — segunda parelha recusada | Silêncio |
+| `/ligar`, `/status`, `/desligar`, … | Nada — comando descartado em silêncio | Nada na conversa (só a auditoria interna o conta) |
+
+Na prática: **o estranho não consegue nada** e vê apenas boas-vindas inócuas. O
+teu medo ("outras pessoas acharem o bot") é resolvido removendo o `@username`.
 
 ---
 
