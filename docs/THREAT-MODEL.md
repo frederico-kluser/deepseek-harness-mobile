@@ -108,19 +108,35 @@ false` (não acredita em header nenhum da borda por padrão) e a identidade usad
 pelo rate limit colapsa sob o túnel para uma identidade só (caso global).
 Decisão em `docs/plano/02-SEGURANCA.md §5.4` e `src/config/schema.ts:343-380`.
 
-## 5. A senha e o kit de entrega
+## 5. A senha permanente e o que viaja (ou não) pelo canal remoto
 
 - **A senha é gerada pela máquina** (CSPRNG, 256 bits) e mostrada **uma única
   vez**, em texto e como QR ASCII, no terminal local.
   `src/secret/generate.ts:32-35`, `bin/dsh-guard-setup.ts:712-749`.
 - Em disco fica apenas **um digest** (SHA-256), nunca a senha
   (`src/secret/store.ts`, ficheiro `0600`, dir `0700`).
-- **A senha nunca é enviada por canal remoto** (invariante **SEC-14**): nem pelo
-  Telegram, nem pelo túnel. Conversa com bot é *cloud chat* — não é
-  ponta-a-ponta, o histórico fica nos servidores da Telegram e não existe
-  autodestruição para bots. A entrega é local (terminal/QR) ou por um token de
-  uso único (`GET /__guard/secret?ott=...`) impresso no stdout do arranque.
-  Testado por canário (ADV-050..059, `test/security/secret-leak-canary.test.ts`).
+- **A senha permanente nunca é enviada por canal remoto** (invariante
+  **SEC-14**): nem pelo Telegram, nem pelo túnel. Conversa com bot é *cloud
+  chat* — não é ponta-a-ponta, o histórico fica nos servidores da Telegram e não
+  existe autodestruição para bots. A entrega do segredo permanente é **local**
+  (terminal/QR) ou por um token de uso único (`GET /__guard/secret?ott=...`)
+  impresso no stdout do arranque. Testado por canário (ADV-050..059,
+  `test/security/secret-leak-canary.test.ts`).
+- **O que viaja pelo Telegram é o *link de acesso* com um token `mk` de uso
+  único — não o segredo permanente.** Por decisão explícita do dono, no
+  `/ligar`, quando o túnel fica READY o bot **envia automaticamente**
+  `https://<url-pública>/__guard/magic#mk=<token-de-uso-único>`: quem recebe o
+  link abre e entra **sem digitar senha**, e a sessão continua no navegador via
+  cookie. Consequências honestas deste desenho:
+  - o `mk` **não é o segredo permanente**: expira (TTL), é de uso único e vive
+    só em memória — quem tiver o link dentro da sua janela acede (por isso a
+    janela é curta, o uso é único e o consumo exige gesto humano, com
+    `magic.crawler-suspect` a registar acessos de crawler);
+  - o segredo permanente continua **a nunca sair da máquina**;
+  - o `mk` viaja no **fragmento** da URL (`#mk=...`), que **não é enviado ao
+    servidor** — reduz a exposição a proxies/logs no caminho;
+  - o que **nunca** aparece no chat é a senha permanente e a chave do bot
+    (verificação por canário, ADV-050..059).
 - **`/__guard/secret` é canal local apenas**: devolve 404 indistinguível de rota
   inexistente quando contornada fora do loopback (`src/index.ts:164-198`,
   `src/panel/secret.ts`).

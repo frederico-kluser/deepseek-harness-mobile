@@ -3,10 +3,11 @@
 Guia para conectar o Telegram ao DSH guardado por este plugin e parear o teu chat como
 dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é aceite de um chat pareado.
 
-> **A senha de acesso nunca é enviada por nenhum canal remoto — inclusive este.** Conversa
+> **A senha permanente não é enviada por nenhum canal remoto — inclusive este.** Conversa
 > com bot é *cloud chat*: não é ponta-a-ponta, o histórico fica nos servidores da Telegram
-> e não existe autodestruição para bots. A senha aparece no terminal local, e só lá.
-> O que pode chegar pelo Telegram é o **link mágico** de sessão (uso único, com TTL).
+> e não existe autodestruição para bots. A senha permanente aparece no terminal local, e só lá.
+> O que pode chegar pelo Telegram é o **link mágico de sessão** (uso único, com TTL) — e o
+> `/ligar` **envia-o automaticamente** quando o túnel fica READY.
 
 ## Ponto de partida
 
@@ -87,9 +88,11 @@ A CLI imprime (no terminal) os cinco avisos que tens de ter lido antes de expor:
 
 | Comando | O que faz |
 | --- | --- |
-| `/ligar` | Sobe o túnel e devolve o link (pede confirmação) |
+| `/ligar` | Sobe o túnel e, quando fica READY, **envia automaticamente** o link de acesso autenticado (pede confirmação) |
 | `/desligar` | Derruba o túnel (pede confirmação) |
 | `/status` | Estado atual e a URL vigente |
+| `/acessar` | (Re)envia o link de acesso de uso único |
+| `/rotacionar` | Gera novo segredo e invalida as sessões — **nunca** envia a senha pelo chat |
 | `/emergencia` | Derruba o túnel e revoga as sessões (kill switch) |
 
 Ações que **aumentam a exposição** (subir o túnel) exigem confirmação em duas etapas com

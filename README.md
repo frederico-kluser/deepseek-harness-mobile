@@ -38,7 +38,7 @@ Leitura honesta das garantias — cada linha aponta para o código que a cumpre;
 | **Toda a superfície HTTP exige credencial** | `/api`, o fallback da SPA e o handshake de WebSocket passam pelo mesmo portão (`src/http/gate.ts`) |
 | **Origem e Host vêm primeiro** | `trustedRemotes` (403 sem credencial) e `Host` byte-a-byte contra DNS rebinding, antes da credencial — ordem é contrato (`src/http/gate.ts:15`, `src/http/host-header.ts`) |
 | **Senha gerada, nunca guardada em claro** | CSPRNG 256 bits, apresentada uma única vez (texto + QR); em disco fica só o digest SHA-256, ficheiro `0600` (`src/secret/*`) |
-| **Senha nunca passa por canal remoto** | entrega local (terminal/QR) ou token de uso único impresso no stdout do arranque — nem Telegram, nem túnel (invariante SEC-14) |
+| **Senha permanente nunca passa por canal remoto** | a senha permanente é entregue **local** (terminal/QR) ou por token de uso único no stdout; o que viaja pelo Telegram é só o **link de acesso com `mk` de uso único**, por decisão explícita do dono (invariante SEC-14) |
 | **Força bruta tem teto** | a 5ª falha começa a atrasar; 100 falhas acumuladas derrubam a exposição (modo restrito), só o loopback passa e o reiniciar não o contorna (`src/ratelimit/**`) |
 | **Comparação de segredo em tempo constante** | digest em tempo constante, com prova estatística na suíte (`src/http/auth-basic.ts`, `test/security/timing-constante.test.ts`) |
 | **`danger-full-access` vetado** | elevação proibida recusada como defesa em profundidade (`src/permissions/deny.ts`) |
@@ -57,9 +57,33 @@ Quem não aceitar esta troca deve usar Tailscale ou SSH — e dizemo-lo com mais
 ## O que faz (e porquê)
 
 1. **Guarda o plano de controlo HTTP.** Exige credencial em `/api`, no fallback da SPA e no handshake de WebSocket; recusa endereços de bind fora do loopback no carregamento; e recusa permissões proibidas (`danger-full-access`). Resolve a superfície da discussão upstream [#853](https://github.com/deepseek-ai/deepseek-harness/discussions/853).
-2. **Gera a senha pela máquina** (CSPRNG, 256 bits) e entrega-a **uma única vez** no terminal (texto + QR). Em disco fica só o digest. A senha **nunca** passa por canal remoto.
+2. **Gera a senha pela máquina** (CSPRNG, 256 bits) e entrega-a **uma única vez** no terminal (texto + QR). Em disco fica só o digest. A senha permanente **nunca** passa por canal remoto — o que pode atravessar o Telegram é um **link de acesso de uso único** (via bot), por decisão do dono.
 3. **Suba um túnel efémero** para acederes pelo celular, com TTL que o derruba sozinho e um *probe fail-closed* que impede um túnel "nu" (sem portão atrás).
 4. **Ligar/desligar pelo Telegram ou painel** — o botão de matar na mão.
+
+### Telegram: botão da UI e link automático
+
+Na UI do DSH há o **botão do Telegram** (`/__guard-ui`), com estado **OFFLINE/ONLINE**
+fiel ao runtime:
+- **OFFLINE** → o clique mostra as instruções de conexão: criar o bot no `@BotFather`,
+  `dsh-guard-setup --pedir-token`, `--parear`, enviar `/parear <código>`; quem segue
+  esse passo a passo de facto coloca o bot **online**;
+- **ONLINE** → mostra dicas de uso.
+
+Depois de pareado (`docs/ONBOARDING-TELEGRAM.md`), os comandos de controlo do bot:
+
+| Comando | O que faz |
+| --- | --- |
+| `/ligar` | Sobe o túnel e, quando fica READY, **envia automaticamente** o link de acesso autenticado |
+| `/desligar` | Derruba o túnel |
+| `/acessar` | (Re)envia o link de acesso de uso único |
+| `/status` · `/rotacionar` · `/emergencia` | estado, rotação do segredo, kill switch |
+
+O link enviado no `/ligar` é
+`https://<url-pública>/__guard/magic#mk=<token-de-uso-único>`: o `mk` é de **uso
+único** e expira; quem abre entra **sem digitar senha** e a sessão continua no
+navegador via cookie. **Não é a senha permanente** — o segredo permanente só sai
+da máquina pelo caminho local (terminal/QR), como rege o `SEC-14`.
 
 Cada promessa destas aponta para a linha de código que a cumpre: ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 

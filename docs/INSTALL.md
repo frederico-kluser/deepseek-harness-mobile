@@ -67,7 +67,7 @@ Falta criar o bot no Telegram.
 Ainda não há nenhum bot do Telegram ligado a esta máquina. ...
 ```
 
-> A senha é mostrada no **terminal local**. Se a perderes, não há reposição pela rede: a entrega é local (`docs/ONBOARDING-TELEGRAM.md`) e a rotação (`/rotacionar` no bot ou o painel) gera outra e fecha as sessões abertas.
+> A senha é mostrada no **terminal local**. Se a perderes, não há reposição pela rede: a entrega é local (`docs/ONBOARDING-TELEGRAM.md`) e a rotação (`/rotacionar` no bot ou o painel) gera outra e fecha as sessões abertas. A **senha permanente nunca viaja pelo Telegram** — o que pode viajar é apenas o **link de acesso de uso único** (`mk`), que o bot envia no `/ligar`.
 
 ## Passo 3 — Verificar que o portão está ativo
 
@@ -82,7 +82,16 @@ $ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3080/api/com
 
 ## Passo 4 — Configurar o Telegram (opcional)
 
-O controlo pelo bot é opcional; o portão HTTP funciona só com a senha. Para ligar o bot, segue `docs/ONBOARDING-TELEGRAM.md` (BotFather → token → pareamento de 6 dígitos). A senha **nunca** é enviada pelo Telegram.
+O controlo pelo bot é opcional; o portão HTTP funciona só com a senha. Para ligar o bot, segue `docs/ONBOARDING-TELEGRAM.md` (BotFather → token → pareamento de 6 dígitos). A **senha permanente** nunca é enviada pelo Telegram.
+
+> **O fluxo de acesso com o bot:** depois de pareado, ao correr `/ligar` e quando o
+> túnel fica READY, o bot **envia automaticamente** o link autenticado
+> `https://<url-pública>/__guard/magic#mk=<token-de-uso-único>` — de **uso único** e com
+> TTL. Quem abre o link entra **sem digitar senha** e a sessão continua no navegador via
+> cookie. **Sem o link (ou a senha) o portão continua a devolver `401`.** No painel da UI
+> (`/__guard-ui`), o botão do Telegram mostra o estado OFFLINE/ONLINE fiel ao runtime: ao
+> clicar em OFFLINE aparecem as instruções `--pedir-token` / `--parear`, e quem as segue
+> de facto coloca o bot **online**.
 
 ## Passo 5 — Expor (opcional) e desmontar
 

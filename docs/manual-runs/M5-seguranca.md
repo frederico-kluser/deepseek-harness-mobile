@@ -1,7 +1,8 @@
 # M5 — Segurança na prática (7 min)
 
-**Objetivo:** confirmar pela rede a invariante de "só a credencial abre" e que a senha **nunca**
-passa por canal remoto (SEC-14). Fonte: [`docs/plano/04-TESTES.md §9`](../plano/04-TESTES.md) linhas 1748-1761.
+**Objetivo:** confirmar pela rede a invariante de "só a credencial abre" e que a **senha permanente**
+nunca passa por canal remoto (SEC-14) — o que o produto deixa viajar pelo Telegram é o **link
+com `mk` de uso único**, não o segredo permanente. Fonte: [`docs/plano/04-TESTES.md §9`](../plano/04-TESTES.md) linhas 1748-1761.
 
 | # | Passo | Critério | Resultado | O que anotar |
 | --- | --- | --- | --- | --- |
@@ -16,6 +17,9 @@ passa por canal remoto (SEC-14). Fonte: [`docs/plano/04-TESTES.md §9`](../plano
 | 7 | Buscar a URL do túnel no urlscan.io/Google | Regista o resultado. A URL **não é segredo** — é premissa do modelo | ☐ | resultado |
 | 8 | Deixar o túnel aberto 30 min e rever o log de acesso | Toda requisição registada; primeiro acesso não reconhecido gera alerta | ☐ | — |
 
-> **PARE se a senha aparecer no chat do Telegram** — é violação do invariante SEC-14.
+> **PARE se a SENHA PERMANENTE aparecer no chat do Telegram** — é violação do invariante SEC-14.
+> O que **pode** aparecer é o **link com `mk` de uso único** — comportamento novo do produto
+> (envio automático no `/ligar`). Verificar: o link tem o padrão `#mk=` no fragmento, **não** embute
+> o valor da senha, e um mesmo `mk` só serve uma sessão (a segunda tentativa falha e gera alerta).
 
 **Resultado global:** ☐ PASSOU ☐ FALHOU  — nota/issue se falhar:
