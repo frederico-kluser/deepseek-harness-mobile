@@ -98,7 +98,7 @@ export function criarOnOff(ctx: ContextoDoComando): ComandosOnOff {
       ])
       await ctx.enviar(
         identidade.chat,
-        'Ligar o túnel de acesso? Quando abrir, o link autenticado (senha já embutida) será enviado aqui automaticamente.',
+        'Ligar o túnel de acesso? Quando abrir, o link com a sua chave de acesso (entra direto, sem senha) será enviado aqui automaticamente.',
         { reply_markup: teclado },
       )
     },

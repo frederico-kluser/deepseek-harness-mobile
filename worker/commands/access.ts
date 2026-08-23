@@ -6,14 +6,15 @@
  * ===========================================================================
  * /ACESSAR (TG-085) — session.issue
  * ===========================================================================
- * O worker envia o intent `session.issue` e o HOST responde: com o link
- * magico (se `control.magicLink` estiver ligado) ou com a instrucao do
- * caminho local (opt-out). A RESPOSTA viaja como `notify` (o marcador
- * `alerta:link-magico` e o de T5.4) e a superficie renderiza-a — este
- * ficheiro NAO compoe nem conhece o link: o `mk` do link viaja no FRAGMENTO
- * do URL composto pelo host e a renderizacao apenas liga
- * `disable_web_page_preview` (T5.4). A senha NUNCA sai daqui: nao ha caminho
- * neste worker que a transporte — nem para o Telegram nem para o canal (S3).
+ * O worker envia o intent `session.issue` e o HOST responde com o LINK DA
+ * CHAVE DE ACESSO: o host compoe `https://<url-do-tunel>?key=<token>` (modelo
+ * expose-port, Onda 1) e notifica o dono — quem abre entra direto, sem senha
+ * e sem prompt. A RESPOSTA viaja como `notify` (o marcador `alerta:link-magico`
+ * e o de T5.4) e a superficie renderiza-a — este ficheiro NAO compoe nem
+ * conhece o token: a chave viaja na QUERY da URL composta pelo host e a
+ * renderizacao apenas liga `disable_web_page_preview` (T5.4). A senha NUNCA
+ * sai daqui: nao ha caminho neste worker que a transporte — nem para o
+ * Telegram nem para o canal (S3).
  *
  * O ACEITE do pedido e INVISIVEL de proposito (A2 da revisao): renderizar
  * «Pedido aceite.» ali editaria a ultima mensagem de estado IN-PLACE e
@@ -24,11 +25,11 @@
  *
  * /ROTACIONAR (TG-086) — secret.rotate
  * ===========================================================================
- * `secret.rotate` AUMENTA exposicao (regenera a senha e invalida as sessoes):
- * exige nonce do host — 2 etapas, o mesmo fluxo do /ligar (aumenta
- * exposicao -> confirma). A senha nova NAO viaja pelo chat: o host responde
- * com o notify do caminho local (QR/ott) e, se magicLink ligado, um link
- * magico para o painel — composto pelo host, renderizado por nos.
+ * `secret.rotate` AUMENTA exposicao (gera chave de acesso nova, revoga a
+ * anterior e invalida as sessoes): exige nonce do host — 2 etapas, o mesmo
+ * fluxo do /ligar (aumenta exposicao -> confirma). A senha permanente NAO
+ * viaja pelo chat: o host responde por notify dizendo que a chave anterior
+ * foi revogada — o proximo link do bot embute a chave nova.
  */
 
 import { buildCallbackData } from '../auth/guard.ts'
@@ -80,7 +81,7 @@ export function criarAccess(ctx: ContextoDoComando): ComandosAccess {
       const teclado = buildInlineKeyboard([
         [{ text: '✅ Sim, rodar', data: buildCallbackData('secret.rotate', nonce) }],
       ])
-      await ctx.enviar(identidade.chat, 'Gerar uma senha nova (invalida as sessões atuais)?', {
+      await ctx.enviar(identidade.chat, 'Gerar uma chave de acesso nova? A anterior será revogada e as sessões atuais invalidadas.', {
         reply_markup: teclado,
       })
     },

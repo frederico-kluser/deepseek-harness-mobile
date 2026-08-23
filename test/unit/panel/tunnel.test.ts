@@ -92,7 +92,7 @@ describe('POST /__guard/api/tunnel/start/nonce -- o passo 1 do liga', () => {
     const resposta = await pedir(port, PANEL_PATH_TUNNEL_START_NONCE, { method: 'POST', body: '' })
 
     assert.equal(resposta.status, 401)
-    assert.match(String(resposta.headers['www-authenticate']), /^Basic realm=/u)
+    assert.equal(resposta.headers['www-authenticate'], undefined, 'sem desafio (texto puro, modelo expose-port)')
     assert.equal(resposta.body.includes('nonce'), false)
     assert.equal(bancada.intentos.length, 0)
   })

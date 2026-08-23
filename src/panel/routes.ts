@@ -52,7 +52,7 @@ import type { CsrfGuard } from './csrf.ts'
 import type { AuditGate, PanelExchange, PanelHandler, PanelResponse } from './api.ts'
 
 import { canonicalRequestPath, isGuardedPath } from '../http/path.ts'
-import { challengeBasicAuth } from '../http/responses.ts'
+import { denyUnauthorized } from '../http/responses.ts'
 import { maskAuditText } from '../audit/format.ts'
 import { readSessionCookie } from '../session/cookie.ts'
 import {
@@ -196,7 +196,12 @@ export const CSRF_REJECTION_EVENT = 'painel_csrf_recusado'
 export interface PanelDeps {
   readonly log: GuardLogger
   readonly audit: Pick<AuditSink, 'append'>
-  /** `realm` do desafio Basic. Vem da `Config` de T3.3; nao e segredo. */
+  /**
+   * `realm` do desafio Basic da VONDA antiga de login. Conservado so para a
+   * composicao nao quebrar (a fiacao em `src/index.ts` continua a passar); o
+   * painel NAO emite mais o cabecalho de desafio Basic (Onda 1/2) — o 401 e texto
+   * puro. Nao e segredo.
+   */
   readonly realm: string
   readonly snapshot: () => TunnelSnapshot
   readonly secrets: Pick<SecretStore, 'verify'>
@@ -477,10 +482,11 @@ export function createPanelRouter(
 
     if (policy === 'exige-sessao' && session === null) {
       deps.log.warn(`[painel] 401 em ${method} ${path} (sem sessao valida).`)
-      // O MESMO 401 do gate, com o mesmo corpo e o mesmo `WWW-Authenticate`.
-      // Reutilizado e nao reescrito: dois literais do mesmo 401 divergem na
-      // primeira melhoria de redaccao, e a divergencia e um oraculo.
-      challengeBasicAuth(res, deps.realm)
+      // ONDA 1/2: o painel NAO pede senha nunca mais; o acesso e por sessao
+      // (link do bot com `?key=` ou loopback local). O 401 e TEXTO PURO, SEM
+      // cabecalho de desafio (nada de popup de login) — o MESMO 401 do gate,
+      // reutilizado (`denyUnauthorized`), para nao existirem dois literais.
+      denyUnauthorized(res)
       return
     }
 

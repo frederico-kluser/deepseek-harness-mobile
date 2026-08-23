@@ -49,8 +49,8 @@ describe('TG-080: setMyCommands publica EXATAMENTE a lista canonica, na ordem', 
       { command: 'ligar', description: 'Liga o túnel de acesso (pede confirmação)' },
       { command: 'desligar', description: 'Desliga o túnel (pede confirmação)' },
       { command: 'status', description: 'Estado atual: túnel, tempo no ar e quando expira' },
-      { command: 'acessar', description: 'Envia o link mágico de acesso único' },
-      { command: 'rotacionar', description: 'Gera senha nova (pede confirmação)' },
+      { command: 'acessar', description: 'Envia o link com a sua chave de acesso' },
+      { command: 'rotacionar', description: 'Gera chave nova e invalida a anterior (pede confirmação)' },
       { command: 'parear', description: 'Parear com o código <código> mostrado no terminal' },
       { command: 'emergencia', description: 'Emergência: desliga o túnel e este bot' },
     ])
@@ -374,7 +374,7 @@ describe('o ack aceite de /ligar e /rotacionar edita o teclado in-place (TG-028)
     assert.match(edicao.texto, /A ligar o túnel/u)
   })
 
-  it('/rotacionar: ack aceite -> «A rodar a senha…» na mensagem do botao', async () => {
+  it('/rotacionar: ack aceite -> «A gerar chave nova…» na mensagem do botao', async () => {
     const bancada = montarBancada()
     await bancada.tratar(pairCommand(OWNER, '123456'))
     await bancada.tratar(dmMessage(OWNER, '/rotacionar'))
@@ -388,7 +388,7 @@ describe('o ack aceite de /ligar e /rotacionar edita o teclado in-place (TG-028)
 
     const edicao = bancada.api.edicoes.at(-1)
     assert.ok(edicao !== undefined)
-    assert.match(edicao.texto, /A rodar a senha/u)
+    assert.match(edicao.texto, /A gerar chave nova/u)
   })
 
   it('ack noop de /desligar -> «Já estava assim.» editado in-place no teclado (TG-028)', async () => {

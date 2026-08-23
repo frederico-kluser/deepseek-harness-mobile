@@ -8,11 +8,12 @@
  * scanner de distinguir o painel do resto do DSH.
  *
  * A Onda 1 remove o login do portao: o gate NUNCA emite `WWW-Authenticate` (o
- * popup do navegador acabou). O 401 do gate passa a ser TEXTO PURO. O painel
- * (`src/panel/**`, de outra onda) continua a usar `challengeBasicAuth` na sua
- * porta de login -- logo os dois 401 ja NAO sao identicos, e esta suite deixa
- * de comparar o gate com o painel (aquele contrato morreu por desenho; a porta
- * de login do painel e uma decisao da Onda 2/6 que mantem o desafio).
+ * popup do navegador acabou). O 401 do gate passa a ser TEXTO PURO. A Onda 2
+ * alinhou o PAINEL ao mesmo modelo expose-port: o painel (`src/panel/routes.ts`)
+ * NAO pede senha nunca mais — o seu 401 `exige-sessao` e o MESMO `denyUnauthorized`
+ * texto puro, sem desafio. Logo os dois 401 sao identicos de novo (por
+ * construcao, partilham a funcao), e esta suite prende NENHUMA recusa — do
+ * gate OU do painel — com `WWW-Authenticate`.
  *
  * O que esta suite agora prende: NENHUMA recusa do portao -- 401 do tunel,
  * 403 de perimetro/Host, 404 de canal-local-apenas, handshakes recusados --

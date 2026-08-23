@@ -99,7 +99,8 @@ describe('o despachante aplica a tabela, e nao o objeto de rota', () => {
     const resposta = await pedir(port, ROTA_NOVA.path)
 
     assert.equal(resposta.status, 401)
-    assert.match(String(resposta.headers['www-authenticate']), /^Basic realm=/u)
+    // ONDA 1/2: o painel NAO pede senha — o 401 e TEXTO PURO, SEM desafio.
+    assert.equal(resposta.headers['www-authenticate'], undefined, 'sem WWW-Authenticate (nada de popup)')
     assert.ok(!resposta.body.includes('ISTO NUNCA PODIA SER SERVIDO SEM SESSAO'))
   })
 
@@ -129,7 +130,9 @@ describe('as rotas guardadas antes do login', () => {
     const resposta = await pedir(port, PANEL_PATH_ROOT)
 
     assert.equal(resposta.status, 401)
-    assert.match(String(resposta.headers['www-authenticate']), /^Basic realm="Secure DSH Interface"/u)
+    // ONDA 1/2 (expose-port): o painel nunca pede senha — 401 em TEXTO PURO,
+    // sem `WWW-Authenticate` (sem popup de login), como o do gate.
+    assert.equal(resposta.headers['www-authenticate'], undefined, 'sem desafio Basic')
     assert.ok(!resposta.body.includes('<html'))
     assert.ok(!resposta.body.includes('dsh-csrf'))
   })

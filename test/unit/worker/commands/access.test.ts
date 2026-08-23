@@ -52,15 +52,15 @@ describe('TG-085: /acessar — o link magico chega pelo notify do host', () => {
     bancada.roteador.onNotify({
       v: 1,
       type: 'notify',
-      texto: `alerta:link-magico\nAqui está o seu link mágico de uso único:\nhttps://exemplo.trycloudflare.com/__guard/magic#mk=${SENHA}`,
+      texto: `alerta:link-magico\nSeu link com a chave de acesso:\nhttps://exemplo.trycloudflare.com/?key=${SENHA}`,
     })
     await tick()
 
     const mensagem = bancada.api.mensagens.at(-1)
     assert.ok(mensagem !== undefined)
-    // O marcador e ocultado; o link (com o mk no FRAGMENTO) passa intacto.
+    // O marcador e ocultado; o link (com a chave na QUERY ?key=) passa intacto.
     assert.ok(!mensagem.texto.includes('alerta:link-magico'))
-    assert.ok(mensagem.texto.includes('https://exemplo.trycloudflare.com/__guard/magic#mk='))
+    assert.ok(mensagem.texto.includes('https://exemplo.trycloudflare.com/?key='))
     assert.equal(mensagem.opcoes?.disable_web_page_preview, true)
     const markup = mensagem.opcoes === undefined ? undefined : mensagem.opcoes.reply_markup
     assert.equal(markup, undefined, 'link-magico nao ganha botao')
@@ -120,21 +120,22 @@ describe('TG-086: /rotacionar — 2 etapas com nonce, senha nova nunca pelo chat
     assert.match(bancada.api.mensagens.at(-1)?.texto ?? '', /Não foi possível obter a confirmação/u)
   })
 
-  it('a senha nova nao viaja pelo chat: o notify traz o caminho local, nunca o valor', async () => {
+  it('a senha nova nao viaja pelo chat: o notify fala da chave, nunca o valor', async () => {
     const bancada = montarBancada()
     await bancada.tratar(pairCommand(OWNER, '123456'))
 
-    // O host, apos o secret.rotate aceite, compoe o notify do caminho local.
+    // O host, apos o secret.rotate aceite, compoe o notify da rotacao da
+    // chave — SEM o valor do segredo.
     bancada.roteador.onNotify({
       v: 1,
       type: 'notify',
       texto:
-        'alerta:link-magico\nSenha nova gerada. Veja o QR e o código no terminal da máquina (ou use o link abaixo):\nhttps://exemplo.trycloudflare.com/__guard#mk=abc',
+        'alerta:link-magico\nChave de acesso nova gerada: a anterior foi revogada e as sessões atuais invalidadas. O link novo terá a chave nova embutida.',
     })
     await tick()
 
     const tudo = JSON.stringify({ mensagens: bancada.api.mensagens, intents: bancada.ipc.intents })
     assert.ok(!tudo.includes(SENHA), 'a senha nova nunca sai pelo chat')
-    assert.match(bancada.api.mensagens.at(-1)?.texto ?? '', /terminal da máquina/u)
+    assert.match(bancada.api.mensagens.at(-1)?.texto ?? '', /chave/i)
   })
 })

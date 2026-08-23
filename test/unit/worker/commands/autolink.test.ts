@@ -20,7 +20,7 @@ import {
   OWNER,
   pairCommand,
 } from '../../../support/fixtures/telegram/updates.ts'
-import { montarBancada } from './apoio.ts'
+import { montarBancada, tick } from './apoio.ts'
 
 const URL = 'https://x.trycloudflare.com'
 
@@ -45,7 +45,7 @@ function dataDoBotao(bancada: { api: { mensagens: Array<{ opcoes: { reply_markup
   return data
 }
 
-describe('autolink: ligar -> READY -> o link magico sai sozinho', () => {
+describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
   it('confirma o /ligar, o tunel fica READY e pede session.issue UMA vez', async () => {
     const bancada = montarBancada()
     await bancada.tratar(pairCommand(OWNER, '123456'))
@@ -70,6 +70,37 @@ describe('autolink: ligar -> READY -> o link magico sai sozinho', () => {
     assert.equal(pedido.intent, 'session.issue')
     assert.equal(pedido.from, OWNER, 'a identidade do /ligar do dono')
     assert.equal(Object.hasOwn(pedido, 'nonce'), false, 'session.issue nao exige nonce (TG-085)')
+  })
+
+  it('o notify que o host devolve ao READY renderiza UMA mensagem com ?key= e NAO com #mk=', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(pairCommand(OWNER, '123456'))
+
+    await bancada.tratar(dmMessage(OWNER, '/ligar'))
+    const data = dataDoBotao(bancada)
+    await bancada.tratar(callbackQuery({ from: OWNER, chat: OWNER, data }))
+    const upRequest = bancada.ipc.intents[0]?.requestId
+    assert.ok(upRequest !== undefined)
+    bancada.roteador.onAck({ v: 1, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
+    bancada.roteador.onState(ready(1))
+
+    // O host compoe e notifica o link ?key= (a chave 256 bits); o worker so
+    // renderiza. NAO ha prompt nem senha no texto.
+    bancada.roteador.onNotify({
+      v: 1,
+      type: 'notify',
+      texto:
+        'alerta:link-magico\nSeu link com a chave de acesso (abre e entra, sem senha):\nhttps://x.trycloudflare.com/?key=ABC234GHJ5678LMNPQRSTVWXYZ234567',
+    })
+    await tick()
+
+    const textosComLink = bancada.api.mensagens
+      .map((m) => m.texto)
+      .filter((t) => t.includes('x.trycloudflare.com'))
+    assert.equal(textosComLink.length, 1, 'exatamente UMA mensagem do link')
+    assert.match(textosComLink[0] ?? '', /\?key=/u, 'a chave vai na query ?key=')
+    assert.ok(!(textosComLink[0] ?? '').includes('#mk='), 'NAO usa o fragmento #mk=')
+    assert.match(textosComLink[0] ?? '', /sem senha/u, 'o texto anuncia acesso sem senha')
   })
 
   it('dedupe: difusoes seguintes de READY (mesma ligacao) NAO reenviam o pedido', async () => {
@@ -219,7 +250,7 @@ describe('autolink: /desligar e noop nao disparam o link', () => {
 })
 
 describe('autolink: o texto do /ligar anuncia o link', () => {
-  it('a confirmacao de /ligar diz que o link autenticado chegara', async () => {
+  it('a confirmacao de /ligar diz que o link da chave de acesso chegara', async () => {
     const bancada = montarBancada()
     await bancada.tratar(pairCommand(OWNER, '123456'))
 
@@ -227,6 +258,6 @@ describe('autolink: o texto do /ligar anuncia o link', () => {
 
     const texto = bancada.api.mensagens.at(-1)?.texto ?? ''
     assert.match(texto, /Ligar o túnel/u)
-    assert.match(texto, /link autenticado/u, 'o dono sabe que o link chegara automaticamente')
+    assert.match(texto, /chave de acesso/u, 'o dono sabe que o link chegara automaticamente')
   })
 })

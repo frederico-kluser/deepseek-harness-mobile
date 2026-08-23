@@ -51,9 +51,9 @@
  * inexistente -- o que amplificaria qualquer varredura para pagar um bit que ja
  * e publico.
  *
- * E ELE E PUBLICO: `GET /__guard` responde `401` com
- * `WWW-Authenticate: Basic realm="Secure DSH Interface"`, o plugin e software
- * aberto e a tabela de rotas esta na documentacao. Descobrir que
+ * E ELE E PUBLICO: `GET /__guard` responde `401` TEXTO PURO (sem desafio —
+ * modelo expose-port, Onda 1/2), o plugin e software aberto e a tabela de
+ * rotas esta na documentacao. Descobrir que
  * `/__guard/secret` existe nao custa um cronometro.
  *
  * A AFIRMACAO QUE FICA, e esta e verificavel: o canal de tempo nao carrega UM

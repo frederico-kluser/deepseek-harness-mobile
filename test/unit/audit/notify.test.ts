@@ -23,9 +23,9 @@
  *   5. SEC-14 ESTENDIDO (Onda 5, aceite item 8) — segredo conhecido
  *      provisionado, TODOS os caminhos que produzem payload de IPC
  *      (toggle, notificacao, /status, /acessar, /rotacionar, erro),
- *      serializados, sem o segredo PERMANENTE em codificacao nenhuma. O `mk`
- *      do link magico e PERMITIDO nesse payload, e o teste prova as duas
- *      metades: o `mk` aparece no /acessar, o segredo permanente nunca.
+ *      serializados, sem o segredo PERMANENTE em codificacao nenhuma. O token
+ *      de link no link mágico e PERMITIDO nesse payload, e o teste prova as
+ *      duas metades: o token de link aparece no /acessar, o segredo permanente nunca.
  */
 
 import assert from 'node:assert/strict'
@@ -67,7 +67,6 @@ import {
   enviarNotificacao,
   formatarTempoRestante,
   HASH_CURTO_LEN,
-  MAGIC_ROTA,
   RELATORIO_INTERVALO_MS,
 } from '../../../src/audit/notify.ts'
 
@@ -223,14 +222,14 @@ describe('as composicoes produzem o marcador semantico e o corpo certo', () => {
     assertTextoLimpo(texto)
   })
 
-  it('link magico: o mk viaja no FRAGMENTO e a rota e a fixa', () => {
-    const mk = 'mk_9aF3kQ7zR1tY5uI8oP2sD6gH4jK0lZ'
-    const texto = comporTextoLinkMagico(TS, URL_DO_TUNEL, mk, TS + 120_000)
+  it('link da chave de acesso: o token viaja na QUERY (?key=) e a chave nunca e "senha"', () => {
+    const chave = 'ABC234GHJ5678LMNPQRSTVWXYZ'
+    const texto = comporTextoLinkMagico(TS, URL_DO_TUNEL, chave, undefined)
     const [marcador, corpo] = texto.split('\n')
     assert.equal(marcador, ALERTA_LINK_MAGICO)
-    assert.ok(corpo?.includes(`${URL_DO_TUNEL}${MAGIC_ROTA}#mk=${mk}`), corpo)
-    assert.ok(texto.includes('expira em 2 min'), 'TTL de 120 s formatado')
-    assertTextoLimpo(texto)
+    assert.ok(texto.includes(`${URL_DO_TUNEL}?key=${chave}`), texto)
+    assert.ok(!corpo?.includes('#mk='), 'NAO usa o fragmento #mk=')
+    assert.match(texto, /sem senha/u, 'o texto diz que entra sem digitar senha')
   })
 
   it('formatarTempoRestante arredonda para CIMA — nunca diz menos do que resta', () => {
@@ -618,10 +617,10 @@ describe('SEC-14 estendido (Onda 5): segredo conhecido, todos os caminhos de pay
         state: createFileStateStore(dir.statePath),
         sessions: { revokeAll: (): void => {} },
       })
+      // O token de link NO /acessar e PERMITIDO (a chave ?key= do bot); o
+      // segredo PERMANENTE, nao — em codificacao nenhuma (SEC-14).
       const segredo = canonicalizeSecret(store.provision().display.split('\n')[0]!)
-      // O `mk` do link magico e PERMITIDO no payload de /acessar (D3); o
-      // segredo permanente, nao — em codificacao nenhuma (SEC-14).
-      const mk = 'mk_9aF3kQ7zR1tY5uI8oP2sD6gH4jK0lZ'
+      const chaveLink = 'ABC234GHJ5678LMNPQRSTVWXYZ234567'
 
       const payloads: string[] = []
       const empurra = (mensagem: IpcMessageToWorker): void => {
@@ -641,8 +640,9 @@ describe('SEC-14 estendido (Onda 5): segredo conhecido, todos os caminhos de pay
       empurra({ v: IPC_PROTOCOL_VERSION, type: 'notify', texto: comporTextoMagicSuspeito({ evento: 'magic.crawler-suspect', resultado: 'negado' }, TS) })
       // relatorio periodico
       empurra({ v: IPC_PROTOCOL_VERSION, type: 'notify', texto: comporTextoRelatorio(TS, TS + 23 * 60_000) })
-      // /acessar — link magico: o `mk` e PERMITIDO, o segredo permanente nao
-      empurra({ v: IPC_PROTOCOL_VERSION, type: 'notify', texto: comporTextoLinkMagico(TS, URL_DO_TUNEL, mk, TS + 120_000) })
+      // /acessar — link da chave (`?key=`): o token de link e PERMITIDO, o
+      // segredo permanente nao
+      empurra({ v: IPC_PROTOCOL_VERSION, type: 'notify', texto: comporTextoLinkMagico(TS, URL_DO_TUNEL, chaveLink, undefined) })
       // /status — a difusao de estado
       empurra({ v: IPC_PROTOCOL_VERSION, type: 'state', state: 'READY', seq: 1, url: URL_DO_TUNEL, expiresAt: TS + 60 * 60_000 })
       empurra({ v: IPC_PROTOCOL_VERSION, type: 'state', state: 'STOPPED', seq: 2 })
@@ -659,10 +659,10 @@ describe('SEC-14 estendido (Onda 5): segredo conhecido, todos os caminhos de pay
         assert.equal(fuga, undefined, `fuga do segredo permanente (${String(fuga)}) em ${payload}`)
       }
 
-      // E a outra metade do invariante: o `mk` ESTA no payload de /acessar —
-      // sem ele o dono nao chega ao painel pelo celular.
-      const acessar = payloads.find((payload) => payload.includes(`#mk=${mk}`))
-      assert.ok(acessar !== undefined, 'o payload de /acessar carrega o mk no fragmento')
+      // E a outra metade do invariante: o token de link ESTA no payload de
+      // /acessar (?key=) — sem ele o dono nao chega ao painel pelo celular.
+      const acessar = payloads.find((payload) => payload.includes(`?key=${chaveLink}`))
+      assert.ok(acessar !== undefined, 'o payload de /acessar carrega o token de link na query ?key=')
     } finally {
       dir.cleanup()
     }

@@ -239,8 +239,8 @@ describe('configure — a costura de producao', () => {
     // O teclado saiu com o nonce opaco no callback_data (gramatica g1).
     const teclado = bot.mensagens.at(-1)
     assert.ok(teclado !== undefined)
-    assert.match(teclado.texto, /^Ligar o túnel de acesso\?/u, 'o /ligar pergunta e anuncia o link autenticado')
-    assert.match(teclado.texto, /link autenticado/u)
+    assert.match(teclado.texto, /^Ligar o túnel de acesso\?/u, 'o /ligar pergunta e anuncia o link da chave')
+    assert.match(teclado.texto, /chave de acesso/u)
     const markup = teclado.opcoes?.reply_markup as
       | { inline_keyboard?: Array<Array<{ callback_data?: string }>> }
       | undefined

@@ -96,8 +96,8 @@ export const COMANDOS_PUBLICADOS: readonly ComandoPublicado[] = Object.freeze([
   { command: 'ligar', description: 'Liga o túnel de acesso (pede confirmação)' },
   { command: 'desligar', description: 'Desliga o túnel (pede confirmação)' },
   { command: 'status', description: 'Estado atual: túnel, tempo no ar e quando expira' },
-  { command: 'acessar', description: 'Envia o link mágico de acesso único' },
-  { command: 'rotacionar', description: 'Gera senha nova (pede confirmação)' },
+  { command: 'acessar', description: 'Envia o link com a sua chave de acesso' },
+  { command: 'rotacionar', description: 'Gera chave nova e invalida a anterior (pede confirmação)' },
   { command: 'parear', description: 'Parear com o código <código> mostrado no terminal' },
   { command: 'emergencia', description: 'Emergência: desliga o túnel e este bot' },
 ])
@@ -511,8 +511,8 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
   const ultimaMensagemDeEstado = new Map<number, number>()
   /**
    * AUTOLINK (onda1): a ligacao (requestId) do /ligar do dono que pediu o link
-   * autenticado. Armado na confirmacao de `tunnel.up` que VAI prosseguir e
-   * consumido (desarmado) quando o tunel chega a READY — UMA unica vez por
+   * da chave de acesso. Armado na confirmacao de `tunnel.up` que VAI prosseguir
+   * e consumido (desarmado) quando o tunel chega a READY — UMA unica vez por
    * ligacao. CHAVEADO POR requestId: um ack (ou um tap sobreposto) de OUTRA
    * confirmacao NAO desarma este slot (o IdentityGuard nao deduplica callbacks
    * por desenho). `null` = inativo.
@@ -716,12 +716,12 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
   }
 
   /**
-   * AUTOLINK (onda1): pede o link autenticado ao HOST (`session.issue`) quando
-   * o tunel que o dono mandou ligar fica READY. A identidade vem do /ligar que
-   * armou o autolink (o dono e 1:1 por construcao, mas a revalidacao de
-   * identidade continua a ser feita pelo HOST no intent, S6). O host compoe e
-   * notifica o link (URL + `__guard/magic` + `?mk=` no fragmento); este worker
-   * NUNCA compoe nem transporta o `mk`. Best-effort: enviarIntent ja regista o
+   * AUTOLINK (onda1): pede o link da CHAVE DE ACESSO ao HOST (`session.issue`)
+   * quando o tunel que o dono mandou ligar fica READY. A identidade vem do
+   * /ligar que armou o autolink (o dono e 1:1 por construcao, mas a revalidacao
+   * de identidade continua a ser feita pelo HOST no intent, S6). O host compoe e
+   * notifica o link (`https://<url>?key=<token>`); este worker NUNCA compoe nem
+   * transporta o token de link. Best-effort: enviarIntent ja regista o
    * pendente (o ack de session.issue REGISTA o erro como mensagem propria) e
    * o autolink ja foi desarmado ANTES — um envio falho nao deixa o flag vivo.
    */
@@ -776,14 +776,14 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
         // ack devolve a recusa para renderizar. O answer vem sem texto: o
         // feedback do clique e a edicao in-place da mensagem (a do botao).
         await answerCallbackAlways(deps.api, decisao.answer.callbackQueryId, log)
-        // AUTOLINK (onda1): o /ligar confirmado arma o envio automatico do link
-        // autenticado, CHAVEADO pelo requestId DESTA ligacao. Quando o tunel
-        // chega a READY, o worker pede `session.issue` ao host SOZINHO — o host
-        // compoe o link (URL + `#mk=`) e notifica. O slot so e armado se nao
-        // houver outra ligacao em curso (so a PRIMEIRA confirmacao pode vir a
-        // ser a que sobe — o host serializa os starts e um segundo `tunnel.up`
-        // enquanto STARTING e noop). Um tap sobreposto (double-tap) nao
-        // sobrescreve a ligacao boa.
+        // AUTOLINK (onda1): o /ligar confirmado arma o envio automatico do
+        // link da chave de acesso, CHAVEADO pelo requestId DESTA ligacao.
+        // Quando o tunel chega a READY, o worker pede `session.issue` ao host
+        // SOZINHO — o host compoe o link (`https://<url>?key=<token>`) e
+        // notifica. O slot so e armado se nao houver outra ligacao em curso
+        // (so a PRIMEIRA confirmacao pode vir a ser a que sobe — o host
+        // serializa os starts e um segundo `tunnel.up` enquanto STARTING e
+        // noop). Um tap sobreposto (double-tap) nao sobrescreve a ligacao boa.
         const requestIdUp = gerarRequestId(time.now())
         if (decisao.action === 'tunnel.up' && autolink === null) {
           autolink = {
@@ -836,9 +836,9 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
       const chat = contexto.dono()
       if (chat === undefined) return
       // AUTOLINK (onda1): o tunel que o dono /ligar ficou READY — sai o link
-      // autenticado UMA vez por ligacao (o desarme acontece aqui, no primeiro
-      // READY com autolink armado; as difusoes seguintes de READY ja nao o
-      // encontram). O "uma mensagem por ligacao/URL" e esta garantia.
+      // da chave de acesso UMA vez por ligacao (o desarme acontece aqui, no
+      // primeiro READY com autolink armado; as difusoes seguintes de READY ja
+      // nao o encontram). O "uma mensagem por ligacao/URL" e esta garantia.
       if (autolink !== null && projecao.ler().state === 'READY') {
         const alvo = autolink
         autolink = null
@@ -1024,7 +1024,7 @@ function acaoEmProgresso(acao: IpcIntentName): string {
     case 'tunnel.down':
       return 'A desligar o túnel…'
     case 'secret.rotate':
-      return 'A rodar a senha…'
+      return 'A gerar chave nova…'
     case 'tunnel.status':
     case 'session.issue':
     case 'emergency':

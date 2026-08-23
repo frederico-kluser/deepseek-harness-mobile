@@ -40,12 +40,17 @@
  *   - `alerta:magic-suspeito` -> sem botao exigido
  *   - `alerta:relatorio`      -> botao "Encerrar"
  *   - `alerta:link-magico`    -> envio com `disable_web_page_preview: true`
+ *                               (o link do bot carrega a chave `?key=`)
  *
  * DISCIPLINA DE CONTEUDO (S3, a mesma de `IpcErrorMessage.message`): sem
  * segredo, sem token, sem caminho absoluto de ficheiro. A URL do tunel PODE
- * viajar (nao e segredo — `02-SEGURANCA.md` 2.2). O `mk` do link magico viaja
- * NO FRAGMENTO (`#`), e e a excecao EXPLICITA da Onda 5 ao invariante SEC-14:
- * o segredo PERMANENTE, nunca — em codificacao nenhuma (teste comportamental).
+ * viajar (nao e segredo — `02-SEGURANCA.md` 2.2). No modelo expose-port da
+ * Onda 1, o LINK do bot viaja com a CHAVE NO LINK (`?key=<token>`), composto
+ * em `surface-ipc.ts` a partir de `LinkTokenSurface.emitir()` — e o token de
+ * link (reutilizavel ate a rotacao do segredo) e a excecao EXPLICITA ao
+ * invariante SEC-14 para ESTE payload, e so para ele: o segredo PERMANENTE,
+ * nunca — em codificacao nenhuma (teste comportamental). A URL COMPOSTA com a
+ * chave nunca vai a log.
  * `\n` e legitimo; caracteres de controlo, nao (o serializador do canal recusa).
  *
  * COALESCENCIA: `criarCoalescedor` agrupa alertas por categoria numa janela de
@@ -121,9 +126,6 @@ export const RELATORIO_INTERVALO_MS = 30 * 60_000
 
 /** Quantos caracteres do hash de sessao vao para a mensagem (hash CURTO). */
 export const HASH_CURTO_LEN = 8
-
-/** Caminho fixo da rota do link magico (`src/panel/routes.ts`). */
-export const MAGIC_ROTA = '/__guard/magic'
 
 /* ========================================================================== */
 /* Primitivas de formato                                                      */
@@ -264,26 +266,34 @@ export function comporTextoRelatorio(agoraMs: number, expiraEm: number | undefin
 }
 
 /**
- * Link magico para o celular. O `mk` viaja no FRAGMENTO (`#`), nunca em query
- * (D3): o fragmento nao chega ao servidor nem ao log de intermediario.
+ * Link com a CHAVE DE ACESSO para o celular (modelo expose-port da Onda 1).
+ * O token viaja na QUERY (`?key=<token>`), composto a partir de
+ * `LinkTokenSurface.emitir()` (`src/contracts/link-token.ts`), e e a portao
+ * pelo tunel que abre sem senha e sem prompt — quem recebe o link entra.
  *
- * >>> O `mk` E A EXCECAO EXPLICITA DA ONDA 5 AO INVARIANTE SEC-14: permitido
- * >>> NESTE payload, e so neste. O segredo PERMANENTE, nunca — em codificacao
- * >>> nenhuma. <<<
+ * >>> O token de link NAO e o segredo PERMANENTE (a senha nunca sai, em
+ * codificacao nenhuma — SEC-14). E uma chave reutilizavel ate `revogar()`
+ * (rotacao do segredo / queda do tunel), e o `expiraEm` e `number | undefined`
+ * (esta implementacao nao impoe TTL). D3 adaptado: em vez do fragmento `#mk=`,
+ * o token vai na query `?key=` — o que a rota do portao (`src/http/gate.ts`)
+ * valida. NUNCA logar a URL composta com a chave. <<<
  */
 export function comporTextoLinkMagico(
   agoraMs: number,
   urlDoTunel: string,
-  mk: string,
-  expiraEm: number,
+  chave: string,
+  expiraEm: number | undefined,
 ): string {
-  const restante = formatarTempoRestante(expiraEm - agoraMs)
-  const link = `${urlDoTunel}${MAGIC_ROTA}#mk=${mk}`
+  const link = `${urlDoTunel}?key=${chave}`
+  const validade =
+    expiraEm === undefined
+      ? 'válido até você rotacionar'
+      : `válido até ${formatarTempoRestante(expiraEm - agoraMs)}`
   return comMarcador(
     ALERTA_LINK_MAGICO,
-    `Aceso pelo celular: ${link}\n` +
-      `O link é de uso único (expira em ${restante}) — depois de abrir, ` +
-      'a sessão continua válida neste navegador.',
+    `Seu link com a chave de acesso (abre e entra, sem senha):\n${link}\n` +
+      `É um link com a sua chave embutida — ${validade}; quem o abrir entra direto. ` +
+      'Nada de senha para digitar. Prefira apagá-lo do chat depois de usar.',
   )
 }
 

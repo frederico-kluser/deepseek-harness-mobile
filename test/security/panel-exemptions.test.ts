@@ -221,13 +221,14 @@ describe('PANEL-010 · a superficie isenta nao enumera nada', () => {
   /**
    * `doPainel` distingue o que ESTE ficheiro escreve do desafio 401, que vem de
    * `src/http/responses.ts` e e reutilizado de proposito para que o 401 do
-   * painel seja byte a byte o 401 do gate.
+   * painel seja byte a byte o 401 do gate (`denyUnauthorized`, texto puro sem
+   * desafio — modelo expose-port da Onda 1/2).
    *
    * ELE JA NAO E UMA ISENCAO. A versao anterior desta suite excluia o 401 da
    * asercao de `Referrer-Policy` porque a funcao partilhada nao o emitia, e
    * acrescenta-lo do lado do painel teria QUEBRADO a igualdade byte a byte --
    * que e uma propriedade de seguranca, nao arrumacao. A costura da Onda 3
-   * acrescentou o cabecalho na propria `challengeBasicAuth`, ou seja nos DOIS
+   * acrescentou o cabecalho na propria resposta partilhada, ou seja nos DOIS
    * lados ao mesmo tempo, e a exclusao caiu. O campo fica porque a distincao
    * "quem escreveu esta resposta" continua a ser util a leitura.
    */

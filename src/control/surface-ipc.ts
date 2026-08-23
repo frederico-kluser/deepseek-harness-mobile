@@ -26,17 +26,20 @@
  *   tunel PRIMEIRO (despacho `stop`) e so depois invalida as sessoes
  *   (`aposEmergencia`): "ordem tunel primeiro, sempre" (02-SEGURANCA L8).
  *
- * A COSTURA (item 5) fia `session.issue` e `secret.rotate`: o /acessar emite o
- * link magico REAL (MagicStore de T2.2 + rota de T3.4) e notifica por `notify`
- * (TG-085); o /rotacionar consome o nonce no HOST, regenera o segredo
- * (SECRET-008: sessoes invalidadas) e notifica SEM enviar a senha pelo chat.
- * Sem a magia/rotacao fiadas, os dois respondem `INTERNAL` — fail-closed.
+ * A COSTURA (item 5) fia `session.issue` e `secret.rotate`: o /acessar (e o
+ * auto-link do /ligar) emite a CHAVE NO LINK (`LinkTokenSurface.emitir`) e
+ * notifica o dono com `https://<url>?key=<token>` por `notify` (TG-085) — quem
+ * abre entra DIRETO, sem senha (modelo expose-port da Onda 1); o /rotacionar
+ * consome o nonce no HOST, regenera o segredo (SECRET-008: sessoes invalidadas)
+ * e revoga a chave no link, notificando SEM enviar a senha pelo chat. Sem a
+ * chave/rotacao fiadas, os dois respondem `INTERNAL` — fail-closed.
  */
 
 import type { AuditSink, SecretStore } from '../contracts/auth.ts'
 import type { ControlAction, ControlIntent, ControlRecusa, ControlResultado } from '../contracts/control.ts'
 import { comporTextoLinkMagico } from '../audit/notify.ts'
 import type { ConfirmServiceComVeredito } from './confirm.ts'
+import type { LinkTokenSurface } from '../contracts/link-token.ts'
 import type { MagicStore } from '../session/magic.ts'
 import type {
   IpcAckMessage,
@@ -91,8 +94,21 @@ export interface RespondedorIpcDeps {
   /**
    * O MagicStore (T2.2) do link magico. Usado pelo `session.issue` (/acessar).
    * AUSENTE: `session.issue` responde INTERNAL (o estado de antes da costura).
+   *
+   * >>> ONDA 2: com o modelo expose-port o accesso pelo tunel entra por
+   * SESSAO ou pela CHAVE NO LINK (`?key=<token>`, `src/session/link-token.ts`).
+   * O link do bot compoe `?key=<token>` via `emitir()` — NUNCA mais o `#mk=`
+   * nem a senha permanente. `magic` continua no contrato por compatibilidade,
+   * mas o `session.issue` usa `linkToken` quando presente. <<<
    */
   readonly magic?: MagicStore | undefined
+  /**
+   * O STORE da CHAVE NO LINK (onda 1, `src/contracts/link-token.ts`). Usado
+   * pelo `session.issue` (/acessar e auto-link) para compor `https://<url>?key=<token>`.
+   * A chave viaja UMA vez, no retorno de `emitir()`, e dali so para a URL que o
+   * dono recebe por `notify`. AUSENTE: `session.issue` responde INTERNAL.
+   */
+  readonly linkToken?: LinkTokenSurface | undefined
   /** `SecretStore.rotate` — o /rotacionar regenera o segredo e invalida sessoes. */
   readonly secretos?: Pick<SecretStore, 'rotate'> | undefined
   /** Envia um `notify` ao dono (o link magico / a instrucao local da rotacao). */
@@ -284,12 +300,16 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
         return ack(intent, 'noop', estadoAtual())
       }
       case 'session.issue': {
-        // Item 5 (costura): /acessar emite o link magico REAL e notifica o
-        // dono (TG-085). O `mk` viaja no FRAGMENTO da URL composta pelo host;
-        // a senha NUNCA sai por aqui. A resposta `accepted` e INVISIVEL no
-        // worker de proposito — o link chega por notify (A2/TG-085).
-        if (deps.magic === undefined || deps.notificarDono === undefined) {
-          log.warn(`intencao 'session.issue' sem magia fiada; respondida INTERNAL (fail-closed).`)
+        // Item 5 (costura) + ONDA 2 (expose-port): /acessar e o auto-link
+        // pedem o acesso por LINK COM A CHAVE EMBUTIDA. O host compoe
+        // `${url}?key=${token}` a partir do `LinkTokenSurface.emitir()` e
+        // notifica o dono — quem abre entra DIRETO, sem senha e sem prompt.
+        // O token e reutilizavel ate `revogar()` (rotacao do segredo) e sai
+        // UMA vez do `emitir()`; NUNCA e logado (a URL com a chave nunca vai
+        // ao log). A resposta `accepted` e INVISIVEL no worker de proposito —
+        // o link chega por notify (A2/TG-085).
+        if (deps.linkToken === undefined || deps.notificarDono === undefined) {
+          log.warn(`intencao 'session.issue' sem chave-fiada; respondida INTERNAL (fail-closed).`)
           return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
         }
         const snap = deps.controller?.snapshot()
@@ -298,8 +318,11 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
           // Sem tunel online nao ha painel para onde apontar o link.
           return erro(intent, 'INTERNAL', 'O tunel nao esta online; ligue-o antes de pedir o acesso.')
         }
-        const token = deps.magic.issue()
-        deps.notificarDono(comporTextoLinkMagico(deps.agora(), url, token.mk, token.expiraEm))
+        const emitido = deps.linkToken.emitir()
+        // A URL COMPOSTA pelo host, nunca por um log: o token sai 1x aqui,
+        // direto para o notify — o log so ve que a chave foi emitida, nunca o
+        // valor nem a URL com `?key=`.
+        deps.notificarDono(comporTextoLinkMagico(deps.agora(), url, emitido.token, emitido.expiraEm))
         return ack(intent, 'accepted', estadoAtual())
       }
       case 'secret.rotate': {
@@ -322,8 +345,9 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
         // proposito: nunca logado, nunca enviado (S3/Q-4).
         void deps.secretos.rotate()
         deps.notificarDono(
-          'Senha nova gerada: aparece apenas no terminal da maquina (ou em ' +
-            '/__guard/secret com o ott). As sessoes atuais foram invalidadas.',
+          'Chave de acesso nova gerada: a anterior foi revogada e as sessões ' +
+            'atuais invalidadas. O link novo que o bot enviar terá a chave ' +
+            'nova embutida — quem usar um link antigo não entra mais.',
         )
         return ack(intent, 'accepted', estadoAtual())
       }

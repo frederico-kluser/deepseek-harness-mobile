@@ -18,6 +18,7 @@ import { createConfirmService } from '../../../src/control/confirm.ts'
 import { createTunnelController } from '../../../src/control/controller.ts'
 import { criarRespondedorDeNonce, criarRespondedorIpc, resultadoDoAck } from '../../../src/control/surface-ipc.ts'
 import type { TunnelSupervisor } from '../../../src/tunnel/supervisor.ts'
+import { createLinkTokenStore } from '../../../src/session/link-token.ts'
 import { FakeScheduler } from '../../support/child-double.ts'
 import { FakeClock } from '../../support/clock.ts'
 import { createFakeLogger } from '../../support/ctx-double.ts'
@@ -724,5 +725,86 @@ describe('Frente 4 (Onda 6): emergency sem unhandled rejection', () => {
     assert.equal(resposta.type, 'ack')
     assert.equal((resposta as { result?: string }).result, 'accepted')
     assert.equal(servico.has('error', 'falha no /emergencia (sem tunel)'), true)
+  })
+})
+
+/* ========================================================================= */
+/* ONDA 2 (expose-port): session.issue compoe o link ?key= e o token nunca  */
+/* vai a log (S3)                                                            */
+/* ========================================================================= */
+
+describe('session.issue com linkToken (Onda 2): o link ?key= do bot', () => {
+  it('READY: compoe ?key= no notify, o token e reutilizavel e nunca vai a log (S3)', async () => {
+    const clock = new FakeClock(1_000)
+    const scheduler = new FakeScheduler()
+    const supervisor = new SupervisorDuble()
+    const servico = createFakeLogger()
+    const controlador = createTunnelController({
+      log: servico('ctl'),
+      supervisor,
+      confirm: createConfirmService({
+        now: () => clock.now(),
+        randomBytes: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+      }),
+      agora: () => clock.now(),
+      scheduler,
+      restritoAtivo: () => false,
+      segredoForte: () => true,
+      requerConfirmacao: true,
+      audit: { append: () => undefined },
+      broadcast: () => undefined,
+      persistirIntencao: () => undefined,
+    })
+    // Sobe ate READY (repasse a partir do start).
+    const nonce = controlador.emitirNonce('start')
+    await controlador.despachar({
+      action: 'start',
+      requestedBy: 'telegram:1',
+      requestId: 'ond2-up',
+      nonce: nonce.valor,
+      at: clock.now(),
+    })
+    supervisor.definirObservado({
+      state: 'READY',
+      info: { url: 'https://x.trycloudflare.com', startedAt: 1_000, mode: 'quick' },
+      attempts: 0,
+      expiresAt: 5_000,
+    })
+    scheduler.runLast()
+    assert.equal(controlador.snapshot().state, 'READY')
+
+    const notificacoes: string[] = []
+    const linkToken = createLinkTokenStore({
+      clock: { now: () => clock.now() },
+      randomBytes: () => Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+    })
+    const responder = criarRespondedorIpc({
+      controller: controlador,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: servico('ctl'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+      linkToken,
+      notificarDono: (texto) => void notificacoes.push(texto),
+    })
+
+    const resposta = responder(intent({ requestId: 'req-link-ond2b', intent: 'session.issue' }))
+    assert.equal(resposta.type, 'ack')
+    assert.equal((resposta as { result?: string }).result, 'accepted')
+    assert.equal(notificacoes.length, 1)
+    const texto = notificacoes[0] ?? ''
+    assert.match(texto, /alerta:link-magico/u)
+    assert.match(texto, /https:\/\/x\.trycloudflare\.com\?key=/u, 'o link do tunel com a chave na query')
+    assert.ok(!texto.includes('#mk='), 'o link usa ?key= e nao o fragmento #mk=')
+    const chave = /[?&]key=([A-Za-z2-7=]+)/u.exec(texto)?.[1]
+    assert.ok(chave !== undefined)
+    assert.equal(linkToken.verificar(chave), true, 'a chave e REUTILIZAVEL ate a rotacao')
+    // S3: o token de link NUNCA vai a log (a forma ?key= tambem nao).
+    const tudoLog = servico.entries.map((e) => e.message).join('\n')
+    assert.ok(!tudoLog.includes(chave), 'o token de link nao viaja para o log')
+    assert.ok(!tudoLog.includes('?key='), 'a forma ?key= nao aparece em nenhum log')
   })
 })
