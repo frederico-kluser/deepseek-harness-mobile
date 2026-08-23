@@ -1,20 +1,24 @@
 /**
  * PAINEL TELEGRAM — client half de UI para o DeepSeek Harness (dsh.client).
  *
- * Este ficheiro é a EVOLUÇÃO do spike da Onda 1: o botão `sidebar.footer.action`
- * (rodapé da sidebar) e a aba `settings.section` continuam, mas o conteúdo da
- * aba deixou de ser o placeholder e passou a ser UM PAINEL COMPLETO alimentado
- * pelos endpoints do backend half (`/__guard-ui/api/*`). Toda a lógica de
- * negócio/servidor continua no backend; o client é SÓ UI + fetch + CSRF.
+ * Este ficheiro é a EVOLUÇÃO do spike da Onda 1: o botão do rodapé da sidebar
+ * foi REMOVIDO (o utilizador prefere o acesso pelo modal de settings padrão) e
+ * o client passou a contribuir SÓ com a aba `settings.section` — um PAINEL
+ * COMPLETO alimentado pelos endpoints do backend half (`/__guard-ui/api/*`).
+ * Toda a lógica de negócio/servidor continua no backend; o client é SÓ UI +
+ * fetch + CSRF.
  *
- * O QUE O PAINEL MOSTRA (4 blocos):
+ * O QUE O PAINEL MOSTRA (5 blocos):
  *   1. Estado "configurado?" — chip (configurado / não configurado / env manda),
  *      consumindo `GET /token-state` + `GET /telegram`.
- *   2. Formulário de token — `type="password"` com toggle, `POST /token` com
+ *   2. "Como criar o bot" — cartão passo-a-passo do @BotFather, visível só no
+ *      estado NÃO configurado (antes do campo de token), para o utilizador saber
+ *      como gerar o token novo.
+ *   3. Formulário de token — `type="password"` com toggle, `POST /token` com
  *      CSRF, e os estados de resposta renderizados DENTRO da aba (nunca alert).
- *   3. Instruções + marcador do bot — cartão com passos copiáveis (`/parear
+ *   4. Instruções + marcador do bot — cartão com passos copiáveis (`/parear
  *      <código>` + comandos) e badge ONLINE/OFFLINE com `motivo`.
- *   4. Métricas de acesso — `GET /access`: KPIs (conexões ativas, sessões
+ *   5. Métricas de acesso — `GET /access`: KPIs (conexões ativas, sessões
  *      vivas), lista de sessões vivas (userAgent→device, tempos relativos, ip
  *      só quando `ipConfiavel`), refresh manual + automático a cada ~15s.
  *
@@ -311,6 +315,27 @@ const COMANDOS_DE_USO: readonly BlocoDeComando[] = [
 ]
 
 /* ========================================================================== */
+/* Os passos do @BotFather (cartão "Como criar o bot", só não-configurado)    */
+/* ========================================================================== */
+
+/**
+ * Como criar um bot novo via @BotFather, passo a passo. Mantido como dados
+ * planos (sem JSX) para o painel renderizar como uma lista numerada simples —
+ * o cartão aparece apenas quando NÃO há token configurado.
+ */
+const PASSOS_BOTFATHER: readonly string[] = [
+  'Abra o Telegram e converse com @BotFather.',
+  'Envie /newbot.',
+  'Dê um nome para o bot (ex.: "Meu dsh-messenger").',
+  'Dê um username que termine em `bot` (5–32 caracteres, A-Za-z0-9_, ex.: `meu_dsh_messenger_bot`).',
+  'O BotFather responde com um token no formato `<número>:<segredo>` — copie-o.',
+  'Cole o token no campo abaixo e clique em "Validar e configurar".',
+]
+
+/** Nota curta mostrada no fim do cartão do @BotFather. */
+const NOTA_BOTFATHER = 'Se precisar trocar o token depois, use /token no @BotFather para revogar e gerar outro.'
+
+/* ========================================================================== */
 /* Render helpers (React puro, sem JSX)                                       */
 /* ========================================================================== */
 
@@ -358,6 +383,21 @@ function LinhaDeComando({ bloco }: { readonly bloco: BlocoDeComando }): React.Re
     h('button', { type: 'button', className: 'guard-btn-sm', onClick: () => copiar(), 'data-guard-copy': '' },
       copiado ? 'copiado' : 'copiar'),
     bloco.dica ? h('span', { className: 'guard-muted' }, bloco.dica) : null,
+  )
+}
+
+/**
+ * O cartão "Como criar o bot" — passo-a-passo do @BotFather. Renderizado só no
+ * estado NÃO configurado, ANTES do campo de token, para o utilizador não
+ * precisar de procurar por fora como criar o bot.
+ */
+function CartaoBotFather(): React.ReactNode {
+  return h('div', { className: 'guard-card' },
+    h('span', { className: 'guard-card-title' }, 'Como criar o bot'),
+    h('ol', { className: 'guard-botfather-steps' },
+      PASSOS_BOTFATHER.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
+    ),
+    paragrafo('guard-botfather-note', NOTA_BOTFATHER),
   )
 }
 
@@ -543,6 +583,9 @@ function TelegramGuardSection(): React.ReactNode {
     paragrafo('guard-intro', 'Acesso remoto ao Harness pelo Telegram — sem login no túnel.'),
     tokenErro ? paragrafo('guard-error', tokenErro) : null,
 
+    // --- Cartão "Como criar o bot" (só quando NÃO configurado) -------------
+    !configurado ? h(CartaoBotFather) : null,
+
     // --- Formulário de token ----------------------------------------------
     h('div', { className: 'guard-card' },
       h('span', { className: 'guard-card-title' }, 'Chave do bot'),
@@ -662,105 +705,14 @@ function TelegramGuardSection(): React.ReactNode {
   )
 }
 
-/**
- * O botão que vai para `sidebar.footer.action` (junto ao botão de settings).
- * Props de dono do slot (ui-sidebar/contract/slots.ts): `{ wide: boolean }`.
- */
-function GuardBotSidebarAction(props: { wide: boolean }): React.ReactNode {
-  const { wide } = props
-  const icon = h('span', { 'aria-hidden': true, style: { fontSize: 16, lineHeight: 1 } }, '✈️')
-  return h('button', {
-    type: 'button',
-    title: 'Telegram Guard — abrir configurações',
-    'data-guard-bot-trigger': '',
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 8,
-      background: 'transparent',
-      border: 'none',
-      color: 'var(--dsw-alias-label-secondary)',
-      cursor: 'pointer',
-      padding: wide ? '6px 4px' : '6px',
-      width: '100%',
-      justifyContent: wide ? 'flex-start' : 'center',
-    },
-    onClick: () => {
-      openSettingsOnSection('telegram-guard')
-    },
-  }, icon, wide ? h('span', { style: { fontSize: 12 } }, 'Telegram') : null)
-}
-
-/* ========================================================================== */
-/* O affordance DOM — abrir o settings na aba do painel                       */
-/* ========================================================================== */
-
-/**
- * Abre o modal de settings já na aba `sectionId`. O open do modal é estado
- * local do `SettingsRoot` sem handle global; o caminho empírico (Onda 1) é
- * DOM affordance: clicar no trigger `button[aria-haspopup="dialog"]` visível
- * dentro do assento de settings do rodapé e depois no item do rail cujo texto
- * é o label da aba ('Telegram Guard'). Idempotente quanto à presença do modal.
- */
-function openSettingsOnSection(_sectionId: string): void {
-  const findSettingsTrigger = (): HTMLButtonElement | null => {
-    const scopes = [
-      [...document.querySelectorAll<HTMLElement>('[class*="_settingsArea"]')],
-      [...document.querySelectorAll<HTMLElement>('[class*="_footArea"]')],
-      [...document.querySelectorAll<HTMLElement>('[class*="_sidebarCol"], [class*="_sidebarContainer"]')],
-    ]
-    const visible = (el: HTMLElement): boolean =>
-      el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'
-    const firstVisible = (root: ParentNode): HTMLButtonElement | null => {
-      const buttons = root.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]')
-      return Array.from(buttons).find((b) => visible(b)) ?? null
-    }
-    for (const group of scopes) {
-      for (const el of group) {
-        const found = firstVisible(el)
-        if (found !== null) return found
-      }
-    }
-    return (
-      Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]')).find((b) =>
-        visible(b)) ?? null
-    )
-  }
-
-  const trigger = findSettingsTrigger()
-  if (trigger === null) return
-  const jaAberto = trigger.getAttribute('aria-expanded') === 'true'
-  if (!jaAberto) trigger.click()
-
-  const findNavItem = (): HTMLButtonElement | null => {
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
-    if (dialog === null) return null
-    const cells = dialog.querySelectorAll<HTMLButtonElement>('button')
-    return Array.from(cells).find((cell: HTMLButtonElement) => cell.textContent?.includes('Telegram Guard')) ?? null
-  }
-
-  let tentativas = 0
-  const tentarClicar = (): void => {
-    const cell = findNavItem()
-    if (cell !== null) {
-      cell.click()
-      return
-    }
-    if (tentativas < 12) {
-      tentativas += 1
-      window.requestAnimationFrame(tentarClicar)
-    }
-  }
-  tentarClicar()
-}
-
 /* ========================================================================== */
 /* apply — regista as contribuições e injeta o CSS                            */
 /* ========================================================================== */
 
 /**
- * Corpo do plugin client. Injeta o CSS do painel e regista as duas entradas
- * de slot.
+ * Corpo do plugin client. Injeta o CSS do painel e regista a ÚNICA entrada de
+ * slot: a aba `settings.section` "Telegram Guard" (acessível pelo rail do modal
+ * de settings padrão do shell).
  * @param ctx - contexto raiz Cordis do browser (injeta `slots`).
  */
 export function apply(ctx: {
@@ -773,19 +725,9 @@ export function apply(ctx: {
   // qualquer registo renderizar o cartão.
   asegurarCss(document)
 
-  // Botão no rodapé da sidebar (slot declarado pelo ui-sidebar).
-  ctx.slots.inject('sidebar.footer.action', () =>
-    ctx.slots.register(
-      {
-        name: 'sidebar.footer.action',
-        id: 'guard-bot-button',
-        order: 0,
-        registrant: 'dsh-guarded-bot-orchestrator',
-      },
-      GuardBotSidebarAction,
-    ),
-  )
-  // Aba nova no modal de settings (slot declarado pelo ui-settings).
+  // Aba no modal de settings (slot declarado pelo ui-settings). O botão do
+  // rodapé da sidebar (`sidebar.footer.action`) foi REMOVIDO — o acesso é pelo
+  // settings padrão do shell, que mostra esta aba no rail.
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       {

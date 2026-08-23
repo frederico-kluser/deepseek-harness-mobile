@@ -4,10 +4,11 @@
  *
  * O QUE ESTA SUITE PROVA (as perguntas falsificaveis):
  *  1. O bundle compilado registra-se no `window.__ModuleLoader__` do harness e
- *     o `apply(ctx)` com um `ctx.slots` stub regista os DOIS slots
- *     (`sidebar.footer.action`, `settings.section`) sem excecao — o smoke do
- *     docs/PANEL-TELEGRAM.md ("COMO TESTAR var-smoke headless"), agora num
- *     teste `test/unit/**` em vez do executavel ad-hoc.
+ *     o `apply(ctx)` com um `ctx.slots` stub regista SEM excecao o slot
+ *     `settings.section` (a aba "Telegram Guard") — o botao da sidebar
+ *     `sidebar.footer.action` foi REMOVIDO e NAO deve mais ser registado. O
+ *     smoke do docs/PANEL-TELEGRAM.md ("COMO TESTAR var-smoke headless"), agora
+ *     num teste `test/unit/**` em vez do executavel ad-hoc.
  *  2. A fonte de CSRF preferida do bundle e a GET `/csrf` (HIGH-2): o
  *     `buscarTokenCsrf()` chama `/__guard-ui/api/csrf` e usa o `token`
  *     devolvido — NAO o meta do chrome antigo.
@@ -17,6 +18,10 @@
  *     `csrfIndisponivel:true` (mensagem clara no painel).
  *  4. O `apiPost()` envia o token NOVO no header `x-dsh-csrf` — o fetch stub
  *     regista o header e a suite confirma que e o token/`csrf` recém-buscado.
+ *  5. O cartao "Como criar o bot" (@BotFather) faz parte do bundle: as strings
+ *     chave dos passos numerados e da nota constam no `lib/client.js` — como o
+ *     smoke nao renderiza React, a fidelidade do conteudo e verificada na
+ *     string compilada.
  *
  * EXECUCAO: precisa de `pnpm run build:client` ANTES (gera `lib/client.js`).
  * O `pnpm test` roda depois do gate `build:client`; se o ficheiro faltar, a
@@ -126,7 +131,7 @@ function carregarBundle(fetchStub: typeof fetch): Record<string, unknown> {
   return exportsDoModulo
 }
 
-test('smoke headless: o bundle exporta apply/inject e o apply registra os dois slots', { skip: BUNDLE_AUSENTE }, () => {
+test('smoke headless: o bundle exporta apply/inject e o apply regista SÓ settings.section', { skip: BUNDLE_AUSENTE }, () => {
   const { chamadas, fetchStub } = capturarFetch([])
   const modulo = carregarBundle(fetchStub)
   assert.equal(typeof modulo.apply, 'function')
@@ -148,8 +153,23 @@ test('smoke headless: o bundle exporta apply/inject e o apply registra os dois s
     },
   }
   ;(modulo.apply as (c: unknown) => void)(ctx)
-  assert.deepEqual(registrados.toSorted(), ['settings.section', 'sidebar.footer.action'])
+  assert.deepEqual(registrados.toSorted(), ['settings.section'], 'deve registar SÓ a aba settings.section (sem sidebar.footer.action)')
   void chamadas
+})
+
+test('bundle: o botão da sidebar foi removido e o cartão @BotFather está presente', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // O botão `sidebar.footer.action` não pode mais estar no bundle (removido).
+  assert.ok(!codigo.includes('sidebar.footer.action'), 'sidebar.footer.action deve ter sido removido do bundle')
+  assert.ok(!codigo.includes('guard-bot-button'), 'guard-bot-button não pode mais existir no bundle')
+
+  // O cartão "Como criar o bot" (@BotFather) tem de existir como conteúdo.
+  assert.ok(codigo.includes('Como criar o bot'), 'o bundle deve conter o título do cartão "Como criar o bot"')
+  assert.ok(codigo.includes('@BotFather'), 'o bundle deve referenciar o @BotFather')
+  assert.ok(codigo.includes('/newbot'), 'o bundle deve conter o passo /newbot')
+  assert.ok(codigo.includes('Validar e configurar'), 'o bundle deve conter o botão "Validar e configurar"')
+  assert.ok(codigo.includes('use /token no @BotFather'), 'o bundle deve conter a nota de revogação /token')
 })
 
 test('CSRF HIGH-2: buscarTokenCsrf busca /__guard-ui/api/csrf e usa o token novo', { skip: BUNDLE_AUSENTE }, async () => {

@@ -141,6 +141,37 @@
   gap: 2px;
 }
 
+/* ---------------------------------------------------------------------------
+ * Lista numerada do cartão "Como criar o bot" (@BotFather). Reaproveita o
+ * ritmo de .guard-steps (gap 8) mas como <ol> com numerais automáticos e
+ * indentação à esquerda para a numeração respirar.
+ * ---------------------------------------------------------------- */
+
+.guard-botfather-steps {
+  margin: 0;
+  padding: 0 0 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.guard-botfather-step {
+  margin: 0;
+}
+
+/* Nota curta no rodapé do cartão ("use /token para revogar…"). */
+.guard-botfather-note {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 8px;
+}
+
 /* Linha de comando copiável com botão ("copiar"). */
 .guard-cmd-row {
   display: flex;

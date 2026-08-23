@@ -9,13 +9,16 @@ com look-and-feel herdado dos ui-settings do harness (mesmos tokens `--dsw-*`).
 
 ## O QUE O PAINEL FAZ
 
-O botão **"✈️ Telegram"** (rodapé da sidebar, slot `sidebar.footer.action`)
-abre o settings já na aba **Telegram Guard** (slot `settings.section`). Essa aba
-mostra quatro blocos, todos a "falar" com o backend:
+O botão **"✈️ Telegram"** (rodapé da sidebar, slot `sidebar.footer.action`) foi
+**REMOVIDO** — o acesso ao painel agora é pelo **botão padrão de settings** do
+shell: o modal abre e a aba **Telegram Guard** (slot `settings.section`) aparece
+no rail. O client contribui SÓ com essa aba. Ela mostra cinco blocos, todos a
+"falar" com o backend:
 
 | Bloco | O que mostra | Endpoint |
 |------|--------------|----------|
 | **Estado "configurado?"** | Chip verde "Configurado (secrets)" / neutro "Não configurado" / laranja "Configurado via env" | `GET /token-state` + `GET /telegram` |
+| **Como criar o bot** | Cartão passo-a-passo do **@BotFather** (só quando NÃO configurado) com os passos numerados para criar o token novo, + nota de revogação `/token` | — (estático, só quando `configurado === false`) |
 | **Chave do bot** | Campo `type="password"` com toggle mostrar/ocultar e botão **"Validar e configurar"** (POST com CSRF, estados renderizados na própria aba) | `POST /token` |
 | **Instruções + marcador do bot** | Cartão com comandos copiáveis (`/parear <código>`, `/acessar`, `/ligar`, `/status`, `/rotacionar`, `/desligar`, `/emergencia`) e badge **Bot ONLINE / OFFLINE** com o `motivo` | `GET /telegram` (marcador) |
 | **Acesso agora** | KPIs **Conexões ativas** e **Sessões vivas** + lista de sessões vivas (userAgent→device, tempos relativos, `ip` quando confiável), aviso de "IP não confiável", botão **Atualizar** + refresh automático ~15s | `GET /access` |
@@ -37,6 +40,30 @@ Os dados são re-buscados:
 
 ---
 
+## COMO CRIAR O BOT (@BotFather) — fluxo no painel
+
+Quando **não há token configurado** (`configurado === false` e fonte `nenhum`),
+o painel mostra, ANTES do campo de token, um cartão **"Como criar o bot"** com
+os passos numerados:
+
+1. Abra o Telegram e converse com **@BotFather**.
+2. Envie **/newbot**.
+3. Dê um **nome** para o bot (ex.: "Meu dsh-messenger").
+4. Dê um **username** que termine em `bot` (5–32 caracteres, `A-Za-z0-9_`, ex.:
+   `meu_dsh_messenger_bot`).
+5. O BotFather responde com um **token** no formato `<número>:<segredo>` —
+   copie-o.
+6. Cole o token no campo e clique em **"Validar e configurar"**.
+
+Mais uma nota curta no rodapé do cartão: *"Se precisar trocar o token depois,
+use `/token` no @BotFather para revogar e gerar outro."*
+
+O cartão **desaparece** assim que o token é validado (o estado passa a
+configurado) — nessa altura o painel mostra o cartão **Instruções** (comandos) e
+o marcador do bot.
+
+---
+
 ## COMO TESTAR (runtime isolado)
 
 O mesmo runtime isolado do spike (Onda 1) serve o painel:
@@ -46,12 +73,16 @@ DSH_HOME=/home/ondokai/.dsh-guardbot  pnpm dsh cert   # se ainda não tiver
 # … start do harness com o profile web e o plugin carregado (ver SPIKE-CLIENT-SLOTS.md)
 ```
 
-1. Launch no harness → na sidebar, rodapé, clica em **✈️ Telegram**.
-2. O modal de settings abre na aba **Telegram Guard**.
-3. **Sem token**: chip "Não configurado"; "Chave do bot" aceita colar o token.
+1. Launch no harness → abre o settings pelo **botão padrão** do shell e escolhe
+   a aba **Telegram Guard** no rail.
+2. **Sem token**: chip "Não configurado"; antes do campo aparece o cartão
+   **"Como criar o bot"** com o fluxo do @BotFather.
+3. Segue os passos do @BotFather, cola o token no campo e clica
+   **"Validar e configurar"**.
 4. Cola um token inválido → erro inline **422** (confere no @BotFather).
-5. Cola um token válido → ok "Configurado ✓ @handle", chip fica verde, surge o
-   cartão **Instruções** com os comandos e o **marcador** do bot.
+5. Cola um token válido → ok "Configurado ✓ @handle", chip fica verde, o cartão
+   do @BotFather some e surge o cartão **Instruções** com os comandos e o
+   **marcador** do bot.
 6. Com a variável `TELEGRAM_BOT_TOKEN` definida → `POST /api/token` responde
    **409** `token-por-env` e o painel mostra o aviso com a instrução exata
    (o env manda — remova a variável ou use o token dela).
@@ -60,15 +91,18 @@ DSH_HOME=/home/ondokai/.dsh-guardbot  pnpm dsh cert   # se ainda não tiver
    Sem `trustEdgeHeaders` o IP aparece como tag **"IP não confiável"** e há um
    aviso discreto no cartão.
 
-### Smoke headless (registo não lança + CSRF novo)
+### Smoke headless (registo só settings.section + BotFather + CSRF novo)
 O bundle deve ser verificado a cada mudança com: `pnpm run build:client` e o
 teste `test/unit/client/index.test.ts` (roda em `pnpm test`). Ele carrega
 `lib/client.js` num sandbox com `window.__ModuleLoader__` esticado, chama
-`apply(ctx)` com um `ctx.slots` stub e confirma que os dois slots
-(`sidebar.footer.action`, `settings.section`) registam sem exceção — E cobre o
-CSRF novo (HIGH-2): o `buscarTokenCsrf` busca `GET /__guard-ui/api/csrf` no
-fetch stub, o fallback ao meta do chrome antigo funciona, e o `apiPost` envia o
-token **novo** no header `x-dsh-csrf`.
+`apply(ctx)` com um `ctx.slots` stub e confirma que regista **só**
+`settings.section` (o `sidebar.footer.action` foi removido e não deve mais
+aparecer) — E cobre o CSRF novo (HIGH-2): o `buscarTokenCsrf` busca
+`GET /__guard-ui/api/csrf` no fetch stub, o fallback ao meta do chrome antigo
+funciona, e o `apiPost` envia o token **novo** no header `x-dsh-csrf`. Um teste
+de bundle verifica ainda que o cartão "Como criar o bot" (@BotFather, `/newbot`,
+"Validar e configurar", nota `/token`) está presente e que o
+`sidebar.footer.action`/`guard-bot-button` não estão no bundle.
 
 ### Instalação por git roda o `prepare` (HIGH-1)
 `package.json` ganhou `"prepare": "pnpm run build:all"` — qualquer
