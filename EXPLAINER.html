@@ -144,7 +144,7 @@
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
     <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator-agent-skill <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.2.0-reshape · 2026-08-23</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">vdsh-guarded-bot-orchestrator 0.1.x · 2026-08-23</span>
   </div>
 </nav>
 
@@ -153,9 +153,9 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Reconstrução conforme a visão do dono: botão Telegram offline/online na UI; /ligar envia automaticamente o link de acesso com a credencial embutida (#mk=, uso único); docs do novo modelo de ameaça</p>
+    <p class="lead text-white-50 mb-3">Remoção total de login/senha: local abre direto; túnel só com a chave do link ?key= enviado pelo bot do Telegram (modelo expose-port); 401 texto puro sem desafio; /rotacionar revoga chave e sessões</p>
     <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">v0.2.0-reshape</span>
+      <span class="badge badge-accent">vdsh-guarded-bot-orchestrator 0.1.x</span>
       <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-23</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
@@ -213,7 +213,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Reconstrução conforme a visão do dono: botão Telegram offline/online na UI; /ligar envia automaticamente o link de acesso com a credencial embutida (#mk=, uso único); docs do novo modelo de ameaça</p>
+      <p class="text-body-secondary">Remoção total de login/senha: local abre direto; túnel só com a chave do link ?key= enviado pelo bot do Telegram (modelo expose-port); 401 texto puro sem desafio; /rotacionar revoga chave e sessões</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">3</div>
+              <div class="display-6 fw-bold stat-value">4</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -243,7 +243,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">3</div>
+              <div class="display-6 fw-bold stat-value">5</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -254,7 +254,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders 0.2.0-reshape, 2026-08-23, main, ...</code></pre>
+# Ou preenche manualmente os placeholders dsh-guarded-bot-orchestrator 0.1.x, 2026-08-23, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -292,9 +292,13 @@
       <h2 class="h4 pane-title">Ondas executadas</h2>
       <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
-<tr><td>1</td><td>onda1-envia-link-autenticado</td><td>/ligar → túnel READY → bot envia automaticamente o link com <code>#mk=</code> (senha embutida no path)</td><td>worker/commands/router.ts, onoff.ts, src/audit/notify.ts</td><td>✅</td></tr>
-<tr><td>1</td><td>onda2-botao-telegram-ui</td><td>Botão Telegram offline/online na UI, fiel ao runtime, sem vazar segredo</td><td>src/ui-contrib/*, src/index.ts, src/proc/worker.ts</td><td>✅</td></tr>
-<tr><td>2</td><td>onda2-docs-modelo</td><td>Novo modelo de ameaça (senha permanente local; link de uso único viaja) + docs de UX</td><td>README, docs/*</td><td>✅</td></tr>
+<table>
+<tr><th>Onda</th><th>Worktree</th><th>Escopo</th><th>Squash</th><th>Status</th></tr>
+<tr><td>1</td><td>onda1-gate-sem-login</td><td>Gate sem login: local aberto; túnel só com ?key= (proxy dedicado, 401 texto puro sem desafio); link-token store; /rotacionar revoga</td><td>4b6e45b + a12c42d</td><td>MERGED ✅</td></tr>
+<tr><td>2</td><td>onda2-fix-lint</td><td>Lint 0 erros (src/config) + typecheck telegramState nos testes</td><td>13bb1f3</td><td>MERGED ✅</td></tr>
+<tr><td>2</td><td>onda2-link-no-bot</td><td>Bot entrega link ?key=; painel sem desafio; /rotacionar revoga chave+sessões</td><td>d6e8750</td><td>MERGED ✅</td></tr>
+<tr><td>2</td><td>onda2-docs-sem-login</td><td>Docs do modelo: THREAT-MODEL, INSTALL, ONBOARDING-TELEGRAM, manual-runs/M5</td><td>82203ea</td><td>MERGED ✅</td></tr>
+</table>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
       <div class="d-flex flex-wrap gap-2">
@@ -310,34 +314,32 @@
       <h2 class="h4 pane-title">Arquivos modificados</h2>
       <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
-<tr><td>worker/commands/router.ts</td><td>autolink chaveado por requestId: no /ligar→READY dispara session.issue (1x); defesa terminal</td></tr>
-<tr><td>worker/commands/onoff.ts</td><td>/ligar anuncia o link; /desligar sem reenvio</td></tr>
-<tr><td>src/audit/notify.ts</td><td>texto do link de uso único (#mk=, TTL 120s, sessão via cookie)</td></tr>
-<tr><td>src/ui-contrib/telegram-state.ts</td><td>(novo) estado offline/online por token+pareamento</td></tr>
-<tr><td>src/ui-contrib/routes|surface|html</td><td>rotas /__guard-ui/api/telegram (+click) com CSRF; botão e instruções</td></tr>
-<tr><td>src/index.ts</td><td>resolvedor único de token (config.worker.token OU secrets.env) na UI e no spawn do worker</td></tr>
-<tr><td>src/proc/worker.ts</td><td>override de token no env do worker</td></tr>
+<table>
+<tr><th>Arquivo</th><th>Tipo</th><th>O que muda</th></tr>
+<tr><td>src/tunnel/proxy.ts</td><td>novo</td><td>Proxy dedicado do túnel: SEMPRE exige sessão/?key=, 401 texto puro sem WWW-Authenticate</td></tr>
+<tr><td>src/session/link-token.ts</td><td>novo</td><td>Store do token de link (256 bits, reutilizável até /rotacionar)</td></tr>
+<tr><td>src/contracts/link-token.ts</td><td>novo</td><td>LinkTokenSurface — contrato da superfície para o bot e UI</td></tr>
+<tr><td>src/http/gate.ts</td><td>editado</td><td>Acesso local fica aberto; o proxy é o guarda do túnel</td></tr>
+<tr><td>src/http/responses.ts</td><td>editado</td><td>denyUnauthorized — 401 texto puro, NUNCA desafia (sem WWW-Authenticate)</td></tr>
+<tr><td>src/index.ts</td><td>editado</td><td>Costura: resolveOrigin → proxy do túnel; rotate revoga token+sessões</td></tr>
+<tr><td>src/control/surface-ipc.ts</td><td>editado</td><td>/ligar emite link ?key= (sessão) para o bot enviar</td></tr>
+<tr><td>src/audit/notify.ts</td><td>editado</td><td>Texto do link mágico ?key= (sem #mk, sem senha)</td></tr>
+<tr><td>src/panel/routes.ts</td><td>editado</td><td>Painel alinhado: denyUnauthorized, nunca pede senha</td></tr>
+<tr><td>worker/commands/{access,onoff,router}.ts</td><td>editado</td><td>Textos /ligar /desligar /acessar com URL autenticada ?key=</td></tr>
+<tr><td>src/config/{bind,assert}.ts</td><td>editado</td><td>Fix lint (prefixo _everyBindHostIsCovered, {cause:error})</td></tr>
+<tr><td>docs/*, README.md, examples/minimal</td><td>editado</td><td>Modelo documentado: sem login; local abre; túnel ?key=; 401 sem desafio</td></tr>
+</table>
 
       <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
-      <!-- COMMITS_LIST begin (não preenchido — conteúdo demo do template) -->
-      <ul class="list-group list-group-flush">
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">a1b2c3d</span>
-          <div><strong>Onda 1:</strong> scripts de busca Brave e verificação de créditos + prompts ECC e de busca</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">e4f5g6h</span>
-          <div><strong>Onda 2:</strong> templates/html-explainer.html + SKILL.md atualizado</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">i7j8k9l</span>
-          <div><strong>Onda 3:</strong> README.md — documentação final</div>
-        </li>
-      </ul>
-      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — hashes fictícios, substituídos na geração.</p>
-      <!-- COMMITS_LIST end (não preenchido — conteúdo demo do template) -->
+<ul>
+<li><code>4b6e45b</code> — onda1-gate-sem-login: sem login (gate, proxy dedicado, rotate revoga)</li>
+<li><code>13bb1f3</code> — onda2-fix-lint: lint 0 erros + typecheck telegramState</li>
+<li><code>d6e8750</code> — onda2-link-no-bot: link ?key= no bot; painel sem desafio</li>
+<li><code>82203ea</code> — onda2-docs-sem-login: docs do modelo sem-login</li>
+<li><code>a12c42d</code> — onda1 final: reposição de conflito resolvida na filha (JSDoc + void listeners)</li>
+</ul>
     </div>
 
     <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
@@ -346,91 +348,35 @@
       <h2 class="h4 pane-title">De-Para: o que mudou</h2>
       <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
 
-      <!-- BEFORE_AFTER begin (não preenchido — conteúdo demo do template) -->
-      <!-- Cards Antes/Depois e seções de de-para adicionais geradas
-           dinamicamente entram aqui (substituídos na geração). -->
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
-            <div class="card-body">
-              <p class="card-text text-body-secondary">Estado inicial — descrição genérica, substituída na geração.</p>
-              <ul class="list-unstyled mb-0 d-grid gap-2">
-                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Item representativo do estado inicial</li>
-                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Segundo item representativo</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
-            <div class="card-body">
-              <p class="card-text text-body-secondary">Estado final — descrição genérica, substituída na geração.</p>
-              <ul class="list-unstyled mb-0 d-grid gap-2">
-                <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Item representativo do estado final</li>
-                <li><i class="bi bi-file-earmark-code me-2 text-body-secondary"></i>Segundo item representativo</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos dados reais.</p>
-      <!-- BEFORE_AFTER end (não preenchido — conteúdo demo do template) -->
+<div class="grid2">
+<div><h4>Antes</h4><ul>
+<li>Gate exigia login/senha com desafio WWW-Authenticate (popup do navegador)</li>
+<li>Link do bot usava #mk sem chave embutida; painel ainda desafiava auth básica</li>
+<li>Túnel abria por Host header — 403/401 por heurística</li>
+</ul></div>
+<div><h4>Depois</h4><ul>
+<li>LOCAL (loopback): abre direto, sem nunca pedir credencial</li>
+<li>TÚNEL: só abre com a chave NO LINK — bot envia URL ?key=&lt;token&gt; (modelo expose-port)</li>
+<li>Sem chave/sessão → 401 texto puro, SEM desafio; /rotacionar revoga token e sessões</li>
+</ul></div>
+</div>
 
       <h2 class="h4 pane-title">Impacto</h2>
       <p>O que cada mudança significa para quem usa o deep-orchestrator-agent-skill:</p>
-      <!-- IMPACT begin (não preenchido — conteúdo demo do template) -->
-      <div class="list-group list-group-flush mb-4">
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Impacto 1</strong> — descrição genérica, substituída na geração.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Impacto 2</strong> — descrição genérica, substituída na geração.</div>
-        </div>
-        <div class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Impacto 3</strong> — descrição genérica, substituída na geração.</div>
-        </div>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos impactos reais.</p>
-      <!-- IMPACT end (não preenchido — conteúdo demo do template) -->
+<ul>
+<li>Acesso local sem atrito: nenhuma credencial em lugar nenhum</li>
+<li>Túnel autenticado por posse do link (expose-port) — mesma UX já conhecida</li>
+<li>401 uniforme (gate, túnel e painel partilham denyUnauthorized) — sem vetor de popup/login</li>
+<li>Chave de link rotacionável sem senha permanente em claro</li>
+</ul>
 
       <h2 class="h4 pane-title">Novas capacidades</h2>
-      <!-- CAPABILITIES begin (não preenchido — conteúdo demo do template) -->
-      <div class="row g-3">
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 1</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 2</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 3</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas capacidades reais.</p>
-      <!-- CAPABILITIES end (não preenchido — conteúdo demo do template) -->
+<ul>
+<li>Botão Telegram offline/online na UI do DSH com estado fiel ao runtime</li>
+<li>Ações /ligar /desligar /acessar no bot do Telegram</li>
+<li>/ligar entrega URL autenticada ?key= no Telegram — um toque abre</li>
+<li>401 texto puro sem desafio em TODAS as superfícies</li>
+</ul>
     </div>
 
     <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
@@ -439,31 +385,12 @@
       <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
-      <!-- DECISIONS begin (não preenchido — conteúdo demo do template) -->
-      <ul class="list-group list-group-flush">
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Onda 1 unificada:</strong> scripts e prompts criados na mesma onda, por não haver dependência entre eles.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Onda 2 em paralelo:</strong> templates/ (explainer) e SKILL.md (update) não se tocam — duas worktrees na mesma onda.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Shell em vez de Python:</strong> scripts sem dependência de runtime no host.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>HTML de arquivo único:</strong> CDN + zero build — o EXPLAINER.html abre por file://, sem servidor.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Placeholders (...) em vez de template engine:</strong> substituição simples de string na geração.</div>
-        </li>
-      </ul>
-      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas decisões reais da execução.</p>
-      <!-- DECISIONS end (não preenchido — conteúdo demo do template) -->
+<ul>
+<li>Decisão do dono (fixa): NUNCA pedir login/senha — nem prompt, formulário ou WWW-Authenticate</li>
+<li>Modelo expose-port: a chave viaja no link que o bot envia; sem chave → 401</li>
+<li>Token de link 256 bits reutilizável até /rotacionar (nunca a senha permanente em claro)</li>
+<li>challengeBasicAuth permanece VIVO (src/panel/routes.ts ainda o usa) — documentado, não removido</li>
+</ul>
     </div>
 
     <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
@@ -472,45 +399,20 @@
       <h2 class="h4 pane-title">Linha do tempo da execução</h2>
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
-      <!-- TIMELINE begin (não preenchido — conteúdo demo do template) -->
-      <ol class="timeline list-unstyled mb-0">
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Fase 1</span>
-            <strong>ANALYZE</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Leitura do prompt, mapeamento do repositório, classificação greenfield/brownfield.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Fase 2</span>
-            <strong>PLAN</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Decomposição em sub-tarefas atômicas, ondas topológicas, mapa de propriedade de arquivos, TASK_PLAN.md publicado.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">Fase 3</span>
-            <strong>EXECUTE-ONDA</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Onda 1 — scripts + prompts · Onda 2 — templates/ + SKILL.md. Worktrees nomeadas, barreira, revisão adversarial, squash-merge com gate, limpeza.</p>
-        </li>
-        <li class="timeline-item">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-ok">Fase 4</span>
-            <strong>COMMIT-FINAL</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">TASK_PLAN.md removido, gate completo, commit final, varredura de limpeza, EXPLAINER.html gerado (este documento).</p>
-        </li>
-      </ol>
-      <p class="text-body-secondary small mt-3">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pela timeline real da execução.</p>
-      <!-- TIMELINE end (não preenchido — conteúdo demo do template) -->
+<ol>
+<li>FASE 0: contexto resolvido (BASE_DIR, BRANCH_NS, SKILL_HOME) — run-20260823-014145</li>
+<li>Onda 1: gate sem login via squash 4b6e45b integrado; revisão adversarial detectou 401-texto-único</li>
+<li>Onda 2 (paralela): fix-lint, link-no-bot, docs — 3 squashes sequenciais</li>
+<li>Conflito no re-merge da onda 1 (add/add do proxy + JSDoc): resolvido NA filha em b9152b8, re-merged → a12c42d</li>
+<li>Gate final em main: build ✅ lint 0 erros ✅ testes 1837/0 ✅</li>
+<li>Sweep: 5 worktrees removidas, 0 branches restantes</li>
+</ol>
     </div>
 
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator-agent-skill</strong> v0.2.0-reshape · 2026-08-23 · branch main.
+    Gerado por <strong>deep-orchestrator-agent-skill</strong> vdsh-guarded-bot-orchestrator 0.1.x · 2026-08-23 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
