@@ -6,3 +6,4 @@ dist/
 .deep-orchestrator/
 state.json
 secrets.env
+*.tgz
