@@ -7,7 +7,7 @@
 <!-- Diz ao navegador que a página é escura ANTES do CSS carregar: sem flash
      branco, e os controles nativos (scrollbar, select, input) já nascem escuros. -->
 <meta name="color-scheme" content="dark">
-<title>EXPLAINER — deep-orchestrator · de-para da execução</title>
+<title>EXPLAINER — deep-orchestrator-agent-skill · de-para da execução</title>
 
 <link rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
@@ -23,7 +23,7 @@
       crossorigin="anonymous">
 
 <style>
-  /* ── Paleta do deep-orchestrator ──────────────────────────────────────────
+  /* ── Paleta do deep-orchestrator-agent-skill ──────────────────────────────────────────
      Fundo #1a1a2e, accent #00d4ff (ciano), sucesso #00ff88, warning #ffaa00.
      Tudo deriva destas variáveis — não cravamos hex no conteúdo. */
   :root {
@@ -143,8 +143,8 @@
 
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
-    <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.1.0 · 2026-08-22</span>
+    <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator-agent-skill <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">v0.2.0-reshape · 2026-08-23</span>
   </div>
 </nav>
 
@@ -153,10 +153,10 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Instalacao e teste do plugin dsh-guarded-bot-orchestrator num DSH real (isolado), fix do boot sem token do Telegram (contrato INSTALL.md/cordis.patch.yml), registro de corrida em docs/manual-runs/</p>
+    <p class="lead text-white-50 mb-3">Reconstrução conforme a visão do dono: botão Telegram offline/online na UI; /ligar envia automaticamente o link de acesso com a credencial embutida (#mk=, uso único); docs do novo modelo de ameaça</p>
     <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">v0.1.0</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-22</span>
+      <span class="badge badge-accent">v0.2.0-reshape</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-23</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
   </header>
@@ -213,11 +213,11 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Instalacao e teste do plugin dsh-guarded-bot-orchestrator num DSH real (isolado), fix do boot sem token do Telegram (contrato INSTALL.md/cordis.patch.yml), registro de corrida em docs/manual-runs/</p>
+      <p class="text-body-secondary">Reconstrução conforme a visão do dono: botão Telegram offline/online na UI; /ligar envia automaticamente o link de acesso com a credencial embutida (#mk=, uso único); docs do novo modelo de ameaça</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
-        <div><strong>O que é este documento:</strong> o EXPLAINER gerado pelo deep-orchestrator na fase COMMIT-FINAL, ao fim de cada execução. Mostra o de-para (antes/depois) de tudo que foi feito: ondas, worktrees, arquivos modificados, decisões autônomas e timeline.</div>
+        <div><strong>O que é este documento:</strong> o EXPLAINER gerado pelo deep-orchestrator-agent-skill na fase COMMIT-FINAL, ao fim de cada execução. Mostra o de-para (antes/depois) de tudo que foi feito: ondas, worktrees, arquivos modificados, decisões autônomas e timeline.</div>
       </div>
 
       <div class="row g-3">
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">2</div>
+              <div class="display-6 fw-bold stat-value">3</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -254,7 +254,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders 0.1.0, 2026-08-22, main, ...</code></pre>
+# Ou preenche manualmente os placeholders 0.2.0-reshape, 2026-08-23, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -292,11 +292,9 @@
       <h2 class="h4 pane-title">Ondas executadas</h2>
       <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
-<table>
-<tr><th>Onda</th><th>Worktree</th><th>Tarefa</th><th>Entrega</th><th>Status</th></tr>
-<tr><td>1</td><td>onda1-instalacao-teste</td><td>Instalar e testar o plugin num DSH isolado</td><td>docs/manual-runs/2026-08-22-instalacao-teste.md (registro da corrida)</td><td>Merged df1a3b9 + gate verde-em-diff</td></tr>
-<tr><td>2</td><td>onda2-fix-boot-tokenless</td><td>Fix boot sem token do Telegram (contrato cordis.patch.yml)</td><td>src/config/assert.ts, src/index.ts, +4 testes</td><td>Merged 301fdc8 + gate + boot tokenless validado</td></tr>
-</table>
+<tr><td>1</td><td>onda1-envia-link-autenticado</td><td>/ligar → túnel READY → bot envia automaticamente o link com <code>#mk=</code> (senha embutida no path)</td><td>worker/commands/router.ts, onoff.ts, src/audit/notify.ts</td><td>✅</td></tr>
+<tr><td>1</td><td>onda2-botao-telegram-ui</td><td>Botão Telegram offline/online na UI, fiel ao runtime, sem vazar segredo</td><td>src/ui-contrib/*, src/index.ts, src/proc/worker.ts</td><td>✅</td></tr>
+<tr><td>2</td><td>onda2-docs-modelo</td><td>Novo modelo de ameaça (senha permanente local; link de uso único viaja) + docs de UX</td><td>README, docs/*</td><td>✅</td></tr>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
       <div class="d-flex flex-wrap gap-2">
@@ -312,23 +310,34 @@
       <h2 class="h4 pane-title">Arquivos modificados</h2>
       <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
-<table>
-<tr><th>Arquivo</th><th>Mudança</th><th>Onda</th></tr>
-<tr><td>docs/manual-runs/2026-08-22-instalacao-teste.md</td><td>Novo — registro da corrida de instalação e teste (210 linhas)</td><td>1</td></tr>
-<tr><td>src/config/assert.ts</td><td>Validacão de worker.token: vazio/ausente válido; não-string continua a falhar loud</td><td>2</td></tr>
-<tr><td>src/index.ts</td><td>Guarda de boot no efeito do worker: sem token → linha "telegram: não configurado — rode /parear &lt;código&gt; no bot" + disposer no-op, sem spawn</td><td>2</td></tr>
-<tr><td>test/unit/config/assert.test.ts</td><td>+3 testes (token vazio válido / ausente válido / não-string recusado)</td><td>2</td></tr>
-<tr><td>test/unit/index.test.ts</td><td>+1 teste (boot tokenless: sem worker, 5 efeitos, linha emitida, disposer síncrono)</td><td>2</td></tr>
-</table>
+<tr><td>worker/commands/router.ts</td><td>autolink chaveado por requestId: no /ligar→READY dispara session.issue (1x); defesa terminal</td></tr>
+<tr><td>worker/commands/onoff.ts</td><td>/ligar anuncia o link; /desligar sem reenvio</td></tr>
+<tr><td>src/audit/notify.ts</td><td>texto do link de uso único (#mk=, TTL 120s, sessão via cookie)</td></tr>
+<tr><td>src/ui-contrib/telegram-state.ts</td><td>(novo) estado offline/online por token+pareamento</td></tr>
+<tr><td>src/ui-contrib/routes|surface|html</td><td>rotas /__guard-ui/api/telegram (+click) com CSRF; botão e instruções</td></tr>
+<tr><td>src/index.ts</td><td>resolvedor único de token (config.worker.token OU secrets.env) na UI e no spawn do worker</td></tr>
+<tr><td>src/proc/worker.ts</td><td>override de token no env do worker</td></tr>
 
       <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
-<ul>
-<li><code>df1a3b9</code> — onda1-instalacao-teste: registro da corrida de instalacao e teste do plugin</li>
-<li><code>301fdc8</code> — onda2-fix-boot-tokenless: boot sem token do Telegram (contrato cordis.patch.yml); guarda de boot no worker; +4 testes</li>
-<li><code>final</code> — EXPLAINER.html desta execução</li>
-</ul>
+      <!-- COMMITS_LIST begin (não preenchido — conteúdo demo do template) -->
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">a1b2c3d</span>
+          <div><strong>Onda 1:</strong> scripts de busca Brave e verificação de créditos + prompts ECC e de busca</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">e4f5g6h</span>
+          <div><strong>Onda 2:</strong> templates/html-explainer.html + SKILL.md atualizado</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">i7j8k9l</span>
+          <div><strong>Onda 3:</strong> README.md — documentação final</div>
+        </li>
+      </ul>
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — hashes fictícios, substituídos na geração.</p>
+      <!-- COMMITS_LIST end (não preenchido — conteúdo demo do template) -->
     </div>
 
     <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
@@ -337,15 +346,40 @@
       <h2 class="h4 pane-title">De-Para: o que mudou</h2>
       <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
 
-<table>
-<tr><th>Arquivo</th><th>Antes</th><th>Depois</th></tr>
-<tr><td>src/config/assert.ts</td><td><code>assertNonEmptyString(config.worker.token, 'worker.token')</code> — token vazio/ausente derrubava o arranque, contradizendo o contrato (INSTALL.md: Telegram é opcional)</td><td>Valida tipo apenas quando presente; '' / undefined = "telegram não configurado" (estado legítimo); não-string continua erro de config</td></tr>
-<tr><td>src/index.ts (efeito do worker)</td><td>Supervisor do worker criado e startado incondicionalmente</td><td>Guard <code>if (!config.worker.token)</code> → loga "telegram: não configurado — rode /parear &lt;código&gt; no bot" e devolve disposer no-op síncrono; com token, caminho inalterado</td></tr>
-<tr><td>docs/manual-runs/2026-08-22-instalacao-teste.md</td><td>Não existia</td><td>Registro da corrida de instalação/teste: gate local, examples/minimal, instalação isolada, barreira 401, bind recusado, teardown e achados</td></tr>
-</table>
+      <!-- BEFORE_AFTER begin (não preenchido — conteúdo demo do template) -->
+      <!-- Cards Antes/Depois e seções de de-para adicionais geradas
+           dinamicamente entram aqui (substituídos na geração). -->
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <p class="card-text text-body-secondary">Estado inicial — descrição genérica, substituída na geração.</p>
+              <ul class="list-unstyled mb-0 d-grid gap-2">
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Item representativo do estado inicial</li>
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Segundo item representativo</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <p class="card-text text-body-secondary">Estado final — descrição genérica, substituída na geração.</p>
+              <ul class="list-unstyled mb-0 d-grid gap-2">
+                <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Item representativo do estado final</li>
+                <li><i class="bi bi-file-earmark-code me-2 text-body-secondary"></i>Segundo item representativo</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos dados reais.</p>
+      <!-- BEFORE_AFTER end (não preenchido — conteúdo demo do template) -->
 
       <h2 class="h4 pane-title">Impacto</h2>
-      <p>O que cada mudança significa para quem usa o deep-orchestrator:</p>
+      <p>O que cada mudança significa para quem usa o deep-orchestrator-agent-skill:</p>
       <!-- IMPACT begin (não preenchido — conteúdo demo do template) -->
       <div class="list-group list-group-flush mb-4">
         <div class="list-group-item d-flex gap-3 align-items-start">
@@ -405,16 +439,31 @@
       <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
-<ul>
-<li><strong>J1 (gate)</strong> — as 22 falhas locais (16-9 por execução, variância ambiental) são AMBIENTE (root contorna chmod 000; macOS sem /proc; timing): pré-existentes em main; as diffs são um .md e um fix com testes — verde-em-diff / vermelho-ambiente documentado.</li>
-<li><strong>D2</strong> — Onda 1 (apenas doc): testing e validation subwaves NO-OP; gate completo no COMMIT-FINAL.</li>
-<li><strong>D3</strong> — Onda 2 (fix com testes + aceitação real no próprio agente): subwaves dobradas — a validação pós-merge foi o re-boot tokenless no snapshot de integração + gate em snapshot.</li>
-<li><strong>PREMISSA-1</strong> — instalação/teste em DSH_HOME ISOLADO dentro das worktrees; o profile live (~/.dsh/profiles/web) e o servidor 3080 não foram tocados (a sessão roda nele).</li>
-<li><strong>PREMISSA-2</strong> — o CLI do DSH foi executado (somente leitura) do artefato compilado do checkout-fonte; git status dele limpo no início e no fim (provado em cada onda).</li>
-<li><strong>LINHA-RC.2</strong> — o teste validou o plugin por FORMA de serviço na linha que esta máquina roda (0.1.1-rc.2, uma rc além da faixa suportada rc.7..rc.1): boot OK, barreira 401, bind recusado. Documentado; sem incompatibilidade observada.</li>
-<li><strong>ACHADO (host)</strong> — o LoggerService do cordis@4.0.1 bufferiza as linhas [guarded-bot]; a visibilidade no terminal depende de console-export que o host default não tem (afeta todas as linhas do plugin e as do host web). Fora do escopo.</li>
-<li><strong>HYGIENE (tipo)</strong> — src/config/schema.ts:154 declara token: string obrigatório a nível de tipo; semanticamente virou opcional. Runtime correto (schema type-only); anotação fica como pendência de higiene, não bloqueia.</li>
-</ul>
+      <!-- DECISIONS begin (não preenchido — conteúdo demo do template) -->
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Onda 1 unificada:</strong> scripts e prompts criados na mesma onda, por não haver dependência entre eles.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Onda 2 em paralelo:</strong> templates/ (explainer) e SKILL.md (update) não se tocam — duas worktrees na mesma onda.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Shell em vez de Python:</strong> scripts sem dependência de runtime no host.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>HTML de arquivo único:</strong> CDN + zero build — o EXPLAINER.html abre por file://, sem servidor.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Placeholders (...) em vez de template engine:</strong> substituição simples de string na geração.</div>
+        </li>
+      </ul>
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas decisões reais da execução.</p>
+      <!-- DECISIONS end (não preenchido — conteúdo demo do template) -->
     </div>
 
     <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
@@ -423,19 +472,45 @@
       <h2 class="h4 pane-title">Linha do tempo da execução</h2>
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
-<ol>
-<li>FASE 0 — fronteira resolvida (repo do plugin, MODE=normal, branch main).</li>
-<li>Análise: DSH real da máquina (0.1.1-rc.2, source build), CLI compilado, bundles resolvidos do fonte, profile live intocado.</li>
-<li>Onda 1 — build + suítes + examples/minimal (ACEITE OK) + instalação isolada + barreira HTTP/WS + bind; achado: boot tokenless quebrado (assert.ts:404). Registro aprovado em revisão adversarial.</li>
-<li>Onda 2 — fix cirúrgico (assert + guard de worker + 4 testes), revisado (APPROVE), mergeado; re-boot tokenless no estado integrado: 401 sem credencial, sem worker, teardown limpo.</li>
-<li>COMMIT-FINAL — gate completo, EXPLAINER.html, commit stage-delta, teardown do estado.</li>
-</ol>
+      <!-- TIMELINE begin (não preenchido — conteúdo demo do template) -->
+      <ol class="timeline list-unstyled mb-0">
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">Fase 1</span>
+            <strong>ANALYZE</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">Leitura do prompt, mapeamento do repositório, classificação greenfield/brownfield.</p>
+        </li>
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">Fase 2</span>
+            <strong>PLAN</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">Decomposição em sub-tarefas atômicas, ondas topológicas, mapa de propriedade de arquivos, TASK_PLAN.md publicado.</p>
+        </li>
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">Fase 3</span>
+            <strong>EXECUTE-ONDA</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">Onda 1 — scripts + prompts · Onda 2 — templates/ + SKILL.md. Worktrees nomeadas, barreira, revisão adversarial, squash-merge com gate, limpeza.</p>
+        </li>
+        <li class="timeline-item">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-ok">Fase 4</span>
+            <strong>COMMIT-FINAL</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">TASK_PLAN.md removido, gate completo, commit final, varredura de limpeza, EXPLAINER.html gerado (este documento).</p>
+        </li>
+      </ol>
+      <p class="text-body-secondary small mt-3">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pela timeline real da execução.</p>
+      <!-- TIMELINE end (não preenchido — conteúdo demo do template) -->
     </div>
 
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator</strong> v0.1.0 · 2026-08-22 · branch main.
+    Gerado por <strong>deep-orchestrator-agent-skill</strong> v0.2.0-reshape · 2026-08-23 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
