@@ -11,3 +11,15 @@ declare module '*.css' {
   const cssText: string
   export default cssText
 }
+
+/**
+ * Declaração de módulo para o import do PNG da logo (`../logo.png`) processado
+ * pelo esbuild como `dataurl` (ver `scripts/build-client.mjs` — loader
+ * `{ '.png': 'dataurl' }`): a imagem é embebida no bundle como uma data URL
+ * `data:image/png;base64,...` (o harness serve SÓ `lib/client.js`, sem
+ * side-cars). Apenas declarativo — não entra no bundle.
+ */
+declare module '*.png' {
+  const dataUrl: string
+  export default dataUrl
+}

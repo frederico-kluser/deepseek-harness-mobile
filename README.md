@@ -5,6 +5,12 @@
 [![npm downloads](https://img.shields.io/npm/dm/dsh-guard-messenger)](https://www.npmjs.com/package/dsh-guard-messenger)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/frederico-kluser/deepseek-harness-mobile)](https://securityscorecards.dev/)
 
+<div align="center">
+
+![dsh-guard-messenger](logo.png)
+
+</div>
+
 **Usa o teu próprio DeepSeek Harness pelo celular — a Web UI inteira, para codificar de verdade — sem nunca alargar o bind para fora do loopback: o túnel termina em `127.0.0.1` (acesso local abre direto), e pelo túnel só entra quem tem a chave no link `?key=` (que o bot envia) — ligas e desligas o acesso pelo Telegram.**
 
 ![Demo](docs/assets/demo.gif)

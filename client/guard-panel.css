@@ -28,6 +28,23 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* Bloco de marca — a logo do plugin (PNG estático, embebido como data URL)
+   no topo da aba. Centralizado, com folga inferior para o respirar em
+   relação ao restante do painel. Só `--dsw-*` onde faz sentido; a imagem em
+   si é estática e não segue o tema (tem fundo próprio). */
+.guard-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.guard-logo {
+  max-height: 72px;
+  width: auto;
+  object-fit: contain;
+  display: block;
+}
+
 /* Título do painel (mesmo peso/ritmo do .title dos ui-settings). */
 .guard-title {
   margin: 0;

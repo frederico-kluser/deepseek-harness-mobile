@@ -50,6 +50,11 @@
 import * as React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import cssText from './guard-panel.css'
+// A logo do plugin (root, `logo.png`) — embebida como data URL no bundle
+// (loader `dataurl` do esbuild; ver `build-client.mjs`). O harness serve SÓ
+// `lib/client.js`, sem side-cars, por isso a imagem NÃO pode ser um caminho
+// externo.
+import logoUrl from '../logo.png'
 
 /** Serviços Cordis que o `apply` deste plugin exige no `ctx`. */
 export const inject = ['slots']
@@ -938,6 +943,10 @@ function TelegramGuardSection(): React.ReactNode {
   const handleChave = token?.handle
 
   return h('div', { className: 'guard-section' },
+    // --- Bloco de marca (logo do plugin) ----------------------------------
+    h('div', { className: 'guard-brand' },
+      h('img', { className: 'guard-logo', src: logoUrl, alt: 'dsh-guard-messenger' }),
+    ),
     // --- Título + chip de estado ------------------------------------------
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
       h('h2', { className: 'guard-title', style: { margin: 0 } }, 'Telegram Guard'),

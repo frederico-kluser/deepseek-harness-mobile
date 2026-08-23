@@ -224,6 +224,32 @@ test('bundle: o cartão Privacidade existe nos TRÊS estados (ao vivo, não por 
   assert.ok(!/TELEGRAM_BOT_TOKEN\s*=\s*[0-9]+:[A-Za-z0-9_-]+/u.test(codigo), 'nenhum valor de token real no bundle')
 })
 
+/**
+ * A logo do plugin entra no topo da aba "Telegram Guard" (Onda 3). Verificado
+ * como conteúdo compilado do bundle — o smoke não renderiza React (mesma nota
+ * do docs/PANEL-TELEGRAM.md). O esbuild foge não-ASCII, por isso as assertions
+ * usam SUBSTRINGS ASCII-ONLY: o alt `dsh-guard-messenger` e o prefixo da data
+ * URL `data:image/png;base64` (loader `dataurl` do esbuild embrutece o PNG).
+ * NÃO há assert de tamanho (o tamanho exato do base64 depende da codificação).
+ */
+test('bundle: a logo aparece embutida (data URL PNG) com o alt ASCII', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // A logo deve estar EMBUTIDA no bundle como data URL base64 — o harness serve
+  // SÓ lib/client.js, sem side-cars, por isso é `data:image/png;base64`, nunca
+  // um caminho externo para logo.png.
+  assert.ok(codigo.includes('data:image/png;base64'), 'o bundle deve conter a logo embutida como data:image/png;base64')
+  // A primeira linha do header do PNG (`\x89PNG`) base64 é sempre `iVBOR`.
+  assert.ok(codigo.includes('iVBORw0KGgo'), 'o base64 deve começar pelo magic byte padrão do PNG')
+
+  // O alt ASCII da logo está no render do bloco de marca.
+  assert.ok(codigo.includes('guard-brand'), 'o bundle deve conter o bloco de marca guard-brand')
+  assert.ok(codigo.includes('dsh-guard-messenger'), 'o bundle deve conter o alt ASCII dsh-guard-messenger')
+
+  // O bundle NÃO referencia o ficheiro como caminho externo (side-car).
+  assert.ok(!/src=["']logo\.png["']/u.test(codigo), 'a logo não pode ser referenciada por caminho externo no bundle')
+})
+
 test('bundle: o pareamento VIA PAINEL está presente (botão + código + espera) e NÃO loga o código', { skip: BUNDLE_AUSENTE }, () => {
   const codigo = readFileSync(BUNDLE_PATH, 'utf8')
 

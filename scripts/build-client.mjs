@@ -57,7 +57,12 @@ const result = await build({
   // do harness faz isso, mas aqui o bundle é standalone; a prefixação manual
   // dá o mesmo isolamento com menos risco de o esbuild despachar o CSS para um
   // output de side-car que ninguém serviria).
-  loader: { '.css': 'text' },
+  //
+  // A logo (`../logo.png`, root) idem EMBUTIDA — loader `dataurl` (built-in do
+  // esbuild, zero deps) verte o PNG para `data:image/png;base64,...` no bundle;
+  // o harness serve SÓ `lib/client.js`, sem side-cars, por isso a imagem tem
+  // de viajar dentro do próprio ficheiro, nunca como caminho externo.
+  loader: { '.css': 'text', '.png': 'dataurl' },
   external: EXTERNAL,
   minify: false,
   sourcemap: true,
