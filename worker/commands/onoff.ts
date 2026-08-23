@@ -96,7 +96,11 @@ export function criarOnOff(ctx: ContextoDoComando): ComandosOnOff {
       const teclado = buildInlineKeyboard([
         [{ text: '✅ Sim, ligar', data: buildCallbackData('tunnel.up', nonce) }],
       ])
-      await ctx.enviar(identidade.chat, 'Ligar o túnel de acesso?', { reply_markup: teclado })
+      await ctx.enviar(
+        identidade.chat,
+        'Ligar o túnel de acesso? Quando abrir, o link autenticado (senha já embutida) será enviado aqui automaticamente.',
+        { reply_markup: teclado },
+      )
     },
 
     async desligar(identidade): Promise<void> {

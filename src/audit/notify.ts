@@ -281,7 +281,9 @@ export function comporTextoLinkMagico(
   const link = `${urlDoTunel}${MAGIC_ROTA}#mk=${mk}`
   return comMarcador(
     ALERTA_LINK_MAGICO,
-    `Acesso pelo celular: ${link}\nO link expira em ${restante} e serve uma unica vez.`,
+    `Aceso pelo celular: ${link}\n` +
+      `O link é de uso único (expira em ${restante}) — depois de abrir, ` +
+      'a sessão continua válida neste navegador.',
   )
 }
 

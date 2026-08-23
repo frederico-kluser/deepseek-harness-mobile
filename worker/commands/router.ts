@@ -509,6 +509,15 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
   const pendentes = new Map<string, PendingIntent>()
   /** A ultima mensagem de ESTADO por chat — as difusoes editam-na in-place. */
   const ultimaMensagemDeEstado = new Map<number, number>()
+  /**
+   * AUTOLINK (onda1): a ligacao (requestId) do /ligar do dono que pediu o link
+   * autenticado. Armado na confirmacao de `tunnel.up` que VAI prosseguir e
+   * consumido (desarmado) quando o tunel chega a READY — UMA unica vez por
+   * ligacao. CHAVEADO POR requestId: um ack (ou um tap sobreposto) de OUTRA
+   * confirmacao NAO desarma este slot (o IdentityGuard nao deduplica callbacks
+   * por desenho). `null` = inativo.
+   */
+  let autolink: { readonly requestId: string; readonly from: number; readonly chat: number } | null = null
 
   /**
    * Serializador de 1 msg/s POR CHAT para a DIFUSAO de estado (pergunta 5 da
@@ -706,6 +715,24 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
     return aceite
   }
 
+  /**
+   * AUTOLINK (onda1): pede o link autenticado ao HOST (`session.issue`) quando
+   * o tunel que o dono mandou ligar fica READY. A identidade vem do /ligar que
+   * armou o autolink (o dono e 1:1 por construcao, mas a revalidacao de
+   * identidade continua a ser feita pelo HOST no intent, S6). O host compoe e
+   * notifica o link (URL + `__guard/magic` + `?mk=` no fragmento); este worker
+   * NUNCA compoe nem transporta o `mk`. Best-effort: enviarIntent ja regista o
+   * pendente (o ack de session.issue REGISTA o erro como mensagem propria) e
+   * o autolink ja foi desarmado ANTES — um envio falho nao deixa o flag vivo.
+   */
+  function emitirLinkAutomatico(arma: { readonly from: number; readonly chat: number }): void {
+    if (projecao.ler().state !== 'READY') return
+    enviarIntent(
+      { intent: 'session.issue', requestId: gerarRequestId(time.now()), from: arma.from, chat: arma.chat },
+      undefined,
+    )
+  }
+
   async function tratarComando(nome: string | undefined, identidade: UpdateIdentity): Promise<void> {
     switch (nome) {
       case 'ligar':
@@ -749,10 +776,26 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
         // ack devolve a recusa para renderizar. O answer vem sem texto: o
         // feedback do clique e a edicao in-place da mensagem (a do botao).
         await answerCallbackAlways(deps.api, decisao.answer.callbackQueryId, log)
+        // AUTOLINK (onda1): o /ligar confirmado arma o envio automatico do link
+        // autenticado, CHAVEADO pelo requestId DESTA ligacao. Quando o tunel
+        // chega a READY, o worker pede `session.issue` ao host SOZINHO — o host
+        // compoe o link (URL + `#mk=`) e notifica. O slot so e armado se nao
+        // houver outra ligacao em curso (so a PRIMEIRA confirmacao pode vir a
+        // ser a que sobe — o host serializa os starts e um segundo `tunnel.up`
+        // enquanto STARTING e noop). Um tap sobreposto (double-tap) nao
+        // sobrescreve a ligacao boa.
+        const requestIdUp = gerarRequestId(time.now())
+        if (decisao.action === 'tunnel.up' && autolink === null) {
+          autolink = {
+            requestId: requestIdUp,
+            from: decisao.identity.from,
+            chat: decisao.identity.chat,
+          }
+        }
         enviarIntent(
           {
             intent: decisao.action,
-            requestId: gerarRequestId(time.now()),
+            requestId: requestIdUp,
             from: decisao.identity.from,
             chat: decisao.identity.chat,
             nonce: decisao.token,
@@ -792,6 +835,22 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
       }
       const chat = contexto.dono()
       if (chat === undefined) return
+      // AUTOLINK (onda1): o tunel que o dono /ligar ficou READY — sai o link
+      // autenticado UMA vez por ligacao (o desarme acontece aqui, no primeiro
+      // READY com autolink armado; as difusoes seguintes de READY ja nao o
+      // encontram). O "uma mensagem por ligacao/URL" e esta garantia.
+      if (autolink !== null && projecao.ler().state === 'READY') {
+        const alvo = autolink
+        autolink = null
+        emitirLinkAutomatico(alvo)
+      }
+      // AUTOLINK (onda1) — defesa terminal: se a ligacao armada desembocou num
+      // estado terminal (FAILED/STOPPED) em vez de READY, o slot morre — nao
+      // ha READY para onde a ligar, e um READY tardio de outra origem nao pode
+      // ressuscitar um link dona de uma ligacao que nao subiu.
+      else if (autolink !== null && (projecao.ler().state === 'FAILED' || projecao.ler().state === 'STOPPED')) {
+        autolink = null
+      }
       emSegundoPlano(chat, () => mostrarEstadoSerializado(chat, textoDeEstado(projecao.ler(), time.now())))
     } catch (error) {
       log.error('falha ao renderizar difusao de estado', { detail: descrever(error) })
@@ -808,6 +867,13 @@ export function criarRoteador(deps: RoteadorDeps): Roteador {
           result: msg.result,
         })
         return
+      }
+      // AUTOLINK (onda1): o ack de `tunnel.up` NAO-accepted (noop = ja READY,
+      // CTL-003; ou rejected = nonce/modo-restrito) so desarma o autolink da
+      // MESMA ligacao (requestId igual) — nunca o de outra confirmacao
+      // sobreposta. O `accepted` mantem o slot armado para o READY.
+      if (pendente.acao === 'tunnel.up' && msg.result !== 'accepted' && autolink?.requestId === pendente.requestId) {
+        autolink = null
       }
       if (msg.result === 'rejected') {
         const texto = textoDeRecusa(msg.code ?? 'INTERNAL')
