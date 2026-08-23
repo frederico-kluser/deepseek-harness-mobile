@@ -38,7 +38,7 @@ Leitura honesta das garantias — cada linha aponta para o código que a cumpre;
 | **Acesso local abre direto** | em `127.0.0.1` o DSH responde **sem barreira**; a proteção aplica-se à superfície do túnel, não ao loopback (`src/tunnel/proxy.ts`) |
 | **Pelo túnel só entra com sessão ou chave no link** | o proxy autentica tudo: sessão (cookie) ou `?key=` no link; fora disso → `401` sem desafio (`src/http/gate.ts`, `src/session/link-token.ts`) |
 | **Origem e Host vêm primeiro** | `trustedRemotes` (403 sem credencial) e `Host` byte-a-byte contra DNS rebinding (`src/http/gate.ts:15`, `src/http/host-header.ts`) |
-| **Chave no link reutilizável, revogável por rotação** | CSPRNG 256 bits; guardada só como digest SHA-256; reutilizável até `/rotacionar` (gera chave nova e invalida sessões) ou derrubar o túnel (`src/session/link-token.ts`) |
+| **Chave no link reutilizável, revogável por rotação** | CSPRNG 256 bits; guardada só como digest SHA-256; reutilizável até `/rotacionar` (gera chave nova, invalida sessões **e encerra as conexões ativas** — WebSockets e streams em voo caem na hora) ou derrubar o túnel (`src/session/link-token.ts`, `src/tunnel/proxy.ts`) |
 | **O 401 é sem desafio** | texto puro, **sem desafio de login** (o popup do navegador foi removido) — nunca se pede senha em prompt/formulário (`src/http/responses.ts`, `denyUnauthorized`) |
 | **Força bruta tem teto** | a 5ª falha começa a atrasar; 100 falhas acumuladas derrubam a exposição (modo restrito), só o loopback passa e o reiniciar não o contorna (`src/ratelimit/**`) |
 | **Verificação da chave em tempo constante** | digest comparado com `timingSafeEqual`; o token redige-se em JSON/inspect (`src/session/link-token.ts`, `test/security/timing-constante.test.ts`) |
@@ -58,7 +58,7 @@ Quem não aceitar esta troca deve usar Tailscale ou SSH — e dizemo-lo com mais
 ## O que faz (e porquê)
 
 1. **Protege o túnel, não o loopback.** O DSH abre **direto** em `127.0.0.1` (sem login); quem expõe é um **proxy dedicado** que autentica tudo o que chega da internet — `/api`, o fallback da SPA e o handshake de WebSocket. Recusa endereços de bind fora do loopback no carregamento e recusa permissões proibidas (`danger-full-access`). Resolve a superfície da discussão upstream [#853](https://github.com/deepseek-ai/deepseek-harness/discussions/853).
-2. **Nunca pede senha a ninguém.** O acesso pelo túnel entra por **sessão** ou pela **chave no link** `?key=` (CSPRNG, 256 bits, digest em disco). A chave é **reutilizável** até `/rotacionar` (que gera chave nova e invalida sessões) ou derrubar o túnel. O 401 é **sem desafio de login** — não há prompt nem formulário de login.
+2. **Nunca pede senha a ninguém.** O acesso pelo túnel entra por **sessão** ou pela **chave no link** `?key=` (CSPRNG, 256 bits, digest em disco). A chave é **reutilizável** até `/rotacionar` (que gera chave nova, invalida sessões **e encerra ativamente as conexões já abertas** — quem tiver o link antigo cai na hora, incluindo WebSockets) ou derrubar o túnel. O 401 é **sem desafio de login** — não há prompt nem formulário de login.
 3. **Suba um túnel efémero** para acederes pelo celular, com TTL que o derruba sozinho e um *probe fail-closed* que impede um túnel "nu" (sem proxy autenticado atrás).
 4. **Ligar/desligar pelo Telegram ou painel** — o botão de matar na mão.
 
@@ -78,7 +78,7 @@ Depois de pareado (`docs/ONBOARDING-TELEGRAM.md`), os comandos de controlo do bo
 | `/ligar` | Sobe o túnel e, quando fica READY, **envia automaticamente** o link com a chave `?key=` |
 | `/desligar` | Derruba o túnel (e revoga a chave) |
 | `/acessar` | (Re)envia o link com a chave |
-| `/rotacionar` | Gera **chave nova** e invalida as sessões — revoga o acesso antigo |
+| `/rotacionar` | Gera **chave nova**, invalida as sessões **e encerra as conexões ativas** (WebSocket/streams) — revoga o acesso antigo na hora |
 | `/status` · `/emergencia` | estado, kill switch |
 
 O link enviado no `/ligar` é

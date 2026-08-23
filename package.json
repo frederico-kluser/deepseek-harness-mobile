@@ -1,7 +1,7 @@
 {
   "name": "dsh-guarded-bot-orchestrator",
   "version": "0.1.1",
-  "description": "Plugin Cordis para o DeepSeek Harness v0.1: interceta a camada HTTP (auth barrier sobre o fallback da Web UI) e orquestra subprocessos de longa duracao com ciclo de vida reversivel.",
+  "description": "Plugin Cordis para o DeepSeek Harness: acesso remoto pelo Telegram sem login — local abre direto, túnel autenticado por chave no link (?key=), /rotacionar revoga chave, sessões e conexões ativas; botão offline/online na UI.",
   "license": "MIT",
   "private": false,
   "repository": {
