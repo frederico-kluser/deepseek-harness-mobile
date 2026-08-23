@@ -19,8 +19,8 @@
 ## Entrada proposta (linha única do registro)
 
 DSH | dsh-guarded-bot-orchestrator | Expõe a Web UI do DSH por um túnel Cloudflare
-efêmero sem alargar o bind de loopback: autenticação sobre /api, fallback da SPA e
-handshake de WebSocket; senha gerada por CSPRNG; liga/desliga pelo bot do Telegram.
+efêmero sem alargar o bind de loopback: acesso local aberto; túnel protegido por chave no
+link `?key=` (reutilizável, revogável); liga/desliga pelo bot do Telegram.
 
 > A linha é a versão revisada de 07-COMUNIDADE §8.2 (zero adjetivo, cada afirmação
 > verificável). Contém números/ordens rastreáveis a código (ver §Verificação) e nenhum
@@ -31,8 +31,8 @@ handshake de WebSocket; senha gerada por CSPRNG; liga/desliga pelo bot do Telegr
 ## Corpo do PR (para o mantenedor / reviewer)
 
 **O quê:** plugin Cordis que serve a Web UI do DeepSeek Harness por um túnel
-Cloudflare efêmero sem alargar o socket de loopback, com barreira de autenticação no
-processo e controle por um bot do Telegram.
+Cloudflare efêmero sem alargar o socket de loopback: acesso local aberto, o túnel
+protegido por chave no link (`?key=`) e controle por um bot do Telegram.
 
 **Aplicação:** dono único, máquina de desenvolvimento local.
 
@@ -53,14 +53,14 @@ cada um verificável no código deste repo:
 | --- | --- |
 | Intercepta o handshake de upgrade de WebSocket (não só rotas HTTP) | src/http/intercept.ts captura o listener `upgrade` do servidor (L73/L110) e agrega register/registerFallback/registerUpgrade (L37); `Origin` fora da allowlist no upgrade → 403 em src/http/session-auth.ts (L170) |
 | Allowlist do endereço de bind (a interface onde o servidor escuta), distinta de trustedRemotes (a origem de cada pedido) | src/config/bind.ts (allowedHosts) vs. src/config/schema.ts (trustedRemotes); falha ruidosa no load se o bind sair da allowlist |
-| 403 antes de 401 — origem não confiável não chega a ver o desafio de credencial | src/http/gate.ts (L2 trustedRemotes → 403); src/ui-contrib/routes.ts: "403, nunca 401: o token não é credencial" |
+| 403 antes de 401 — origem não confiável não chega a ver o desafio | src/http/gate.ts (L2 trustedRemotes → 403); src/ui-contrib/routes.ts: "403, nunca 401: o token não é credencial" |
 | Veto de elevação para danger-full-access no load | src/permissions/deny.ts (normalização anti-bypass do token); src/index.ts veta a elevação como defesa em profundidade |
 | Worker de longa duração sob ctx.effect() com ambiente construído por allowlist | src/proc/env.ts (WORKER_ENV_ALLOWLIST + prefixes; o token do bot entra por env, nunca por argv); src/index.ts instancia o processo do bot dentro de ctx.effect() com disposer síncrono |
 | Ciclo de vida do túnel (abrir/fechar) como operação de primeira classe, com tree-kill real do grupo | src/proc/tree-kill.ts (process.kill(-pid, sig) / taskkill /T /F); src/tunnel/supervisor.ts + src/tunnel/pidfile.ts (SIGTERM ao grupo → janela de graça → SIGKILL) |
 
 ### Limites que a entrada declara (07 §1.3)
 
-- Dono único: uma allowlist de from.id do Telegram e uma credencial; sem RBAC/multi-tenant.
+- Dono único: uma allowlist de from.id do Telegram e a chave do link; sem RBAC/multi-tenant.
 - Não é produção/uptime: quick tunnel é "testing and development only" e "no SLA"
   (08 §8:7, doc Cloudflare).
 - Não é E2E: o TLS termina na borda da Cloudflare.

@@ -36,18 +36,20 @@ rodando e eu não tinha como acompanhar nem redirecionar. As opções eram alarg
 para 0.0.0.0 — que é o caminho do RCE não autenticado da discussão #853 do upstream — ou
 não usar.
 
-Este plugin faz o caminho do meio. O bind continua em 127.0.0.1; o plugin falha no load,
-ruidosamente, se você tentar alargar. O que muda é que um cloudflared roda como processo
-filho supervisionado na mesma máquina e leva o tráfego da borda da Cloudflare até o
-loopback. A senha é gerada por CSPRNG (≥128 bits) e não trafega pelo Telegram — chat de
-bot não é E2E, então o bot só carrega o comando e um token de confirmação opaco. Você liga
-e desliga o túnel pelo bot, do celular.
+Este plugin faz o caminho do meio. O bind continua em 127.0.0.1 e o acesso local abre
+direto, sem login; um cloudflared roda como processo filho supervisionado na mesma máquina
+e leva o tráfego da borda da Cloudflare até o loopback. O túnel só entra por **sessão** ou
+pela **chave no link** `?key=` que o bot envia no `/ligar` — sem pedir senha a ninguém (o
+401 é sem popup, sem formulário). A chave é reutilizável e **revogável** por `/rotacionar`.
+O bot só carrega o comando e um token de confirmação opaco. Você liga e desliga o túnel
+pelo bot, do celular.
 
-O que eu NÃO estou dizendo: isto não é seguro por padrão só porque tem senha. Você está
-expondo um agente com shell. A URL do túnel não deve ser tratada como credencial — ela
-vira pública assim que qualquer scanner ou feed a vê. O TLS termina na Cloudflare. Prompt
-injection continua sendo risco aceito, não resolvido. O modelo de ameaça está no README,
-antes da lista de features, de propósito.
+O que eu NÃO estou dizendo: isto não é seguro por padrão só porque é por chave. Você está
+expondo um agente com shell; **quem tiver o link acede até você rotacionar**, e a `?key=`
+viaja em query (visível a intermediários) — trade assumido do modelo expose-port. A URL do
+túnel não deve ser tratada como credencial — ela vira pública assim que qualquer scanner ou
+feed a vê. O TLS termina na Cloudflare. Prompt injection continua sendo risco aceito, não
+resolvido. O modelo de ameaça está no README, antes da lista de features, de propósito.
 
 Se você aceita instalar um cliente no celular, Tailscale tem um modelo de segurança
 melhor que este. Se você só quer autenticação no DSH, existe o dsh-webui-auth, que faz
@@ -69,7 +71,7 @@ MIT. Sou o autor. Feedback de segurança é o que eu mais quero.
 
 | Número/afirmação | Fonte (08 = 08-PESQUISA-E-FONTES.md) | Confiança |
 | --- | --- | --- |
-| Senha ≥128 bits CSPRNG | 08 §8:22 (ASVS); src/secret/generate.ts | Alta |
+| Chave no link: CSPRNG 256 bits, guardada só como digest | src/session/link-token.ts | Alta |
 | RCE não autenticado discutido na #853 | 08 §6.1 (discussion #853) | Alta |
 | URL pública assim que um scanner a vê | 08 §7.4 (feeds públicos listam *.trycloudflare.com sem auth) | Alta |
 | Tailscale modelo estritamente superior | 07-COMUNIDADE §2 (quadro honesto) | Alta |

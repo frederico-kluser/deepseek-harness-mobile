@@ -35,21 +35,23 @@ rodando e eu não tinha como acompanhar nem redirecionar. As opções eram alarg
 para 0.0.0.0 — que é o caminho do RCE não autenticado da discussão #853 do upstream — ou
 não usar.
 
-Este plugin faz o caminho do meio. O bind continua em 127.0.0.1; o plugin falha no load,
-ruidosamente, se você tentar alargar. O que muda é que um cloudflared roda como processo
-filho supervisionado na mesma máquina e leva o tráfego da borda da Cloudflare até o
-loopback. A senha é gerada por CSPRNG (≥128 bits) e não trafega pelo Telegram — chat de
-bot não é E2E, então o bot só carrega o comando e um token de confirmação opaco. Você liga
-e desliga o túnel pelo bot, do celular.
+Este plugin faz o caminho do meio. O bind continua em 127.0.0.1 e o acesso local abre
+direto, sem login; um cloudflared roda como processo filho supervisionado na mesma máquina
+e leva o tráfego da borda da Cloudflare até o loopback. O túnel só entra por **sessão** ou
+pela **chave no link** `?key=` que o bot envia no `/ligar` — sem pedir senha a ninguém (o
+401 é sem popup, sem formulário). A chave é reutilizável e **revogável** por `/rotacionar`.
+O bot só carrega o comando e um token de confirmação opaco. Você liga e desliga o túnel
+pelo bot, do celular.
 
 ### Como a integração funciona (obrigatório pelas guidelines #2004)
 
-- O gate HTTP é montado com a API do Cordis: ctx.intercept + filters
+- O proxy do túnel é montado com a API do Cordis: ctx.intercept + filters
   (register/registerFallback/registerUpgrade), com a ordem deliberada de camadas
-  (origem → Host → credencial → navegador):
+  (origem → Host → sessão/chave):
   - **L2** trustedRemotes → 403 para quem está do outro lado do socket
     (src/http/gate.ts);
-  - **L3** autenticação → 401;
+  - **L3** sessão (cookie) ou chave no link `?key=` → 401 sem desafio; `?key=` válida é
+    trocada por sessão (302 p/ URL limpa) (src/http/gate.ts, src/session/link-token.ts);
   - handshake de **WebSocket** interceptado no upgrade — captura do listener
     `upgrade` em src/http/intercept.ts e `Origin` fora da allowlist no upgrade → 403
     (src/http/session-auth.ts);
@@ -67,11 +69,12 @@ e desliga o túnel pelo bot, do celular.
 
 ### Limites (honestidade primeiro)
 
-O que eu NÃO estou dizendo: isto não é seguro por padrão só porque tem senha. Você está
-expondo um agente com shell. A URL do túnel não deve ser tratada como credencial — ela
-vira pública assim que qualquer scanner ou feed a vê. O TLS termina na Cloudflare. Prompt
-injection continua sendo risco aceito, não resolvido. O modelo de ameaça está no README,
-antes da lista de features, de propósito.
+O que eu NÃO estou dizendo: isto não é seguro por padrão só porque é por chave. Você está
+expondo um agente com shell; **quem tiver o link acede até você rotacionar**, e a `?key=`
+viaja em query (visível a intermediários) — trade assumido do modelo expose-port. A URL do
+túnel não deve ser tratada como credencial — ela vira pública assim que qualquer scanner ou
+feed a vê. O TLS termina na Cloudflare. Prompt injection continua sendo risco aceito, não
+resolvido. O modelo de ameaça está no README, antes da lista de features, de propósito.
 
 Se você aceita instalar um cliente no celular, Tailscale tem um modelo de segurança
 melhor que este. Se você só quer autenticação no DSH e nada mais, existe o
@@ -86,7 +89,7 @@ MIT. Sou o autor. Feedback de segurança é o que eu mais quero.
 
 | Número/afirmação | Fonte (08 = 08-PESQUISA-E-FONTES.md) | Confiança |
 | --- | --- | --- |
-| Senha ≥128 bits CSPRNG | 08 §8:22 (ASVS 7.2.3); src/secret/generate.ts | Alta |
+| Chave no link: CSPRNG 256 bits, guardada só como digest | src/session/link-token.ts | Alta |
 | RCE discutido na #853 | 08 §6.1 (discussion #853, reportada em 0.1.0-rc.6) | Alta |
 | Quick tunnel "no SLA / testing only" | 08 §8:7 (doc Cloudflare) | Alta |
 | dsh-webui-auth cobre four-layer auth | 08 §6.1 (plugins.json) | Alta |

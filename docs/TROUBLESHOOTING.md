@@ -14,12 +14,17 @@ Guia de resolução, ordenado por sintoma. Lê o sintoma, confere a causa e segu
 | A Fiber fica PENDING para sempre | Adicionaste `logger` ao `inject` | Não faças. `ctx.logger` está acessível sem injecção; `LoggerService` não é `Service`, entra como propriedade própria do Context e `ctx.get` devolve undefined para ele (ver `src/index.ts:344-364`). |
 | O estado abre corrompido | `state.json` foi reescrito de forma não atómica, ou tem modo maior que 0600 | O `StateStore` é o único writer e recusa carga com erro acionável. Não uses editor no ficheiro do estado vivo; apaga-o e re-roda o setup se quiseres recomeçar. |
 
-## 2. O portão não responde 401
+## 2. Acesso local e barreira do túnel
+
+O modelo novo: o DSH abre **direto em `127.0.0.1`** (sem login); a autenticação vive no
+**proxy do túnel** (sessão ou chave no link `?key=`).
 
 | Sintoma | Causa provável | O que fazer |
-| `curl /api` devolve `200` sem credencial | O plugin não instalou a barreira, ou um patch superior o anulou | Confirma que o `guarded-bot-orchestrator` é a única entrada ativa e que nenhum `http/auth-check` anterior devolve true. O `next` terminal repete a verificação (fail-closed quando não há ouvintes). Ver `docs/INSTALL.md` Passo 3. |
-| Devolve `403` em vez de 401 | A origem da conexão está fora de `trustedRemotes` — não é a credencial | O 403 é "repetir a senha não ajuda". Verifica de onde o pedido vem (loopback esperado). |
-| A SPA pede senha mas `/api` responde sem credencial | `guardedPrefixes` não cobre o que julgavas | Cada prefixo tem de começar por `/`. O fallback da SPA é guardado incondicionalmente. |
+| `curl http://127.0.0.1:3080/` devolve `200` sem credencial | **É o esperado** — o acesso local abre direto | Não é defeito. A barreira é do túnel, não do loopback. Ver `docs/INSTALL.md` Passo 3. |
+| URL raiz do túnel abre com `401` sem pedir `?key=` | É o comportamento correto — o túnel exige sessão ou chave | Abre o **link que o bot enviou** (com `?key=`). Sem sessão e sem chave, o proxy bloqueia. |
+| Abrir a URL do túnel sem a chave → `401` | Falta a `?key=` (ou a sessão expirou) | Reenvia o link: manda `/acessar` (ou `/ligar`) no bot do Telegram. |
+| Perdeste o link / ele não abre mais | A chave foi rotacionada ou o túnel caiu | `/ligar` (túnel novo) ou `/acessar` (reenvia a chave atual); se quiseres invalidar acesso antigo, `/rotacionar` gera chave nova e invalida sessões. |
+| Devolve `403` em vez de 401 | A origem da conexão está fora de `trustedRemotes` | O 403 é "esta origem nunca será aceite". Verifica de onde o pedido vem (loopback esperado para o local). |
 
 ## 3. O túnel não sobe ou a URL não vem
 
@@ -42,7 +47,8 @@ Guia de resolução, ordenado por sintoma. Lê o sintoma, confere a causa e segu
 | Sintoma | Causa provável | O que fazer |
 | Respostas `401` idênticas e depois lentidão | Rate limit / ban em progresso | Não há sinal delatado: o 401 é byte a byte idêntico. Espera; o ban não é permanente para a única conta. |
 | `X-Forwarded-For` não faz efeito | `trustEdgeHeaders: false` (omissão) | Por omissão o plugin não acredita em headers de borda — o `X-Forwarded-For` é forjável. A identidade do rate limit é do socket. |
-| Encontra-se um túnel "nu" (200 sem senha) | O probe não correu antes da URL | Se acontecer, para e reporta como grave: é o cenário que o probe fail-closed existe para impedir. |
+| Encontra-se um túnel "nu" (abre sem sessão nem `?key=`) | O probe não correu antes da URL | Se acontecer, para e reporta como grave: é o cenário que o probe fail-closed existe para impedir. |
+| O mesmo link `?key=` volta a dar `401` depois de ter funcionado | A chave foi revogada (`/rotacionar`, `/desligar`, queda do túnel) | Pedir `/acessar` (chave atual) ou `/rotacionar` + `/acessar`; a chave é reutilizável mas revogável. |
 
 ## 6. Reverter / desinstalar
 
@@ -53,7 +59,7 @@ dsh plugin remove dsh-guarded-bot-orchestrator
 ```
 
 Deixa zero processos e a UI volta ao original. Para apagar também os dados locais, remove
-`~/.dsh/guarded-bot` (irá apagar a senha, o pareamento e o estado).
+`~/.dsh/guarded-bot` (irá apagar a chave do link, o pareamento e o estado).
 
 ## 7. Reportar um problema
 

@@ -34,61 +34,57 @@ dsh web
 No arranque o plugin deverá:
 
 1. validar o **bind** (em loopback) e gritar se estiver fora da allowlist;
-2. subir o **portão** — sem credencial, `/api` e a UI respondem `401`;
+2. deixar o **DSH aberto no local** — em `127.0.0.1` abre direto, sem barreira
+   (**acesso local = sem login**);
 3. deixar o **Telegram** disponível para configurar depois ("não configurado").
 
-## Passo 2.5 — Obter a senha do portão (uma única vez)
+## Passo 2.5 — Ligar o bot e receber o link (sem digitar senha nenhuma)
 
-A senha do portão **não depende do Telegram** e é mostrada pelo CLI de
-onboarding, não pelo boot:
+O acesso pelo túnel **não usa senha**. Depois de o bot estar pareado
+(`docs/ONBOARDING-TELEGRAM.md`), o fluxo é automático:
 
-```sh
-dsh-guard-setup
-```
+1. corre `dsh-guard-setup` e segue os passos para criar o bot no `@BotFather`,
+   colar o token e parear com `/parear <código>` (código de 6 dígitos no
+   terminal);
+2. no Telegram, manda **`/ligar`**: o bot sobe o túnel e, quando fica `READY`,
+   **envia automaticamente** o link com a chave
+   `https://<url-pública>/?key=<token>`;
+3. **abre o link no celular**. O `?key=` válido é trocado por uma **sessão** e o
+   navegador é redirecionado para a URL limpa (sem `?key=`), que continua
+   autenticada via cookie.
 
-Na primeira execução ele gera a **senha** (CSPRNG, 256 bits) e mostra-a **uma
-única vez**, em texto agrupado e em QR ASCII — mesmo que ainda não haja bot do
-Telegram configurado (o estado do Telegram é o passo seguinte, não um
-pré-requisito da senha). Correr outra vez não regenera nada (`hasSecret` guard).
+> **Abrir a URL raiz do túnel sem a chave dá `401`** (sem pedir login, sem
+> popup). A chave é **reutilizável** até `/rotacionar` (gera chave nova e
+> invalida as sessões) ou derrubar o túnel (`/desligar`, `/emergencia`). Nunca
+> precisas de digitar uma senha em lugar nenhum.
 
-Exemplo de saída:
-
-```console
-$ dsh-guard-setup
-Esta é a sua senha de acesso. Ela aparece UMA única vez e não fica em lado
-nenhum em claro — em disco guarda-se apenas uma impressão digital dela.
-Aponte a câmara ao quadrado para a levar para o telemóvel.
-
-MJDN-2GVY-KP7S-<...>-4TZP
-
-█▀▀▀▀▀█ █ ... (QR ASCII)
-...
-Falta criar o bot no Telegram.
-Ainda não há nenhum bot do Telegram ligado a esta máquina. ...
-```
-
-> A senha é mostrada no **terminal local**. Se a perderes, não há reposição pela rede: a entrega é local (`docs/ONBOARDING-TELEGRAM.md`) e a rotação (`/rotacionar` no bot ou o painel) gera outra e fecha as sessões abertas. A **senha permanente nunca viaja pelo Telegram** — o que pode viajar é apenas o **link de acesso de uso único** (`mk`), que o bot envia no `/ligar`.
-
-## Passo 3 — Verificar que o portão está ativo
+## Passo 3 — Confirmar o modelo (local abre; borda sem chave bloqueia)
 
 Com o DSH a correr em `127.0.0.1:3080`:
 
 ```console
-$ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:3080/api/commands/execute
-401
+$ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/
+200
 ```
 
-**Sem credencial o resultado tem de ser `401`.** Se devolver `200`, o portão não está a proteger `/api` — para antes de continuar (ver `docs/TROUBLESHOOTING.md`).
+**O acesso local abre direto (resultado `200`).** É o comportamento esperado: o
+DSH **não é guardado no loopback** — não há login em lado nenhum. A proteção
+vive na superfície do **túnel**: abrir a URL raiz do túnel **sem a chave** dá
+`401` (sem pedir login, sem popup). Se o local **não** abrir, para antes de
+continuar (ver `docs/TROUBLESHOOTING.md`).
 
 ## Passo 4 — Configurar o Telegram (opcional)
 
-O controlo pelo bot é opcional; o portão HTTP funciona só com a senha. Para ligar o bot, segue `docs/ONBOARDING-TELEGRAM.md` (BotFather → token → pareamento de 6 dígitos). A **senha permanente** nunca é enviada pelo Telegram.
+O controlo pelo bot é opcional; sem ele o acesso pelo túnel não tem um canal
+automático de entrega do link (fica por configurar — ver `docs/ONBOARDING-TELEGRAM.md`:
+BotFather → token → pareamento de 6 dígitos). **Não há senha a digitar em lugar
+nenhum.**
 
 > **O fluxo de acesso com o bot:** depois de pareado, ao correr `/ligar` e quando o
-> túnel fica READY, o bot **envia automaticamente** o link autenticado
-> `https://<url-pública>/__guard/magic#mk=<token-de-uso-único>` — de **uso único** e com
-> TTL. Quem abre o link entra **sem digitar senha** e a sessão continua no navegador via
-> cookie. **Sem o link (ou a senha) o portão continua a devolver `401`.** No painel da UI
+> túnel fica READY, o bot **envia automaticamente** o link com a chave
+> `https://<url-pública>/?key=<token>`. Quem abre o link entra (a `?key=` válida é
+> trocada por sessão) e a sessão continua no navegador via cookie. **Sem sessão e
+> sem `?key=` o túnel devolve `401`.** No painel da UI
 > (`/__guard-ui`), o botão do Telegram mostra o estado OFFLINE/ONLINE fiel ao runtime: ao
 > clicar em OFFLINE aparecem as instruções `--pedir-token` / `--parear`, e quem as segue
 > de facto coloca o bot **online**.

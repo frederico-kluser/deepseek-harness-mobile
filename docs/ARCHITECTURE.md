@@ -32,7 +32,7 @@ plano de controlo responde sem credencial enquanto o worker ainda está vivo.
 1. **Endurecimento do plano de controlo** — valida o bind (loopback obrigatório, fail loud
    at load), instala o veto de `danger-full-access` e o ouvinte estrutural de auth.
 2. **Barreira HTTP** — `installAuthBarrier` troca o dono do despacho; `createGuardedHandler` e
-   `createGuardedUpgradeHandler` decidem por camadas (origem → Host → credencial).
+   `createGuardedUpgradeHandler` decidem por camadas (origem → Host → sessão/chave no link).
 3. **Túnel** — supervisors, probe fail-closed, discovery, TTL, pidfile/varredura de órfão; o
    controlador serializa a máquina de estados do túnel (ligar/desligar).
 4. **Worker de long-polling** — o supervisor a instanciar o bot do Telegram em
@@ -46,7 +46,9 @@ O `state.json` vive em `~/.dsh/guarded-bot/state.json` (ou `$DSH_HOME/guarded-bo
 
 ## 3. A barreira HTTP e a ordem das verificações
 
-O portão decide na ordem (contrato — reverter dá regressão de segurança):
+O acesso segue o modelo expose-port: **o DSH abre direto no loopback** (sem login) e
+quem autentica é o **proxy dedicado do túnel**. O portão do proxy decide na ordem
+(contrato — reverter dá regressão de segurança):
 
     origem da conexão (L2/L3) · `trustedRemotes`
         │  403 fora da lista
@@ -54,17 +56,22 @@ O portão decide na ordem (contrato — reverter dá regressão de segurança):
     nome pedido (L2.5) · `Host` anti-DNS-rebinding
         │  403 fora (byte a byte igual ao anterior)
         ▼
-    isenção?  (rotas pré-sessão: /__guard/magic, /__guard/secret, /__guard/api/login)
+    isenção?  (rotas pré-sessão do painel, quando houver)
         │
         ▼
-    credencial (L3) · sessão/cookie OU Basic Auth  →  401 sem/inválida
+    sessão/chave no link (L3) · cookie de sessão OU `?key=<token>`  →  401 sem/inválida
         │
         ▼
     autorizado → encaminha (por túnel, reescreve o Host p/ trycloudflare)
 
-Os dois `403` são byte a byte iguais; o `401` traz `WWW-Authenticate`. As rotas de
-isenção têm a sua própria credencial de uso único e continuam sob `trustedRemotes` e
-validação de `Host`.
+Os dois `403` são byte a byte iguais. O `401` do túnel é **texto puro sem desafio de
+login (o header de desafio do navegador foi removido — sem popup)**, e o acesso local abre
+direto, sem
+passar por esta barreira. A chave no link é **reutilizável** e guardada só como digest;
+quando válida é trocada por uma **sessão** e o navegador recebe um 302 para a URL limpa
+(sem `?key=`) (`src/http/gate.ts`, `src/session/link-token.ts`). A `?key=` viaja na query
+— visível a intermediários — e é revogada por `/rotacionar` (chave nova + sessões
+inválidas) ou ao derrubar o túnel.
 
 ## 4. Mapa de módulos (uma frase por ficheiro, pelo conteúdo)
 
@@ -83,7 +90,7 @@ validação de `Host`.
 
 ### HTTP / portão
 
-- `src/http/auth-basic.ts` — `verifyBasicAuth`: comparação de digests SHA-256 em tempo constante.
+- `src/http/auth-basic.ts` — `verifyBasicAuth`: comparação de digests SHA-256 em tempo constante (ainda aceite pelo proxy como credencial estática, mas não é o caminho documentado de acesso).
 - `src/http/origin.ts` — normalização de endereço e permitido de origem confiável.
 - `src/http/host-header.ts` — validação do `Host` (anti-DNS rebinding) e reescrita pelo túnel.
 - `src/http/path.ts` — caminho canônico e política de prefixo (anti-bypass por normalização).
@@ -95,7 +102,7 @@ validação de `Host`.
 ### Segredo, sessão, rate limit, auditoria
 
 - `src/secret/*` — geração (CSPRNG/base32), store (digest), OTT de uso único, QR.
-- `src/session/*` — store de sessão, cookie `__Host-dsh_sid`, link mágico.
+- `src/session/*` — store de sessão, cookie `__Host-dsh_sid`, e a **chave no link** (`link-token.ts`, quando o acesso é obtido e revogável).
 - `src/ratelimit/*` — política, tracker, modo restrito (teto NIST).
 - `src/audit/*` — eventos fechados, formato, log append-only, notificação proativa.
 

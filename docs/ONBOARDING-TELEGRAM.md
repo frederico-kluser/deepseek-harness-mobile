@@ -3,11 +3,19 @@
 Guia para conectar o Telegram ao DSH guardado por este plugin e parear o teu chat como
 dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é aceite de um chat pareado.
 
-> **A senha permanente não é enviada por nenhum canal remoto — inclusive este.** Conversa
-> com bot é *cloud chat*: não é ponta-a-ponta, o histórico fica nos servidores da Telegram
-> e não existe autodestruição para bots. A senha permanente aparece no terminal local, e só lá.
-> O que pode chegar pelo Telegram é o **link mágico de sessão** (uso único, com TTL) — e o
-> `/ligar` **envia-o automaticamente** quando o túnel fica READY.
+> **Não há senha a digitar em lugar nenhum.** O acesso pelo túnel entra por
+> **sessão** ou pela **chave no link** `?key=`. O bot é o canal de entrega: o
+> `/ligar` (e o `/acessar`) **envia automaticamente** o link com a chave
+> `https://<url-pública>/?key=<token>`. A chave pode aparecer no chat — **é o
+> mecanismo** (é a chave do link, não uma "senha permanente"). Ela é
+> **reutilizável** até `/rotacionar` (gera chave nova e invalida sessões) ou
+> derrubar o túnel.
+>
+> Aviso honesto de canal: a conversa com bot é *cloud chat* — não é ponta-a-ponta,
+> o histórico fica nos servidores da Telegram. Como a chave viaja por aí, quem ler
+> o chat lê a chave; foi por isso que a revogação (`/rotacionar`) existe. Outros
+> segredos que **não** são a chave do link (token do bot, segredos internos) nunca
+> devem aparecer no chat.
 
 ## Ponto de partida
 
@@ -88,11 +96,11 @@ A CLI imprime (no terminal) os cinco avisos que tens de ter lido antes de expor:
 
 | Comando | O que faz |
 | --- | --- |
-| `/ligar` | Sobe o túnel e, quando fica READY, **envia automaticamente** o link de acesso autenticado (pede confirmação) |
-| `/desligar` | Derruba o túnel (pede confirmação) |
+| `/ligar` | Sobe o túnel e, quando fica READY, **envia automaticamente** o link com a chave `?key=` (pede confirmação) |
+| `/desligar` | Derruba o túnel (e revoga a chave) (pede confirmação) |
 | `/status` | Estado atual e a URL vigente |
-| `/acessar` | (Re)envia o link de acesso de uso único |
-| `/rotacionar` | Gera novo segredo e invalida as sessões — **nunca** envia a senha pelo chat |
+| `/acessar` | (Re)envia o link com a chave |
+| `/rotacionar` | Gera **chave nova** e invalida as sessões — revoga o acesso antigo |
 | `/emergencia` | Derruba o túnel e revoga as sessões (kill switch) |
 
 Ações que **aumentam a exposição** (subir o túnel) exigem confirmação em duas etapas com
