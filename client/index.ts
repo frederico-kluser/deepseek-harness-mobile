@@ -127,7 +127,7 @@ function TelegramGuardSection(props: { close: () => void }): React.ReactNode {
  *      label da nossa section ('Telegram Guard') e clicá-lo.
  * Os dois passos são idempotentes quanto à presença do modal.
  */
-function openSettingsOnSection(sectionId: string): void {
+function openSettingsOnSection(_sectionId: string): void {
   // Abre o modal se ainda estiver fechado.
   //
   // TRIGGER ENDUREÇIDO: NÃO casar o primeiro `button[aria-haspopup="dialog"]`
