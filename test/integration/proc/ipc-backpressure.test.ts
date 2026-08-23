@@ -42,7 +42,7 @@ import { after, describe, it } from 'node:test'
 
 import type { GuardLogger } from '../../../src/logging/logger.ts'
 import type { IpcMessageToWorker } from '../../../src/contracts/ipc.ts'
-import { createHostIpcChannel, IPC_MAX_PENDING_BYTES } from '../../../src/telegram/ipc.ts'
+import { createHostIpcChannel, IPC_MAX_PENDING_BYTES } from '../../../src/ipc/channel.ts'
 import { waitFor } from './seat.ts'
 
 const filhos: ChildProcess[] = []

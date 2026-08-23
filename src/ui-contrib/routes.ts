@@ -51,7 +51,7 @@ import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import { CSRF_FIELD_NAME, CSRF_HEADER_NAME, type CsrfGuard } from './csrf.ts'
 import { createClientScript } from './html.ts'
 import { buildControlIntent, projectResultado } from './intents.ts'
-import { passosDoTelegram, type TelegramEstado } from './telegram-state.ts'
+import { passosDoBot, type BotEstado } from './bot-state.ts'
 
 export const UI_PREFIX = '/__guard-ui'
 export const UI_PATH_STATE = `${UI_PREFIX}/api/state`
@@ -98,11 +98,11 @@ export interface UiContribCore {
   /** A ultima expiracao READY vista — a base da nota de TTL. */
   readonly lastReady: () => { readonly expiresAt: number } | undefined
   /**
-   * O estado Telegram OFFLINE/ONLINE, lido do disco a cada pedido pela costura
+   * O estado do BOT OFFLINE/ONLINE, lido do disco a cada pedido pela costura
    * em `src/index.ts` (config.worker.token/secrets.env + state.json pairing).
    * So boleanos e motivos; o token NUNCA passa por aqui.
    */
-  readonly telegramState: () => TelegramEstado
+  readonly botState: () => BotEstado
   readonly csrf: CsrfGuard
   readonly now: () => number
   readonly requestedBy: string
@@ -448,7 +448,7 @@ export function createClientHandler(_core: UiContribCore): UiContribRequestHandl
  * tem `online`/`motivo` (offline) ou `online`/`handle` (online); o valor do
  * token e injetado na costura e nunca chega ate aqui.
  */
-export function projetarEstadoTelegrama(estado: TelegramEstado): Record<string, unknown> {
+export function projetarEstadoTelegrama(estado: BotEstado): Record<string, unknown> {
   if (!estado.online) return { online: false, motivo: estado.motivo }
   return {
     online: true,
@@ -464,7 +464,7 @@ export function projetarEstadoTelegrama(estado: TelegramEstado): Record<string, 
 export function createTelegramHandler(core: UiContribCore): UiContribRequestHandler {
   return (req, res) => {
     if (!exigeMetodo(req, res, 'GET')) return
-    json(res, 200, projetarEstadoTelegrama(core.telegramState()))
+    json(res, 200, projetarEstadoTelegrama(core.botState()))
   }
 }
 
@@ -487,6 +487,6 @@ export function createTelegramClickHandler(core: UiContribCore): UiContribReques
       recusarCsrf(res)
       return
     }
-    json(res, 200, { passos: passosDoTelegram(core.telegramState()) })
+    json(res, 200, { passos: passosDoBot(core.botState()) })
   }
 }

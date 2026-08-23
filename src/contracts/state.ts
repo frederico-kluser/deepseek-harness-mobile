@@ -21,6 +21,16 @@ export interface PersistedState {
   restricted?: { since: number; reason: 'brute-force-ceiling' } | undefined
   tunnel?: { pid: number; startedAt: number; mode: 'quick' | 'named' } | undefined
   pairing?: { ownerUserId: number; ownerChatId: number; pairedAt: number } | undefined
+  /**
+   * Provedor de mensageria persistido (desacoplamento do bot, D3).
+   *
+   * ADITIVO e OPCIONAL: ausente = `telegram`. A preservacao v1 no disco
+   * continua valida intacta — um `state.json` v1 sem este campo le como o
+   * default fechado, e nenhum `emptyState()` ganha a chave. A escrita so o
+   * grava quando for relevante; enquanto so existir o telegram, o campo tende
+   * a nem aparecer, e e essa ausencia que o schema le como `telegram`.
+   */
+  provider?: 'telegram' | undefined
 }
 
 export interface StateStore {

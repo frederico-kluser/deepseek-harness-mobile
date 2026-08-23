@@ -25,7 +25,7 @@ import {
   serializeIpcMessage as serializeHost,
   validateIpcMessage as validateHost,
   type IpcDirection,
-} from '../../../src/telegram/ipc.ts'
+} from '../../../src/ipc/channel.ts'
 import {
   bindWorkerIpcToProcess,
   createWorkerIpc,

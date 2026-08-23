@@ -110,6 +110,7 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   'restricted',
   'tunnel',
   'pairing',
+  'provider',
 ])
 
 /**
@@ -211,6 +212,27 @@ function parsePairing(value: unknown, source: string): PersistedState['pairing']
   }
 }
 
+/**
+ * Le o `provider` persistido como o enum FECHADO do contrato (D3).
+ *
+ * AUSENTE NAO E ERRO: o campo e ADITIVO (`PersistedState.provider` opcional) e
+ * ausente significa `telegram` — um `state.json` v1 sem o campo continua valido
+ * e le no default fechado (D3). PRESENTE tem de ser um dos literais fechados,
+ * sob pena de corrupcao; hoje so `telegram`, e um provedor futuro acrescenta um
+ * literal AQUI em sintonia com o enum do contrato — nunca em silencio.
+ */
+export const PROVIDER_LITERALS: readonly string[] = ['telegram']
+
+function parseProvider(value: unknown, source: string): PersistedState['provider'] {
+  if (value === undefined || value === null) return undefined
+  return asLiteral<Exclude<PersistedState['provider'], undefined>>(
+    value,
+    PROVIDER_LITERALS as readonly Exclude<PersistedState['provider'], undefined>[],
+    source,
+    'provider',
+  )
+}
+
 function parseSecretDigest(value: unknown, source: string): string {
   if (typeof value !== 'string') {
     throw corruptStateError(source, 'secretDigest tinha de ser uma string')
@@ -285,13 +307,23 @@ export function parsePersistedState(value: unknown, source: string): PersistedSt
     desiredState: asLiteral(record['desiredState'], ['READY', 'STOPPED'], source, 'desiredState'),
   }
 
-  return {
+  const resultado: PersistedState = {
     ...state,
     secretDigest: record['secretDigest'] === undefined ? undefined : parseSecretDigest(record['secretDigest'], source),
     restricted: record['restricted'] === undefined ? undefined : parseRestricted(record['restricted'], source),
     tunnel: record['tunnel'] === undefined ? undefined : parseTunnel(record['tunnel'], source),
     pairing: record['pairing'] === undefined ? undefined : parsePairing(record['pairing'], source),
   }
+
+  // `provider` e o UNICO campo que e GENUINAMENTE AUSENTE, nao `undefined`
+  // (D3): ausente = telegram. Inclui-lo como chave com valor `undefined`
+  // quebraria a igualdade de conjuntos da normalizacao e inflaria cada
+  // `state.json` v1 reescrito com uma chave que ainda nao tem nada a dizer.
+  // So se propaga quando o disco (ou o callback de `update()`) o escreveu.
+  const provider = parseProvider(record['provider'], source)
+  if (provider !== undefined) resultado['provider'] = provider
+
+  return resultado
 }
 
 /* ========================================================================== */
@@ -333,6 +365,11 @@ export function serializeStateDocument(state: PersistedState): string {
       pairedAt: state.pairing.pairedAt,
     }
   }
+  // `provider` so e gravado quando definido — ausente e o default fechado
+  // (`telegram`, D3), e manter a ausencia em vez de escrever o default evita
+  // inflar todos os `state.json` v1 com uma chave que ainda nao tem nada a
+  // acrecentar. Uma escrita explicita de `provider: 'telegram'` preserva-se.
+  if (state.provider !== undefined) ordered['provider'] = state.provider
   return `${JSON.stringify(ordered, undefined, 2)}\n`
 }
 

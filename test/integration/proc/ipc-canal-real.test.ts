@@ -1,5 +1,5 @@
 /**
- * O CANAL sobre PIPES REAIS -- `src/telegram/ipc.ts` + `worker/ipc.ts` + o
+ * O CANAL sobre PIPES REAIS -- `src/ipc/channel.ts` + `worker/ipc.ts` + o
  * supervisor generico, com um processo `node` do outro lado.
  *
  * PORQUE ISTO NAO E REDUNDANTE COM OS TESTES UNITARIOS: os unitarios usam
@@ -21,7 +21,7 @@ import type { BackoffConfig } from '../../../src/config/schema.ts'
 import type { IpcIntentMessage, IpcMessageToWorker } from '../../../src/contracts/ipc.ts'
 import type { SubprocessHandle } from '../../../src/dsh/adapter.ts'
 import { createProcessSupervisor, type ProcessSupervisor } from '../../../src/proc/supervisor.ts'
-import { createHostIpcChannel, type HostIpcChannel } from '../../../src/telegram/ipc.ts'
+import { createHostIpcChannel, type HostIpcChannel } from '../../../src/ipc/channel.ts'
 import { createGuardLogger } from '../../../src/logging/logger.ts'
 import { FakeScheduler, makeSupervisorDeps } from '../../support/child-double.ts'
 import { isAlive, makeRealContext, waitFor, type RealSubprocessService } from './seat.ts'

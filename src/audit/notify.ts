@@ -79,7 +79,7 @@ import { IPC_PROTOCOL_VERSION } from '../contracts/ipc.ts'
 import type { AuditSink } from '../contracts/auth.ts'
 import type { Scheduler, TimerHandle } from '../proc/scheduler.ts'
 import type { GuardLogger } from '../logging/logger.ts'
-import type { HostIpcChannel } from '../telegram/ipc.ts'
+import type { HostIpcChannel } from '../ipc/channel.ts'
 import { redact } from '../logging/redact.ts'
 import {
   EVENTO_RELATORIO,

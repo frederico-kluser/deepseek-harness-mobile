@@ -204,3 +204,45 @@ describe('parsePersistedState valida tambem a SAIDA do callback de update()', ()
     assert.equal(lido.secretDigest, undefined)
   })
 })
+
+describe('`provider` persistido (D3) -- aditivo e fechado', () => {
+  it('um state v1 sem `provider` continua a ler: ausente = telegram -, nada quebra', () => {
+    const lido = parseStateDocument('{"version":1,"desiredState":"READY"}', FONTE)
+    assert.equal(lido.provider, undefined)
+    assert.deepEqual(Object.keys(lido).toSorted(), [
+      'desiredState',
+      'pairing',
+      'restricted',
+      'secretDigest',
+      'tunnel',
+      'version',
+    ])
+  })
+
+  it('aceita o unico literal fechado, `telegram`', () => {
+    const lido = parseStateDocument('{"version":1,"desiredState":"READY","provider":"telegram"}', FONTE)
+    assert.equal(lido.provider, 'telegram')
+  })
+
+  it('recusa valor de provedor desconhecido -- nao se degrada por adivinhacao', () => {
+    recusa('{"version":1,"desiredState":"READY","provider":"whatsapp"}')
+    recusa('{"version":1,"desiredState":"READY","provider":42}')
+  })
+
+  it('emptyState nao ganha a chave: o default fechado e a AUSENCIA', () => {
+    assert.deepEqual(emptyState(), { version: 1, desiredState: 'STOPPED' })
+    assert.equal('provider' in emptyState(), false)
+  })
+
+  it('provider NULO e o default (ausencia), nao erro', () => {
+    const lido = parseStateDocument('{"version":1,"desiredState":"STOPPED","provider":null}', FONTE)
+    assert.equal(lido.provider, undefined)
+  })
+
+  it('sobrevive a uma ida e volta pelo disco', () => {
+    const estado: PersistedState = { version: 1, desiredState: 'READY', provider: 'telegram' }
+    const texto = serializeStateDocument(estado)
+    assert.deepEqual(Object.keys(JSON.parse(texto) as object), ['version', 'desiredState', 'provider'])
+    assert.equal(parseStateDocument(texto, FONTE).provider, 'telegram')
+  })
+})

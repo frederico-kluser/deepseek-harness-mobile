@@ -12,11 +12,12 @@ Ao participar, concorda com o [Código de Conduta](CODE_OF_CONDUCT.md).
 
 ## 0. Estado do projeto — leia antes de investir tempo
 
-O plugin **ainda não funciona ponta a ponta**. Está em reconstrução ativa: a superfície real da
-API do DSH foi levantada pacote a pacote e o código está a ser migrado para ela; o túnel, o bot
-do Telegram e o liga/desliga ainda não existem como funcionalidade entregue. Um PR grande neste
-momento tem grande probabilidade de colidir com trabalho em curso — **abra uma issue antes de
-escrever código**.
+O plugin **funciona ponta a ponta**: o túnel liga/desliga pelo bot, o portão autentica a
+borda, o onboarding com pareamento está entregue e o desacoplamento para **provedores de
+mensageria** está concluído (núcleo neutro em `worker/surface/**`, adaptador Telegram em
+`worker/providers/telegram/**`, boot genérico em `worker/telegram-bot.ts`). O repositório está em
+manutenção ativa; um PR grande pode ainda colidir com trabalho em curso — **abra uma issue antes
+de escrever código** se o escopo não estiver claro.
 
 ---
 
@@ -107,10 +108,39 @@ Estes nomes foram substituídos e **não podem voltar** ao código, aos testes n
 | `/__mobile`, `/__gate` | `/__guard` |
 | `ADMIN_USER`, `ADMIN_PASS` | credencial gerada pelo plugin, persistida só como digest |
 | `@deepseek-ai/dsh-host-subprocess` (pacote inexistente) | `@deepseek-ai/dsh-subprocess` |
+| `worker/auth/*`, `worker/commands/*`, `worker/lib/{client,polling,keyboard,token,transport-log,auto-retry,outbox}.ts` | `worker/surface/**` (núcleo neutro) + `worker/providers/<id>/**` (adaptador). Caminhos extintos no desacoplamento para provedores. |
 
 ---
 
-## 5. O que nunca é aceite num PR
+## 5. Adicionar um provedor de mensageria
+
+O worker é neutro ao provedor; o Telegram é o único fornecedor hoje. Adicionar um novo (WhatsApp,
+Discord, Matrix…) é implementar o contrato `ProviderAdapter` e registá-lo. O **checklist completo
+passo-a-passo está em [`docs/PROVIDERS.md`](docs/PROVIDERS.md) §4** — siga-o e não salte passos; um
+fornecedor só é **suportado** quando a checklist toda fecha. Em resumo:
+
+1. **Criar `worker/providers/<id>/**`** — cliente, polling (ou webhook), parse do update, teclado,
+   token, transporte, adapter; o grammY (ou equivalente) vive **só** aqui.
+2. **Implementar `ProviderAdapter` concreto** — `id`, `limits`, `start(handleEvent)`, `stop`,
+   `publishCommands`, `sender()`; o adaptador é **dono do próprio loop** e nunca autoriza nada.
+3. **Eventos correctos** — `SurfaceEvent` de `comando`/`acao`/`acao-invalida`, com **`answerTarget`
+   sempre** quando houver análogo de callback (o núcleo responde ao clique em todo os caminhos).
+4. **Limites reais** — `SurfaceLimits` com os valores do canal (o núcleo corta/renderiza por eles).
+5. **Token/segredo por allowlist** — a sua linha em `PROVIDER_ENV` (`src/proc/env.ts`); nunca por
+   `argv` (o análogo de TG-069).
+6. **Registar no registry** — uma entrada em `PROVIDERS` (`worker/providers/registry.ts`) + o
+   literal no espelho `ProviderId` de `src/proc/env.ts`; `resolverProvedor` é fail-closed.
+7. **Config `worker.provider`** — o campo opcional em `src/config/schema.ts`.
+8. **Testes com duble local** — unitários do adaptador (+ o teste estrutural do cone de import) e
+   e2e com o duble; ver [`docs/TESTING.md`](docs/TESTING.md) §2.
+9. **Docs** — secção própria (instalação, config, comandos, limites) no manual de provedores.
+
+Use as habilidades de apoio do repo para acelerar: `.agents/skills/dsh-provider-bot` e
+`.agents/skills/dsh-telegram-provider`.
+
+---
+
+## 6. O que nunca é aceite num PR
 
 Sem eufemismo, porque cada um destes já foi pedido em projetos equivalentes:
 
@@ -136,7 +166,7 @@ Sem eufemismo, porque cada um destes já foi pedido em projetos equivalentes:
 
 ---
 
-## 6. O que esperar de nós
+## 7. O que esperar de nós
 
 Projeto de uma pessoa, com prazos declarados e honestos:
 

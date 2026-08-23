@@ -80,14 +80,18 @@ import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
 import { createOneTimeTokenStore } from './secret/ott.ts'
 import { createMagicStore } from './session/magic.ts'
 import { createNativeUiSurface } from './ui-contrib/surface.ts'
-import { derivarEstadoTelegram } from './ui-contrib/telegram-state.ts'
+import { derivarEstadoDoBot } from './ui-contrib/bot-state.ts'
 import type { WebRoute } from './dsh/adapter.ts'
 import {
-  CHAVE_DO_TOKEN,
   analisarSecretsEnv,
   caminhoDoSecretsEnv,
   lerSecretsEnv,
 } from './telegram/onboarding.ts'
+import {
+  DEFAULT_PROVIDER,
+  PROVIDER_ENV,
+  type ProviderId,
+} from './proc/env.ts'
 
 /**
  * O RESOLUTOR DE ORIGEM DO PAINEL -- reexportado, e agora o UNICO que existe.
@@ -557,10 +561,24 @@ export function apply(ctx: Context, config: Config): void {
   log.info(`Estado em ${statePaths.file}; auditoria em ${auditPath}.`)
 
   /**
+   * O PROVEDOR de mensageria ATIVO (desacoplamento do bot -> provedores, D1).
+   *
+   * A fonte e `config.worker.provider` (ausente = default fechado `telegram`);
+   * e a MESMA escolha que o worker faz ao ler `DSH_GUARD_PROVIDER` do seu
+   * ambiente (injetado por `buildWorkerEnv`). O host ainda so conhece `telegram`;
+   * um provedor futuro muda este literal e a linha propria em `PROVIDER_ENV` —
+   * nada mais abaixo precisa de mudar: o `tokenVar` do provedor ativo vem da
+   * tabela `PROVIDER_ENV` (nao de uma constante "telegram").
+   */
+  const provider: ProviderId = config.worker.provider ?? DEFAULT_PROVIDER
+  /** O NOME da variavel de ambiente onde vive o token do provedor ativo. */
+  const tokenVarDoProvedor = PROVIDER_ENV[provider].tokenVar
+
+  /**
    * RESOLVEDOR DO TOKEN DO BOT — fonte de verdade UNICA, usada nas DUAS pontas
    * que precisam de saber se ha bot: a decisao de spawn do worker (efeito 6,
-   * `createWorkerSupervisor` + injeção do env) e o estado do botao Telegram da
-   * UI (`telegramState`). Antes esta resolucao existia duplicada e divergente —
+   * `createWorkerSupervisor` + injeção do env) e o estado do botao da UI
+   * (`botState`). Antes esta resolucao existia duplicada e divergente —
    * o worker so subia com `config.worker.token`, mas a UI tambem acendia o
    * botao com um token apenas em `secrets.env`, mentindo sobre o bot estar
    * ligado.
@@ -569,6 +587,10 @@ export function apply(ctx: Context, config: Config): void {
    * `config.worker.token` PRIMEIRO (o que o host injeta via env),
    * `secrets.env` a seguir (o que `dsh-guard-setup --pedir-token` grava). Um
    * token so existe se QUALQUER uma das fontes o der; vazio = SEM BOT.
+   *
+   * O NOME da variavel lida no `secrets.env` e o do PROVEDOR ATIVO
+   * (`PROVIDER_ENV[provider].tokenVar`): hoje `TELEGRAM_BOT_TOKEN`; um provedor
+   * futuro muda-o aqui sem tocar na logica abaixo.
    *
    * O VALOR RAPIDO NUNCA sai para a UI: esta funcao existe para DECIDIR, e os
    * consumidores UI transformam o resultado em boleano/motivo.
@@ -585,7 +607,7 @@ export function apply(ctx: Context, config: Config): void {
       void error
       return undefined
     }
-    const valor = env === undefined ? undefined : analisarSecretsEnv(env).get(CHAVE_DO_TOKEN)?.trim()
+    const valor = env === undefined ? undefined : analisarSecretsEnv(env).get(tokenVarDoProvedor)?.trim()
     return valor !== undefined && valor.length > 0 ? valor : undefined
   }
 
@@ -1070,13 +1092,13 @@ export function apply(ctx: Context, config: Config): void {
       issueNonce: (action) => controlador.emitirNonce(action),
       subscribe: (listener) => fanoutDeEstado.assinar(listener),
       now: agora,
-      // O ESTADO DO BOTAO Telegram, do disco a cada pedido. S6/S4: o token NUNCA
+      // O ESTADO DO BOTAO do bot, do disco a cada pedido. S6/S4: o token NUNCA
       // sai daqui para a UI — esta funcao so decide se "existe" e se ha dono
       // pareado, e devolve boleanos + motivo. Token configurado = o MESMO
       // resolvedor que decide o spawn do worker (`resolverTokenDoBot`), para o
       // botao nunca mentir sobre o bot estar ligado; pareamento = `pairing` do
       // `state.json`. Falha de leitura fecha para OFFLINE (fail-closed).
-      telegramState: () => {
+      botState: () => {
         const tokenConfigurado = resolverTokenDoBot() !== undefined
         let pairing: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
         try {
@@ -1085,7 +1107,7 @@ export function apply(ctx: Context, config: Config): void {
           void error
           return { online: false, motivo: tokenConfigurado ? 'sem-pareamento' : 'sem-chave' }
         }
-        return derivarEstadoTelegram({ tokenConfigurado, pairing })
+        return derivarEstadoDoBot({ tokenConfigurado, pairing })
       },
     })
 
@@ -1187,13 +1209,13 @@ export function apply(ctx: Context, config: Config): void {
     // gravou em `secrets.env` (e que a UI mostra ONLINE) faz o worker SPAWNAR
     // de facto. Nao ha divergencia a corrigir a mao.
     const tokenDoBot = resolverTokenDoBot()
-    // Token vazio/ausente = "telegram nao configurado" (contrato INSTALL.md
+    // Token vazio/ausente = "bot nao configurado" (contrato INSTALL.md
     // Passo 2/4): o portao HTTP funciona sem o bot. Nao ha worker, nem
     // supervisor, nem subprocesso, nem backoff -- so a linha de boot
     // documentada. O efeito continua registado (os 5 efeitos sao contrato de
     // ordem/LIFO) mas devolve um disposer no-op sincrono.
     if (tokenDoBot === undefined) {
-      log.info('telegram: não configurado — rode /parear <código> no bot')
+      log.info(`bot nao configurado (provedor ${provider}) — rode /parear <código> no bot`)
       return (): void => undefined
     }
     // Item 5 (costura): /acessar (link magico) e /rotacionar (segredo novo,
@@ -1252,6 +1274,10 @@ export function apply(ctx: Context, config: Config): void {
       // env do filho. Sem o override, ele usaria so `config.worker.token` e um
       // token apenas em `secrets.env` nao ligaria o worker (o bug HIGH do botao).
       token: tokenDoBot,
+      // O provedor ATIVO (default fechado `telegram`): o supervisor rotula o
+      // filho com `DSH_GUARD_PROVIDER=<provider>` e escolhe o `tokenVar` de
+      // destino — vindo da MESMA fonte que `resolverTokenDoBot`.
+      provider,
     })
     workerSupervisor = supervisor
     supervisor.start()

@@ -47,7 +47,7 @@
 #     $ dsh web
 #     [guarded-bot] senha gerada (aparece UMA vez): K7QF-2M9X-...-4TZP
 #     [guarded-bot] bind 127.0.0.1:3080 — OK
-#     [guarded-bot] telegram: não configurado — rode /parear <código> no bot
+#     [guarded-bot] bot não configurado (provedor telegram) — rode /parear <código> no bot
 #
 # O *fail loud at load* continua a existir — mas onde é seguro e correto: dentro
 # do plugin (`assertSecureBind`, `assertUsableCredential`, verificação de modo
@@ -370,7 +370,7 @@
           # `cordis.profile.patch.example.yml`.
 
           # Token do bot. Lido do ambiente SEM LANÇAR: ausência vira string
-          # vazia, e vazio significa "telegram não configurado" — o worker fica
+          # vazia, e vazio significa "bot não configurado" — o worker fica
           # em baixo e o `dsh` arranca à mesma. É a saída canónica do
           # quickstart.
           #
@@ -386,6 +386,16 @@
           # (`0600`), gravado pelo onboarding `/parear`; o ambiente é o
           # fallback documentado.
           token: !!js "process.env.TELEGRAM_BOT_TOKEN ?? ''"
+
+          # O PROVEDOR de mensageria ATIVO (desacoplamento do bot, D1).
+          #
+          # Declarado aqui — e nao so no `Config` — para a config default do
+          # worker ficar sincronizada com o enum fechado. Ausente, o plugin
+          # aplica o default `telegram` (a mesma decisão de `src/proc/env.ts` e
+          # de `src/index.ts`), por isso esta linha é a leitura EXPLÍCITA do que
+          # hoje é o único provedor. Um provedor futuro (ex.: `whatsapp`)
+          # acrescenta o literal aqui e a sua própria linha em `src/proc/env.ts`.
+          provider: telegram
 
           # Janela de terminação graciosa do subprocesso, em milissegundos.
           # `SubprocessSpawnSpec` exige `graceMs`: o `ctx.subprocess.spawn`

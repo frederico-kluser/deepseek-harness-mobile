@@ -25,8 +25,8 @@ import {
   TOKEN_DE_TESTE,
   type FakeBotApi,
 } from './telegram-apoio.ts'
-import { createBot } from '../../worker/lib/client.ts'
-import { buildPollingOptions, runPolling } from '../../worker/lib/polling.ts'
+import { createTelegramBot as createBot } from '../../worker/providers/telegram/cliente.ts'
+import { runPolling } from '../../worker/providers/telegram/polling.ts'
 
 assertSemTokenRealNoAmbiente()
 
@@ -123,7 +123,7 @@ describe('e2e 429 — retry_after lido do fio e respeitado EXATAMENTE', () => {
     const log = captureLog()
     const bot = createBot({ token: TOKEN_DE_TESTE, apiRoot: srv.apiRoot, log: log.logger, time })
 
-    const corrida = runPolling({ bot, log: log.logger, options: buildPollingOptions() })
+    const corrida = runPolling({ bot, log: log.logger })
     await aguardar(() => chamadasDe(srv, 'getUpdates').length >= 1, 'primeiro getUpdates (o 429)')
     const t0 = Date.now()
     await aguardar(() => chamadasDe(srv, 'getUpdates').length >= 2, 'a repeticao depois do retry_after', 8000)

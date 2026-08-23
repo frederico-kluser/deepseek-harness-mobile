@@ -63,7 +63,7 @@ import {
   type UiContribCore,
   type UiContribRoute,
 } from './routes.ts'
-import type { TelegramEstado } from './telegram-state.ts'
+import type { BotEstado } from './bot-state.ts'
 import { createUlidFactory } from './ulid.ts'
 
 /** A difusao de estado que esta superficie consome. */
@@ -98,12 +98,12 @@ export interface UiContribDeps {
   readonly subscribe: (listener: (broadcast: UiContribBroadcast) => void) => () => void
   readonly now: () => number
   /**
-   * O estado Telegram OFFLINE/ONLINE, lido do disco pela costura em
+   * O estado do BOT OFFLINE/ONLINE, lido do disco pela costura em
    * `src/index.ts`. A superficie so o reencaminha; nao guarda estado proprio
-   * para o telegram (cada pedido le o disco de novo — o pareamento muda pela
+   * para o bot (cada pedido le o disco de novo — o pareamento muda pela
    * CLI/worker, nao por esta superficie).
    */
-  readonly telegramState: () => TelegramEstado
+  readonly botState: () => BotEstado
   readonly requestedBy?: string
 }
 
@@ -140,7 +140,7 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     projection: () => lastSnapshot,
     seq: () => lastSeq,
     lastReady: () => lastReady,
-    telegramState: deps.telegramState,
+    botState: deps.botState,
     csrf,
     now: deps.now,
     requestedBy,

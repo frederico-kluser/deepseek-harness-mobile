@@ -31,12 +31,12 @@ import {
 import {
   COMANDO_DE_PAREAMENTO,
   COMANDO_CLI,
-  derivarEstadoTelegram,
-  passosDoTelegram,
+  derivarEstadoDoBot,
+  passosDoBot,
   PASSOS_DO_CONECTOR,
   PASSOS_DE_USO,
-  type TelegramEstado,
-} from '../../../src/ui-contrib/telegram-state.ts'
+  type BotEstado,
+} from '../../../src/ui-contrib/bot-state.ts'
 import { FakeClock } from '../../support/clock.ts'
 
 interface RespostaCapturada {
@@ -49,8 +49,8 @@ interface Bancada {
   readonly rotas: Map<string, { handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }>
   readonly emitidos: ControlIntent[]
   token(): string
-  /** Define o estado que o `telegramState` injetado devolvera. */
-  definirTelegrama(estado: TelegramEstado): void
+  /** Define o estado que o `botState` injetado devolvera. */
+  definirTelegrama(estado: BotEstado): void
   enviar(
     caminho: string,
     opcoes?: { metodo?: string; token?: string },
@@ -62,7 +62,7 @@ function criarBancada(): Bancada {
   const rotas = new Map<string, { handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }>()
   const emitidos: ControlIntent[] = []
   let tokenDoTap = ''
-  let telegrama: TelegramEstado = { online: false, motivo: 'sem-chave' }
+  let telegrama: BotEstado = { online: false, motivo: 'sem-chave' }
 
   const deps: UiContribDeps = {
     tapIndex: (transform) => {
@@ -85,7 +85,7 @@ function criarBancada(): Bancada {
       return () => undefined
     },
     now: () => clock.now(),
-    telegramState: () => telegrama,
+    botState: () => telegrama,
   }
   void createNativeUiSurface(deps)
 
@@ -144,31 +144,31 @@ function criarBancada(): Bancada {
 /* A DERIVACAO PURA                                                           */
 /* ========================================================================== */
 
-describe('derivarEstadoTelegram (pura)', () => {
+describe('derivarEstadoDoBot (pura)', () => {
   const pareamento = { ownerUserId: 1, ownerChatId: 1, pairedAt: 1_000 }
 
   it('sem token (mesmo pareado) -> OFFLINE sem-chave', () => {
-    assert.deepEqual(derivarEstadoTelegram({ tokenConfigurado: false, pairing: pareamento }), {
+    assert.deepEqual(derivarEstadoDoBot({ tokenConfigurado: false, pairing: pareamento }), {
       online: false,
       motivo: 'sem-chave',
     })
   })
 
   it('token sem pareamento -> OFFLINE sem-pareamento', () => {
-    assert.deepEqual(derivarEstadoTelegram({ tokenConfigurado: true, pairing: undefined }), {
+    assert.deepEqual(derivarEstadoDoBot({ tokenConfigurado: true, pairing: undefined }), {
       online: false,
       motivo: 'sem-pareamento',
     })
   })
 
   it('token E pareamento -> ONLINE', () => {
-    assert.deepEqual(derivarEstadoTelegram({ tokenConfigurado: true, pairing: pareamento }), {
+    assert.deepEqual(derivarEstadoDoBot({ tokenConfigurado: true, pairing: pareamento }), {
       online: true,
     })
   })
 
   it('sem token e sem pareamento -> OFFLINE sem-chave (a falta da chave manda)', () => {
-    assert.deepEqual(derivarEstadoTelegram({ tokenConfigurado: false, pairing: undefined }), {
+    assert.deepEqual(derivarEstadoDoBot({ tokenConfigurado: false, pairing: undefined }), {
       online: false,
       motivo: 'sem-chave',
     })
@@ -191,9 +191,9 @@ describe('texto do Telegram sem vazamento', () => {
     assert.ok(!/[0-9]{6}/u.test(texto), 'nenhum codigo de 6 digitos no texto')
   })
 
-  it('`passosDoTelegram` distribui conector (offline) e uso (online)', () => {
-    assert.equal(passosDoTelegram({ online: false, motivo: 'sem-chave' }), PASSOS_DO_CONECTOR)
-    assert.equal(passosDoTelegram({ online: true }), PASSOS_DE_USO)
+  it('`passosDoBot` distribui conector (offline) e uso (online)', () => {
+    assert.equal(passosDoBot({ online: false, motivo: 'sem-chave' }), PASSOS_DO_CONECTOR)
+    assert.equal(passosDoBot({ online: true }), PASSOS_DE_USO)
   })
 
   it('o estado projetado nunca carrega a chave — so online/motivo/handle', async () => {

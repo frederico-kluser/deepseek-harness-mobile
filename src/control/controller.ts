@@ -37,7 +37,7 @@
  * ---------------------------------------------------------------------------
  * DECISAO SINCRONA vs DESPACHO ASSINCRONO
  * ---------------------------------------------------------------------------
- * O canal IPC exige que `onIntent` responda NO MESMO TICK (`src/telegram/ipc.ts`:
+ * O canal IPC exige que `onIntent` responda NO MESMO TICK (`src/ipc/channel.ts`:
  * "SINCRONO e obrigatorio"). Quase tudo aqui e decidivel de forma sincrona —
  * recusas, noops e as transicoes `stop`/`reset`, que nao esperam pelo processo.
  * A UNICA excecao e `start` a partir de `STOPPED`: o probe fail-closed e
@@ -86,7 +86,7 @@ import type { TunnelSnapshot, TunnelState } from '../contracts/tunnel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
 import type { Scheduler, TimerHandle } from '../proc/scheduler.ts'
 import type { TunnelSupervisor } from '../tunnel/supervisor.ts'
-import type { HostIpcChannel } from '../telegram/ipc.ts'
+import type { HostIpcChannel } from '../ipc/channel.ts'
 import type { ConfirmServiceComVeredito } from './confirm.ts'
 
 /** Intervalo do repasse de reconciliacao. Ver o cabecalho. */

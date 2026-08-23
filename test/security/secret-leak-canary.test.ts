@@ -37,11 +37,11 @@ import { createGateAuthStack } from '../../src/http/session-auth.ts'
 import { installAuthBarrier } from '../../src/http/intercept.ts'
 import { UNAUTHENTICATED_PANEL_PREFIXES } from '../../src/index.ts'
 import { bancada, basic, type Bancada } from '../unit/http/bancada.ts'
-import { buildWorkerEnv, WORKER_IPC_ENV_MARK } from '../../src/proc/env.ts'
+import { buildWorkerEnv, WORKER_IPC_ENV_MARK, WORKER_PROVIDER_ENV_VAR } from '../../src/proc/env.ts'
 import { buildCloudflaredEnv } from '../../src/tunnel/args.ts'
 import { digestSecret } from '../../src/secret/verify.ts'
 import { redact } from '../../src/logging/redact.ts'
-import { serializeIpcMessage, parseIpcLine, type IpcDirection } from '../../src/telegram/ipc.ts'
+import { serializeIpcMessage, parseIpcLine, type IpcDirection } from '../../src/ipc/channel.ts'
 import {
   comporTextoAuthFalha,
   comporTextoLinkMagico,
@@ -255,7 +255,7 @@ describe('ADV-055/059 -- os ambientes construidos dos subprocessos', () => {
       'PYTHONHOME', 'PYTHONPATH', 'PYTHONUNBUFFERED', 'PYTHONIOENCODING', 'PYTHONDONTWRITEBYTECODE',
       'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE',
       'SYSTEMROOT', 'COMSPEC', 'PATHEXT',
-      'TELEGRAM_BOT_TOKEN', WORKER_IPC_ENV_MARK,
+      'TELEGRAM_BOT_TOKEN', WORKER_IPC_ENV_MARK, WORKER_PROVIDER_ENV_VAR,
     ].toSorted()
     // LC_* entra em bloco; as aleatorias nao comecam por LC_.
     for (const chave of aleatorias) {

@@ -32,7 +32,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { IPC_PROTOCOL_VERSION, type IpcMessageToWorker, type IpcNotifyMessage } from '../../../src/contracts/ipc.ts'
-import { serializeIpcMessage } from '../../../src/telegram/ipc.ts'
+import { serializeIpcMessage } from '../../../src/ipc/channel.ts'
 import { canonicalizeSecret } from '../../../src/secret/canonical.ts'
 import { createSecretStore } from '../../../src/secret/store.ts'
 import { createFileStateStore } from '../secret/state-store-double.ts'
@@ -40,7 +40,7 @@ import { FakeClock } from '../../support/clock.ts'
 import { FakeScheduler } from '../../support/child-double.ts'
 import { makeTempStateDir } from '../../support/state-dir.ts'
 import type { SessaoNovaEvent } from '../../../src/audit/events.ts'
-import type { HostIpcChannel } from '../../../src/telegram/ipc.ts'
+import type { HostIpcChannel } from '../../../src/ipc/channel.ts'
 import type { GuardLogger } from '../../../src/logging/logger.ts'
 import {
   ALERTA_AUTH_FALHA,

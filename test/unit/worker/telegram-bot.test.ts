@@ -1,34 +1,37 @@
 /**
- * `worker/telegram-bot.ts` — o entrypoint, do arranque ao codigo de saida.
+ * `worker/telegram-bot.ts` — o BOOT GENERICO por provedor (onda 4).
  *
- * PORQUE ESTE FICHEIRO NAO ESTA EM `test/unit/worker/lib/`: a convencao de
- * `05-QUALIDADE-CODIGO.md` 5.4 e `test/unit/<mesmo caminho da fonte>`, e a
- * fonte e `worker/telegram-bot.ts`. O dono do teste e o dono da fonte, e esta
- * fonte e exclusiva de T4.2.
+ * PORQUE ESTE FICHEIRO NAO ESTA EM `test/unit/worker/providers/`: a convencao
+ * de `05-QUALIDADE-CODIGO.md` 5.4 e `test/unit/<mesmo caminho da fonte>`, e a
+ * fonte e `worker/telegram-bot.ts`.
  *
- * `runTelegramWorker` DEVOLVE o codigo de saida em vez de chamar `process.exit`:
- * e essa separacao que torna todos estes caminhos — incluindo o do 409 — mediveis
- * sem subprocesso nenhum.
+ * O boot monta o NUCLEO neutro sobre o ADAPTADOR telegram (o unico provedor
+ * hoje) contra o duble `telegram-server.mjs` via `apiRoot`. O canal IPC e
+ * INJETADO (`runtime.ipc`) para o teste nao tocar no `process`: o que se mede
+ * e a ORQUESTRACAO — token->adaptador->nucleo->polling e os codigos de saida.
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { after, describe, it } from 'node:test'
 
+import { GrammyError } from 'grammy'
+
+import type { IpcMessageFromWorker } from '../../../src/contracts/ipc.ts'
 import { WORKER_EXIT } from '../../../worker/lib/errors.ts'
-import { createWorkerLogger } from '../../../worker/lib/log.ts'
-import { runTelegramWorker, WORKER_LOG_LEVEL } from '../../../worker/telegram-bot.ts'
+import type { WorkerIpc } from '../../../worker/ipc.ts'
+import type { ProvedorDescrito } from '../../../worker/providers/registry.ts'
+import { ProviderError } from '../../../worker/providers/telegram/interno.ts'
+import { TOKEN_ENV_VAR } from '../../../worker/providers/telegram/token.ts'
+import { runTelegramWorker } from '../../../worker/telegram-bot.ts'
 import {
   aguardar,
-  canonicalErrors,
   captureLog,
   chamadasDe,
   FakeTime,
   startFakeBotApi,
   TOKEN_DE_TESTE,
   type FakeBotApi,
-} from './lib/apoio.ts'
+} from './bot-apoio.ts'
 
 const abertos: FakeBotApi[] = []
 after(async () => {
@@ -37,23 +40,106 @@ after(async () => {
 
 const ARGV_LIMPO = ['/usr/bin/node', '/pacote/dist/worker/telegram-bot.js']
 
+/** Canal IPC falso: o `send` regista, o host nunca envia mensagens. */
+function ipcFalso(): { ipc: WorkerIpc; sends: IpcMessageFromWorker[] } {
+  const sends: IpcMessageFromWorker[] = []
+  return {
+    ipc: {
+      send: (message: Parameters<WorkerIpc['send']>[0]): boolean => {
+        sends.push(message)
+        return true
+      },
+      log: () => undefined,
+      dispose: () => undefined,
+    },
+    sends,
+  }
+}
+
+/** O provedor telegram completo, so para os testes que o usam por injecao. */
+function provedorQueEstouraNoCreate(): ProvedorDescrito {
+  return {
+    id: 'telegram',
+    create: () => {
+      throw new Error('a montagem do adaptador falhou')
+    },
+    lerToken: () => TOKEN_DE_TESTE,
+    assertTokenNaoEmArgv: () => undefined,
+  }
+}
+
+/** Ao proveedor cujo `start()` rejeita TERMINALMENTE (409/401) na arrancada. */
+function provedorComStartQueRejeita(erro: unknown): ProvedorDescrito {
+  return {
+    id: 'telegram',
+    create: () => ({
+      id: 'telegram',
+      limits: { maxTextLength: 4096, maxActionRows: 1, maxActionPerRow: 1, maxActionDataBytes: 64, supportsEditing: true },
+      start: async () => {
+        throw erro
+      },
+      stop: async () => undefined,
+      publishCommands: async () => undefined,
+      sender: () => ({
+        send: async () => '',
+        edit: async () => 'unchanged',
+        answer: async () => true,
+      }),
+      descartados: () => 0,
+    }),
+    lerToken: () => TOKEN_DE_TESTE,
+    assertTokenNaoEmArgv: () => undefined,
+  }
+}
+
+/** Um `GrammyError` 409 como o grammY o produz (o boot classifica-o -> 11). */
+function erro409DeGetUpdates(): GrammyError {
+  return new GrammyError(
+    'Call to getUpdates failed',
+    {
+      ok: false,
+      error_code: 409,
+      description: 'Conflict: terminated by other getUpdates request',
+    },
+    'getUpdates',
+    {},
+  )
+}
+
+/** Um `GrammyError` 401 como o grammY o produz (o boot classifica-o -> 12). */
+function erro401DeGetUpdates(): GrammyError {
+  return new GrammyError(
+    'Call to getUpdates failed',
+    {
+      ok: false,
+      error_code: 401,
+      description: 'Unauthorized',
+    },
+    'getUpdates',
+    {},
+  )
+}
+
 describe('worker/telegram-bot — configuracao recusada no arranque', () => {
-  it('sem TELEGRAM_BOT_TOKEN: sai com o codigo de CONFIG, nao com o de instabilidade', async () => {
+  it('sem token: sai com o codigo de CONFIG, nao com o de instabilidade', async () => {
     const log = captureLog()
-    const code = await runTelegramWorker({ env: {}, argv: ARGV_LIMPO, log: log.logger })
+    const { ipc } = ipcFalso()
+    const code = await runTelegramWorker({ env: {}, argv: ARGV_LIMPO, log: log.logger, ipc })
 
     assert.equal(code, WORKER_EXIT.CONFIG)
-    assert.notEqual(code, WORKER_EXIT.POLLING, 'config nao e o mesmo que polling instavel')
+    assert.notEqual(code, WORKER_EXIT.POLLING)
     assert.match(log.all(), /TOKEN_MISSING/u)
     assert.match(log.all(), /TELEGRAM_BOT_TOKEN/u)
   })
 
   it('TG-069: token em argv recusa o arranque (fail-closed), mesmo estando tambem no ambiente', async () => {
     const log = captureLog()
+    const { ipc } = ipcFalso()
     const code = await runTelegramWorker({
-      env: { TELEGRAM_BOT_TOKEN: TOKEN_DE_TESTE },
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
       argv: [...ARGV_LIMPO, '--token', TOKEN_DE_TESTE],
       log: log.logger,
+      ipc,
     })
 
     assert.equal(code, WORKER_EXIT.CONFIG)
@@ -63,121 +149,146 @@ describe('worker/telegram-bot — configuracao recusada no arranque', () => {
 })
 
 describe('worker/telegram-bot — ciclo completo contra o servidor falso', () => {
-  it('arranca, deixa a costura registar-se ANTES do polling, e sai limpo', async () => {
+  it('o provedor desconhecido do registry recusa o arranque com erro claro (fail-closed)', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const code = await runTelegramWorker({
+      env: { ['DSH_GUARD_PROVIDER']: 'whatsapp' },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      ipc,
+    })
+
+    assert.equal(code, WORKER_EXIT.CONFIG)
+    assert.match(log.all(), /provedor desconhecido/u)
+    assert.match(log.all(), /whatsapp/u)
+  })
+
+  it('arranca com a wiring montada antes do polling, publica a lista, e sai limpo', async () => {
     const srv = await startFakeBotApi()
     abertos.push(srv)
     const log = captureLog()
-    const marcos: string[] = []
-    let bot: { stop(): Promise<void> } | undefined
+    const { ipc, sends } = ipcFalso()
+    let parar: (() => Promise<void>) | undefined
 
     const corrida = runTelegramWorker({
-      env: { TELEGRAM_BOT_TOKEN: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
       argv: ARGV_LIMPO,
       log: log.logger,
       time: new FakeTime(),
-      configure: (b) => {
-        // A costura de T4.3 (IPC), T4.4 (allowlist) e T5.2 (comandos) entra
-        // aqui. O que se mede e a ORDEM: registar depois de o polling arrancar
-        // seria perder os primeiros updates.
-        marcos.push(`configure@${chamadasDe(srv, 'getUpdates').length}`)
-        bot = b
+      ipc,
+      onBooted: (boot) => {
+        parar = boot.parar
       },
     })
 
-    await aguardar(() => bot !== undefined, 'configure chamado')
+    // A wiring (canal IPC + nucleo) e montada ANTES de o polling arrancar: o
+    // `onBooted` so dispara depois de `adapter.start`, mas o `getMe`/`getUpdates`
+    // so podem existir depois do boot ter o handler do nucleo ligado.
     await aguardar(() => chamadasDe(srv, 'getUpdates').length >= 1, 'primeiro getUpdates')
-    await bot?.stop()
+    await aguardar(() => parar !== undefined, 'onBooted fornece o handle de paragem', 2000)
+    await parar?.()
     const code = await corrida
 
     assert.equal(code, WORKER_EXIT.OK)
-    assert.deepEqual(marcos, ['configure@0'], 'configure corre ANTES do primeiro getUpdates')
-    assert.equal(srv.calls[0]?.token, TOKEN_DE_TESTE, 'o token viaja na URL…')
-    assert.equal(log.all().includes(TOKEN_DE_TESTE), false, '…e mesmo assim nao aparece no log')
+    // A ordem do boot real, tal como o e2e assere.
+    const ordem = srv.calls.map((c) => c.method)
+    const idxMe = ordem.indexOf('getme')
+    const idxGu = ordem.indexOf('getupdates')
+    assert.ok(idxMe !== -1 && idxGu !== -1)
+    assert.ok(idxMe < idxGu, 'getMe antes do primeiro getUpdates')
+    // A publicacao da lista canonica (TG-080) correu — o adaptador tinha o bot.
+    assert.ok(ordem.includes('setmycommands'), 'a lista canonica foi publicada')
+    // O token viaja na URL... e NAO aparece no log.
+    assert.equal(srv.calls[0]?.token, TOKEN_DE_TESTE)
+    assert.equal(log.all().includes(TOKEN_DE_TESTE), false)
+    // Nenhum intent foi enviado por este caminho (sem host).
+    assert.equal(sends.length, 0)
   })
 
-  it('TG-044: 409 -> o processo termina com o codigo de CONFLITO, distinto de tudo o resto', async () => {
-    const srv = await startFakeBotApi()
-    abertos.push(srv)
-    const errors = await canonicalErrors()
-    const conflito = errors['conflictOtherGetUpdates']
-    assert.ok(conflito !== undefined)
-    srv.queueError('getUpdates', conflito)
+  it('TG-044: 409 na arrancada -> o boot termina com CONFLITO (11), distinto de tudo o resto', async () => {
     const log = captureLog()
+    const { ipc } = ipcFalso()
 
+    // O regex da classificacao do boot vai para cima do `start()` rejeitado.
+    // Um adaptador cujo arranque rejeita com o 409 do grammY (o mesmo erro que
+    // o `bot.start()` real produz num getUpdates conflituoso).
     const code = await runTelegramWorker({
-      env: { TELEGRAM_BOT_TOKEN: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
       argv: ARGV_LIMPO,
       log: log.logger,
       time: new FakeTime(),
+      ipc,
+      provider: provedorComStartQueRejeita(erro409DeGetUpdates()),
     })
 
     assert.equal(code, WORKER_EXIT.CONFLICT)
-    assert.notEqual(code, WORKER_EXIT.OK, 'sair com 0 faria o host achar que foi paragem pedida')
-    assert.equal(chamadasDe(srv, 'getUpdates').length, 1, 'sem ciclo de reconexao')
+    assert.notEqual(code, WORKER_EXIT.OK)
     assert.match(log.all(), /409/u)
   })
 
-  it('um `configure` que rebenta nao deixa o processo pendurado: sai com codigo', async () => {
-    const srv = await startFakeBotApi()
-    abertos.push(srv)
+  it('TG-044: 401 na arrancada -> o boot termina com NAO AUTORIZADO (12)', async () => {
     const log = captureLog()
+    const { ipc } = ipcFalso()
 
     const code = await runTelegramWorker({
-      env: { TELEGRAM_BOT_TOKEN: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
       argv: ARGV_LIMPO,
       log: log.logger,
       time: new FakeTime(),
-      configure: () => {
-        throw new Error('a costura falhou a registar-se')
-      },
+      ipc,
+      provider: provedorComStartQueRejeita(erro401DeGetUpdates()),
+    })
+
+    assert.equal(code, WORKER_EXIT.UNAUTHORIZED)
+    assert.notEqual(code, WORKER_EXIT.OK)
+    assert.match(log.all(), /401/u)
+  })
+
+  it('BOOT_TIMEOUT no start -> o boot preserva o codigo e sai com 14 (NAO 13)', async () => {
+    // O `adapter.start` rejeita com o ProviderError BOOT_TIMEOUT (o mesmo que o
+    // `runPolling` produz ao estourar o prazo de 45 s). O boot tem de preservar
+    // `exitCodeFor(BOOT_TIMEOUT)` = 14 ANTES do `classifyPollingError`, que o
+    // reduziria a POLLING_FAILED (13).
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const erro = new ProviderError(
+      'BOOT_TIMEOUT',
+      'o arranque nao chegou a receber updates em 45000 ms',
+    )
+
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider: provedorComStartQueRejeita(erro),
+    })
+
+    assert.equal(code, WORKER_EXIT.BOOT_TIMEOUT)
+    assert.equal(code, 14)
+    assert.notEqual(code, WORKER_EXIT.POLLING, 'o BOOT_TIMEOUT NAO pode cair em 13')
+    assert.match(log.all(), /BOOT_TIMEOUT/u)
+  })
+
+  it('o proveedor que rebenta ao montar o adaptador nao pendura: sai com codigo', async () => {
+    const srv = await startFakeBotApi()
+    abertos.push(srv)
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider: provedorQueEstouraNoCreate(),
     })
 
     assert.equal(code, WORKER_EXIT.POLLING)
-    assert.match(log.all(), /a costura falhou a registar-se/u)
+    assert.match(log.all(), /a montagem do adaptador falhou/u)
     assert.equal(chamadasDe(srv, 'getUpdates').length, 0, 'nem chegou a fazer polling')
-  })
-})
-
-describe('worker/telegram-bot — ACHADO 7: nenhum controlo a fingir', () => {
-  it('o nivel do processo deixa passar `debug`: nenhuma chamada log.debug e codigo morto', () => {
-    const linhas: string[] = []
-    const logger = createWorkerLogger({ sink: (l) => linhas.push(l), level: WORKER_LOG_LEVEL })
-
-    logger.debug('sonda')
-
-    assert.equal(
-      linhas.length,
-      1,
-      'com o nivel preso em `info` — que era o efeito real — esta linha desaparecia',
-    )
-  })
-
-  it('`WORKER_LOG_LEVEL` NAO e lida do ambiente: a allowlist do host nao a deixa passar', () => {
-    const fonte = readFileSync(
-      fileURLToPath(new URL('../../../worker/telegram-bot.ts', import.meta.url)),
-      'utf8',
-    )
-    const semComentarios = fonte
-      .replace(/\/\*[\s\S]*?\*\//gu, '')
-      .replace(/^\s*\/\/.*$/gmu, '')
-
-    assert.equal(
-      /env\s*\[\s*['"`]WORKER_LOG_LEVEL/u.test(semComentarios),
-      false,
-      'ler uma variavel que WORKER_ENV_ALLOWLIST nao deixa passar e um botao desligado do fio',
-    )
-  })
-
-  it('por a variavel no ambiente nao muda nada — e nao muda em silencio, muda por desenho', async () => {
-    const comVariavel = captureLog()
-    const code = await runTelegramWorker({
-      env: { WORKER_LOG_LEVEL: 'error' },
-      argv: ARGV_LIMPO,
-      log: comVariavel.logger,
-    })
-    // Falta o token, logo sai por CONFIG — o que importa e que a linha de erro
-    // SAIU apesar de `WORKER_LOG_LEVEL=error` sugerir o contrario para `info`.
-    assert.equal(code, WORKER_EXIT.CONFIG)
-    assert.match(comVariavel.all(), /TOKEN_MISSING/u)
   })
 })

@@ -142,7 +142,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
       }
     },
     now: () => clock.now(),
-    telegramState: () => ({ online: false, motivo: 'sem-chave' }),
+    botState: () => ({ online: false, motivo: 'sem-chave' }),
     ...overrides,
   }
 
@@ -305,7 +305,7 @@ describe('registo da contribuicao', () => {
       issueNonce: () => ({ valor: 'n', expiresAt: 1 }),
       subscribe: () => () => undefined,
       now: () => clock.now(),
-      telegramState: () => ({ online: false, motivo: 'sem-chave' }),
+      botState: () => ({ online: false, motivo: 'sem-chave' }),
     }
     assert.throws(() => createNativeUiSurface(deps), /rota duplicada/u)
     assert.equal(rotasDesmontadas, 2)

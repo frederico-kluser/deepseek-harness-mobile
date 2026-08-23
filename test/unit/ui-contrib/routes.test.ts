@@ -96,7 +96,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
       return () => undefined
     },
     now: () => clock.now(),
-    telegramState: () => ({ online: false, motivo: 'sem-chave' }),
+    botState: () => ({ online: false, motivo: 'sem-chave' }),
     ...overrides,
   }
   void createNativeUiSurface(deps)

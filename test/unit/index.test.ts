@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process'
 import type { IncomingMessage } from 'node:http'
 import type { TunnelSnapshot } from '../../src/contracts/tunnel.ts'
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
+import { WORKER_PROVIDER_ENV_VAR } from '../../src/proc/env.ts'
 import { apply, criarFanoutDeEstado, inject, name, type Config } from '../../src/index.ts'
 import { UI_PATH_TELEGRAM } from '../../src/ui-contrib/routes.ts'
 import {
@@ -134,7 +135,7 @@ describe('ciclo de vida sob ctx.effect', () => {
       'sem token nao ha supervisor nem subprocesso do worker',
     )
     assert.equal(
-      ctx.logger.has('info', 'telegram: não configurado — rode /parear <código> no bot'),
+      ctx.logger.has('info', 'bot nao configurado (provedor telegram) — rode /parear <código> no bot'),
       true,
       'a linha de boot documentada tem de ser impressa',
     )
@@ -207,6 +208,8 @@ describe('ciclo de vida sob ctx.effect', () => {
         assert.equal(ctx.subprocess.calls.length, 1, 'o worker tem de spawnar com o token do secrets.env')
         const spec = ctx.subprocess.calls[0]
         assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], '123456789:AAsegredoDoSecretsEnv')
+        // O spawn rotula o provedor ativo (provedor-aware): default fechado telegram.
+        assert.equal(spec?.env?.[WORKER_PROVIDER_ENV_VAR], 'telegram')
 
         // A UI reflete o MESMO resolvedor: token presente E dono pareado -> ONLINE.
         assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true })
@@ -247,6 +250,7 @@ describe('ciclo de vida sob ctx.effect', () => {
         assert.equal(ctx.subprocess.calls.length, 1)
         const spec = ctx.subprocess.calls[0]
         assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], 'token-de-teste')
+        assert.equal(spec?.env?.[WORKER_PROVIDER_ENV_VAR], 'telegram')
         assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true })
       } finally {
         for (const disposer of ctx?.effects ?? []) disposer()

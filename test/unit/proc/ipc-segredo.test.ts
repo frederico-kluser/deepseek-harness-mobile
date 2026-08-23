@@ -37,7 +37,7 @@ import type {
   IpcStateMessage,
 } from '../../../src/contracts/ipc.ts'
 import { createWorkerSupervisor } from '../../../src/proc/supervisor.ts'
-import { serializeIpcMessage } from '../../../src/telegram/ipc.ts'
+import { serializeIpcMessage } from '../../../src/ipc/channel.ts'
 import { serializeWorkerIpcMessage } from '../../../worker/ipc.ts'
 import { FakeScheduler, makeSupervisorDeps } from '../../support/child-double.ts'
 import { makeConfig } from '../../support/fixtures.ts'
@@ -281,7 +281,7 @@ describe('S3: a COMPOSICAO real -- o token esta na configuracao e nao sai por la
      *
      * Este cenario ja aqui estava e so verificava o PAYLOAD. O caminho irmao --
      * linha malformada, no teste a seguir -- ja verificava o LOG. A assimetria
-     * dentro do proprio ficheiro escondeu que `src/telegram/ipc.ts` registava
+     * dentro do proprio ficheiro escondeu que `src/ipc/channel.ts` registava
      * `error.message` CRU: um `ECONNRESET em .../bot<token>/getUpdates` entrava
      * em claro no log do plano de controlo, enquanto o MESMO token impresso pelo
      * FILHO ja saia mascarado por `attachStreamLogging`.

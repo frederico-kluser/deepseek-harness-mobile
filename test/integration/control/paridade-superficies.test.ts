@@ -30,7 +30,7 @@ import { createStateHandler as criarEstadoPainel, createTunnelNonceHandler, crea
 import { createStateHandler as criarEstadoUi, createStartHandler, createConfirmHandler, createStopHandler } from '../../../src/ui-contrib/routes.ts'
 import { createCsrfGuard } from '../../../src/ui-contrib/csrf.ts'
 import { UI_CSRF_BINDING } from '../../../src/ui-contrib/routes.ts'
-import { COMANDOS_PUBLICADOS } from '../../../worker/commands/router.ts'
+import { COMANDOS_PUBLICADOS } from '../../../worker/surface/commands.ts'
 import type { TunnelSupervisor } from '../../../src/tunnel/supervisor.ts'
 import { FakeScheduler } from '../../support/child-double.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -211,7 +211,7 @@ function superficieUi(b: Bancada): Superficie {
     requestId: () => 'ui-' + b.clock.now().toString(36) + Math.floor(Math.random() * 1000).toString(36),
     issueNonce: (action: 'start' | 'stop' | 'reset') => b.controlador.emitirNonce(action),
     emit: (intent: Parameters<TunnelController['despachar']>[0]) => b.controlador.despachar(intent),
-    telegramState: () => ({ online: false, motivo: 'sem-chave' } as const),
+    botState: () => ({ online: false, motivo: 'sem-chave' } as const),
   }
   const startHandler = createStartHandler(core)
   const confirmHandler = createConfirmHandler(core)

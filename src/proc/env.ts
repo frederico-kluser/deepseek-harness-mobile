@@ -71,15 +71,69 @@ const WORKER_ENV_PREFIXES: readonly string[] = ['LC_']
 export const WORKER_IPC_ENV_MARK = 'DSH_GUARD_IPC'
 
 /**
- * Monta o ambiente do worker: allowlist + o token do bot.
+ * Identificador do provedor de mensageria ATIVO (desacoplamento do bot, D1).
+ *
+ * FECHADO e paralelo ao enum de `Config.worker.provider` e de
+ * `PersistedState.provider`: o host so conhece `telegram` hoje. Um provedor
+ * futuro ACRESCENTA um literal AQUI e a sua linha em {@link PROVIDER_ENV} —
+ * nunca reescreve uma variavel existente, para que nenhuma mudanca mude
+ * silenciosamente o token de um bot ja emparelhado.
+ */
+export type ProviderId = 'telegram'
+
+/** O default fechado do provedor (D1): ausente em config/estado = telegram. */
+export const DEFAULT_PROVIDER: ProviderId = 'telegram'
+
+/**
+ * Tabela provedor -> variavel de ambiente (e demais) que o worker desse
+ * provedor espera receber (`TOKEN_ENV_VAR` do lado do worker).
+ *
+ * Um provedor e apenas uma ENTRADA aqui: o nome do `tokenVar` para onde o
+ * `worker.token` vai parar. Telegram usa `TELEGRAM_BOT_TOKEN`; um provedor
+ * futuro (ex.: `whatsapp`) acrescentaria a propria linha com o seu `tokenVar`.
+ * O nome da variavel esta DUPLICADO do lado do worker
+ * (`worker/providers/telegram/token.ts`, `TOKEN_ENV_VAR`) e nao importado por
+ * construcao — o worker so pode importar
+ * `src/contracts/ipc.ts` de `src/` (`05-QUALIDADE-CODIGO.md` 5.5); a paridade
+ * e um teste, nao um import.
+ */
+export const PROVIDER_ENV: Readonly<Record<ProviderId, { readonly tokenVar: string }>> = {
+  telegram: { tokenVar: 'TELEGRAM_BOT_TOKEN' },
+}
+
+/**
+ * Variavel que nomeia o PROVEDOR ATIVO no ambiente do worker.
+ *
+ * O worker le-a para saber sob que contrato de provider esta a correr, sem ter
+ * de adivinhar pelo nome do `tokenVar` (que muda com o provedor). E injetada
+ * PELO HOST em `buildWorkerEnv` — por isso e da familia `DSH_*` que o assento
+ * raspa do ambiente HERDADO: nunca entra vinda do pai, so e reconstruida na
+ * allowlist explicita. Manter o protocolo MODESTO: o worker nao autoriza nada
+ * com esta variavel; e so rotulo.
+ */
+export const WORKER_PROVIDER_ENV_VAR = 'DSH_GUARD_PROVIDER'
+
+/**
+ * Monta o ambiente do worker: allowlist + o token do provedor ativo + a marca
+ * do canal IPC + o rotulo do provedor.
  *
  * O token entra por ambiente e NUNCA por argv, porque `argv` e legivel por
  * qualquer processo local em `/proc/<pid>/cmdline`.
  *
+ * O `provider` e OPCIONAL com default fechado `telegram` (D1): quem chama sem
+ * provider e quem corre hoje, e o alvo da variavel e o MESMO —
+ * `TELEGRAM_BOT_TOKEN`. Para telegram o token vai para
+ * `PROVIDER_ENV.telegram.tokenVar`; a assinatura e feita para um provedor
+ * futuro mudar apenas o `tokenVar` de destino, nunca o parametro `token`.
+ *
  * As chaves sao comparadas em maiusculas porque o Windows trata os nomes de
  * variaveis de forma insensivel a caixa (`SystemRoot` == `SYSTEMROOT`).
  */
-export function buildWorkerEnv(source: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
+export function buildWorkerEnv(
+  source: NodeJS.ProcessEnv,
+  token: string,
+  provider: ProviderId = DEFAULT_PROVIDER,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
 
   for (const [key, value] of Object.entries(source)) {
@@ -93,7 +147,8 @@ export function buildWorkerEnv(source: NodeJS.ProcessEnv, token: string): NodeJS
     if (allowed) env[key] = value
   }
 
-  env['TELEGRAM_BOT_TOKEN'] = token
+  env[PROVIDER_ENV[provider].tokenVar] = token
+  env[WORKER_PROVIDER_ENV_VAR] = provider
   env[WORKER_IPC_ENV_MARK] = '1'
 
   return env

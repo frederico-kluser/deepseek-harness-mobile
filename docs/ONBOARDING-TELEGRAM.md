@@ -3,6 +3,11 @@
 Guia para conectar o Telegram ao DSH guardado por este plugin e parear o teu chat como
 dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é aceite de um chat pareado.
 
+> **Compat (arquitetura de provedores):** o worker é neutro ao provedor e o Telegram é o único
+> fornecedor hoje (`config.worker.provider`, default `telegram`). **Nada muda para si** no
+> onboarding: o token continua na variável `TELEGRAM_BOT_TOKEN`, o pareamento é o mesmo e os
+> comandos do bot não mudam. Detalhe em [`docs/PROVIDERS.md`](PROVIDERS.md).
+
 > **Não há senha a digitar em lugar nenhum.** O acesso pelo túnel entra por
 > **sessão** ou pela **chave no link** `?key=`. O bot é o canal de entrega: o
 > `/ligar` (e o `/acessar`) **envia automaticamente** o link com a chave
@@ -69,7 +74,7 @@ partir de uma allowlist mais o token (`src/proc/env.ts`).
 4. Se o código estiver errado, o bot responde uma recusa genérica e conta a tentativa
    (teto de 5 errados). Se voltar a tentar `/parear` (ou de outra conta), é
    **recusado**; reabrir exige `--reset-pairing` na máquina. O pareamento é de um
-   dono só (`worker/auth/allowlist.ts`).
+   dono só (`worker/surface/auth.ts`).
 
 ## Passo 4 — conferir o que ficou em disco
 

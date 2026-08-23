@@ -35,8 +35,9 @@ plano de controlo responde sem credencial enquanto o worker ainda está vivo.
    `createGuardedUpgradeHandler` decidem por camadas (origem → Host → sessão/chave no link).
 3. **Túnel** — supervisors, probe fail-closed, discovery, TTL, pidfile/varredura de órfão; o
    controlador serializa a máquina de estados do túnel (ligar/desligar).
-4. **Worker de long-polling** — o supervisor a instanciar o bot do Telegram em
-   `dist/worker/telegram-bot.js`, com ambiente de allowlist.
+4. **Worker de mensageria** — o supervisor a instanciar o boot genérico
+   (`dist/worker/telegram-bot.js`), por provedor (`config.worker.provider`, default
+   `telegram`), com ambiente de allowlist e o rótulo `DSH_GUARD_PROVIDER`.
 5. **Painel + UI** — rotas `/__guard/*` e a superfície de UI contribuída, ambos montados em
    produção (`src/index.ts:957-1005`).
 
@@ -115,15 +116,23 @@ inválidas) ou ao derrubar o túnel.
 ### Painel e UI
 
 - `src/panel/*` — rotas `/__guard/*`, CSRF, magic, secret, api, html.
-- `src/ui-contrib/*` — superfície de UI contribuída ao DSH.
+- `src/ui-contrib/*` — superfície de UI contribuída ao DSH; `bot-state.ts` deriva o estado OFFLINE/ONLINE do bot de forma **provider-agnóstica** (renomeado de `telegram-state.ts`).
 
 ### Worker do bot
 
-- `worker/telegram-bot.ts` — entry do processo (long polling).
-- `worker/ipc.ts` — protocolo JSONL host↔worker (`IPC_PROTOCOL_VERSION`).
-- `worker/auth/{allowlist,guard,pairing}.ts` — allowlist do dono, revalidação em callback, pareamento.
-- `worker/commands/*` — roteador e comandos (ligar, desligar, status, acesso, emergência).
-- `worker/lib/*` — cliente do grammY, polling, outbox, teclado, token, redact.
+O worker é **neutro ao provedor de mensageria** (arquitetura de provedores; o único
+fornecedor hoje é o Telegram). O núcleo vive em `worker/surface/**`, os adaptadores
+em `worker/providers/**` e o boot genérico em `worker/telegram-bot.ts`.
+
+- `worker/telegram-bot.ts` — entry do processo; **boot genérico por provedor** (nome preservado por D1). Lê `DSH_GUARD_PROVIDER`, monta núcleo + auth + comandos + adaptador + ponte IPC, e devolve os exit codes 0/10–14.
+- `worker/ipc.ts` — protocolo JSONL host↔worker (`IPC_PROTOCOL_VERSION`); o worker só importa de `src/` os tipos de `src/contracts/ipc.ts` (§5.5).
+- `worker/surface/contract.ts` — o **contrato neutro** da superfície (SurfaceIdentity, SurfaceEvent, SurfaceLimits, ActionRow, SurfaceSender, ProviderAdapter, IntencaoNeutra), self-contained.
+- `worker/surface/core.ts` — o **núcleo neutro**: roteador comando→intent (funil pareamento→allowlist, outbox, autolink, pendentes) sobre tipos neutros; re-exporta a lista canónica.
+- `worker/surface/{auth,commands}.ts` — allowlist de dois eixos default deny + receptor de pareamento + guard; e os comandos neutros (/ligar… /emergencia) + `COMANDOS_PUBLICADOS`.
+- `worker/surface/{ids,tokens,outbox,text,actions}.ts` — normalização de identidade, requestId ULID e token opaco, partição/serialização 1 msg/s, texto de estado e botões de alerta.
+- `worker/providers/registry.ts` — tabela fechada de provedores (default `telegram`), `resolverProvedor` fail-closed, `criarSurfaceIpcBridge` (envelope numérico na ponte) e `criarPonteDeNonce`.
+- `worker/providers/telegram/**` — **adaptador telegram** (único hoje; dono do grammY): cliente, polling, parse do update, teclado, token, transporte, adapter.
+- `worker/lib/*` → só os auxiliares neutros/estruturais do processo (clock, log, redact, erros); os antigos `client/polling/keyboard/token/transport-log/auto-retry/outbox` moveram-se para `worker/providers/telegram/**` e `worker/surface/outbox.ts`.
 
 ## 5. Relação com o DSH upstream
 
@@ -139,3 +148,7 @@ inválidas) ou ao derrubar o túnel.
   contrário. Leia o código, não os comentários, para saber o que está servido.
 - O worker é Node (grammY), não Python: resíduos `bot_long_polling.py` do projeto
   pré-plano **não existem** nesta árvore.
+- O desacoplamento para provedores é **concluído**: `worker/auth/*`, `worker/commands/*` e
+  `worker/lib/{client,polling,keyboard,token,transport-log,auto-retry,outbox}` **foram
+  eliminados** — o núcleo neutro vive em `worker/surface/**` e o Telegram específico em
+  `worker/providers/telegram/**`. Referências antigas a esses caminhos são código morto.

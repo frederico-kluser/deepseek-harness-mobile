@@ -43,7 +43,7 @@ Leitura honesta das garantias — cada linha aponta para o código que a cumpre;
 | **Força bruta tem teto** | a 5ª falha começa a atrasar; 100 falhas acumuladas derrubam a exposição (modo restrito), só o loopback passa e o reiniciar não o contorna (`src/ratelimit/**`) |
 | **Verificação da chave em tempo constante** | digest comparado com `timingSafeEqual`; o token redige-se em JSON/inspect (`src/session/link-token.ts`, `test/security/timing-constante.test.ts`) |
 | **`danger-full-access` vetado** | elevação proibida recusada como defesa em profundidade (`src/permissions/deny.ts`) |
-| **Só o dono pareado comanda o bot** | allowlist de `from.id` do Telegram (`worker/auth/allowlist.ts`) |
+| **Só o dono pareado comanda o bot** | allowlist de dois eixos (`userKey`/`chatKey`), default deny (`worker/surface/auth.ts`) |
 | **O que NÃO se garante** | o TLS termina na borda da Cloudflare (texto claro passa por lá); a URL do túnel não é segredo; quem tiver o link acede até rotacionar; a `?key=` viaja em query (visível a intermediários) — trade assumido pelo dono; *prompt injection* continua aceite — decisões de desenho em [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) §4 e §5.1 |
 ## A tensão central, dita por nós antes que digam por nós
 
@@ -93,6 +93,20 @@ link, e o acesso local abre direto.
 > "senha permanente" — não há senha a digitar para acesso.
 
 Cada promessa destas aponta para a linha de código que a cumpre: ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Provedores de mensageria
+
+O worker do bot é **neutro ao provedor**: o núcleo (roteador, allowlist, pareamento, outbox)
+vive em `worker/surface/**` e o Telegram — o único fornecedor suportado hoje — vive isolado no
+**adaptador** `worker/providers/telegram/**` (única carga de `grammY`). O boot lê o provedor ativo
+por `DSH_GUARD_PROVIDER` (`config.worker.provider`, default `telegram`); para o utilizador **nada
+muda** — o token continua a ser `TELEGRAM_BOT_TOKEN`.
+
+Adicionar um provedor novo (WhatsApp, Discord, Matrix…) é implementar o contrato neutro
+`ProviderAdapter` e registá-lo no registry. O manual completo — arquitetura, contrato tipo-a-tipo
+e o **checklist passo-a-passo para um provedor novo** — está em [`docs/PROVIDERS.md`](docs/PROVIDERS.md),
+e as habilidades de apoio (skills) em `.agents/skills/dsh-provider-bot` e
+`.agents/skills/dsh-telegram-provider`.
 
 ## Como flui um pedido (arquitetura em 8 linhas)
 
@@ -213,7 +227,7 @@ Deixa zero processos remanescentes e a Web UI volta ao comportamento original. P
 ## Contribuir e reportar
 
 - Encontraste uma vulnerabilidade? **Não abras issue pública.** Lê [`SECURITY.md`](SECURITY.md) e usa o canal privado lá descrito (Private Vulnerability Reporting ou e-mail).
-- Queres contribuir? [`CONTRIBUTING.md`](CONTRIBUTING.md) tem o ambiente em quatro comandos, os níveis de teste e o que nunca é aceite num PR.
+- Queres contribuir? [`CONTRIBUTING.md`](CONTRIBUTING.md) tem o ambiente em quatro comandos, os níveis de teste, o que nunca é aceite num PR e como **adicionar um provedor de mensageria**.
 - Código de conduta: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 Licença MIT — [`LICENSE`](LICENSE). O DeepSeek Harness a montante também é MIT.

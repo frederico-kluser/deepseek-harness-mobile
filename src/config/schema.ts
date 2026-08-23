@@ -149,6 +149,24 @@ export interface Config {
      * OPCIONAL: ausente = o `worker/` empacotado ({@link resolveWorkerCwd}).
      */
     cwd?: string
+    /**
+     * O PROVEDOR de mensageria ATIVO (desacoplamento do bot, D1).
+     *
+     * PORQUE OPCIONAL AQUI, quando o valor efetivo e sempre `telegram`: esta
+     * onda torna o lado HOST ciente de provedor de forma ADITIVA — nada do
+     * comportamento atual muda e o manifesto de Camada 1 NAO ganha a chave na
+     * MESMA onda (a adicao sincronizada ao `cordis.patch.yml` cabe a onda 5,
+     * dona do contrato host provider-aware). Ausente = `telegram`, o default
+     * fechado (D1). O enum e FECHADO porque o host ainda so fala telegram; um
+     * provedor futuro ACRESCENTA um literal aqui (e a linha propria em
+     * `src/proc/env.ts`), nunca o reescreve no ar.
+     *
+     * `worker.token` e o token do PROVEDOR ATIVO — hoje o do Telegram. Quando
+     * houver mais de um provedor, esta chave decide de quem o `token` e e para
+     * qual `TOKEN_ENV_VAR` de `src/proc/env.ts` ele vai parar no ambiente do
+     * worker (D1/D5).
+     */
+    provider?: 'telegram'
     token: string
     /**
      * Janela de cortesia, em milissegundos, da escalada

@@ -51,7 +51,7 @@
  * meio escrito) e serializado dentro deste processo (o `update` reentrante
  * lanca). NAO ha lock entre processos: dois processos a chamar `update()` em
  * simultaneo podem perder a escrita do primeiro. A arquitetura nao tem esse
- * caso — o worker do Telegram fala com o plugin por IPC (`src/telegram/ipc.ts`)
+ * caso — o worker do Telegram fala com o plugin por IPC (`src/ipc/channel.ts`)
  * e nao toca no disco — e um lockfile traria caducidade de lock obsoleto, que
  * e um modo de falha novo por um problema que nao existe. Se algum dia existir,
  * o sitio e aqui, e este paragrafo e o aviso.

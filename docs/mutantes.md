@@ -34,14 +34,14 @@ a falha foi exigida e o ficheiro foi revertido por cópia (nunca `git checkout`)
 | M-19 | remover o gate do handler de **upgrade** | `test/security/websocket-origin.test.ts (ADV-040)` | TESTE DIRIGIDO |
 | M-20 | guardar upgrade só nos `guardedPrefixes` | `test/security/websocket-origin.test.ts (M-20: fora de guardedPrefixes)` | TESTE DIRIGIDO |
 | M-21 | no `catch` do upgrade, chamar o handler original | `test/security/websocket-origin.test.ts (ADV-047)` | TESTE DIRIGIDO |
-| M-22 | allowlist do Telegram: validar `chat.id` e não `from.id` | `test/unit/worker/auth/allowlist.test.ts (TG-003)` | TESTE DIRIGIDO |
-| M-23 | allowlist: `from` ausente ⇒ aceito | `test/unit/worker/auth/allowlist.test.ts (TG-004)` | TESTE DIRIGIDO |
-| M-24 | allowlist: comparar `username` | `test/unit/worker/auth/allowlist.test.ts (TG-008)` | TESTE DIRIGIDO |
-| M-25 | allowlist vazia ⇒ aceita tudo | `test/unit/worker/auth/allowlist.test.ts (TG-007)` | TESTE DIRIGIDO |
-| M-26 | token de confirmação reutilizável | `test/unit/worker/commands/onoff.test.ts (uso unico)` | TESTE DIRIGIDO |
-| M-27 | token de confirmação sem TTL | `test/unit/worker/commands/onoff.test.ts (TTL)` | TESTE DIRIGIDO |
-| M-28 | token não ligado ao `from.id` | `test/unit/worker/commands/onoff.test.ts (TG-024)` | TESTE DIRIGIDO |
-| M-29 | não chamar `answerCallbackQuery` no caminho de negação | `test/unit/worker/auth/guard.test.ts:248 (TG-027 — answerCallbackQuery em TODOS os caminhos)` | TESTE DIRIGIDO |
+| M-22 | allowlist do Telegram: validar `chat.id` e não `from.id` | `test/unit/worker/surface/auth.test.ts (TG-003)` | TESTE DIRIGIDO |
+| M-23 | allowlist: `from` ausente ⇒ aceito | `test/unit/worker/surface/auth.test.ts (TG-004)` | TESTE DIRIGIDO |
+| M-24 | allowlist: comparar `username` | `test/unit/worker/surface/auth.test.ts (TG-008)` | TESTE DIRIGIDO |
+| M-25 | allowlist vazia ⇒ aceita tudo | `test/unit/worker/surface/auth.test.ts (TG-007)` | TESTE DIRIGIDO |
+| M-26 | token de confirmação reutilizável | `test/unit/worker/surface/commands.test.ts (uso unico)` | TESTE DIRIGIDO |
+| M-27 | token de confirmação sem TTL | `test/unit/worker/surface/commands.test.ts (TTL)` | TESTE DIRIGIDO |
+| M-28 | token não ligado ao `from.id` | `test/unit/worker/surface/commands.test.ts (TG-024)` | TESTE DIRIGIDO |
+| M-29 | não chamar `answerCallbackQuery` no caminho de negação | `test/unit/worker/surface/core.test.ts (TG-027 — answer em TODOS os caminhos)` | TESTE DIRIGIDO |
 | M-30 | ler a URL do túnel do **stdout** | `test/unit/tunnel/discover.test.ts (TUN-005)` | TESTE DIRIGIDO |
 | M-31 | remover o prefixo `https://` do hostname | `test/unit/tunnel/discover.test.ts (TUN-002)` | TESTE DIRIGIDO |
 | M-32 | timeout de readiness `Infinity` | `test/unit/tunnel/discover.test.ts (TUN-009)` | TESTE DIRIGIDO |

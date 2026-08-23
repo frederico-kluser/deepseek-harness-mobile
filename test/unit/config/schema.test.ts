@@ -276,3 +276,20 @@ describe('o manifesto de BUNDLE entrega os eixos como LITERAIS', () => {
     }
   })
 })
+
+describe('worker.provider (D1) -- contrato de tipo, enum FECHADO', () => {
+  it('aceita o literal fechado `telegram` no `worker`', () => {
+    // O `provider` e OPCIONAL e ADITIVO: quem nao o declara corre hoje como
+    // sempre correu (default fechado `telegram`, resolvido em `src/proc/env.ts`).
+    const config = makeConfig({ worker: { provider: 'telegram' } } as never)
+    assert.equal(config.worker.provider, 'telegram')
+  })
+
+  it('sem `provider`, o default fechado e o telegram -- nenhuma chave obrigatoria nova', () => {
+    // `makeConfig()` nao declara `provider`, e isso continua a ser um `Config`
+    // valido: a adicao nao obriga nenhum chamador a mudar (D1, aditivo).
+    const config = makeConfig()
+    const keys = Object.keys(config.worker)
+    assert.equal(keys.includes('provider'), false, 'provider nao e obrigatorio de preencher')
+  })
+})

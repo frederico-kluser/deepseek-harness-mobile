@@ -9,6 +9,11 @@ Este guia instala o plugin `dsh-guarded-bot-orchestrator` num DeepSeek Harness (
 
 > **Compatibilidade:** a faixa suportada é `@deepseek-ai/dsh` `0.1.0-rc.7 .. 0.1.1-rc.1` (política N/N-1). Veja a tabela em `docs/COMPATIBILITY.md` — que é **gerado** de `dsh-compat.yml`, nunca editado à mão.
 
+> **Compat (arquitetura de provedores):** o worker é neutro ao provedor e o Telegram é o único
+> fornecedor hoje (`config.worker.provider`, default `telegram`). **Nada muda para si**:
+> o token continua na variável `TELEGRAM_BOT_TOKEN` (via `dsh-guard-setup`), o pareamento é o mesmo
+> e os comandos do bot não mudam. Detalhe em [`docs/PROVIDERS.md`](PROVIDERS.md).
+
 ---
 
 ## Passo 0 — Pré-requisitos (M0)

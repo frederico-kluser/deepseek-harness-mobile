@@ -38,6 +38,24 @@ pnpm test:security && pnpm test:contract && pnpm test:e2e
 Node ≥ 24, Linux/macOS. O runner é `node:test` — zero dependência de runtime de
 teste. O CI ainda valida, depois do e2e, que **não ficou nenhum** processo (pgrep vazio).
 
+### Estrutura dos testes do worker
+
+Desde o desacoplamento para provedores, a superfície neutra e os adaptadores têm caminhos
+próprios em `test/unit/worker/`:
+
+- `test/unit/worker/surface/**` — o contrato e o **núcleo neutro**: `contract.test.ts` (tipo-a-tipo),
+  `contract.structural.test.ts` (o **cone de import**: prova que `worker/surface/**` só importa
+  `src/contracts/ipc.ts` de `src/`, e nada de grammY/`worker/lib`), e os testes de `core`, `auth`,
+  `commands`, `ids`, `outbox`, `text`, `actions`;
+- `test/unit/worker/providers/**` — os **adaptadores** e o registry: `registry.test.ts` e
+  `providers/telegram/**` (parse, teclado, token, transporte, cliente, polling, adapter) contra o
+  **duble local** em `test/support/`;
+- `test/unit/worker/{ipc,telegram-bot}.test.ts` — o canal JSONL do worker e o boot genérico
+  (com `WorkerRuntime` injectável, sem subprocesso).
+
+O teste estrutural do cone é o guardião da fronteira de `§5.5`: se um ficheiro da superfície passar
+a importar algo fora de `src/contracts/ipc.ts`, o `contract.structural.test.ts` falha vermelho.
+
 ## 3. A suíte de segurança (porquê é separada)
 
 É uma categoria própria, adversarial, que **tenta burlar** o portão. Cada arquivo em

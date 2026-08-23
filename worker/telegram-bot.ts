@@ -1,48 +1,84 @@
 /**
- * ENTRYPOINT do processo do bot. Long polling com grammY.
+ * ENTRYPOINT do processo do bot — BOOT GENERICO POR PROVEDOR (onda 4).
+ *
+ * Nome do ficheiro PRESERVADO por D1: o host spawna `dist/worker/telegram-bot.js`
+ * relativo a `import.meta.url`. O que este processo e, porém, deixou de ser
+ * "o bot telegram": a Onda 4 absorveu a costura antiga (`worker/commands/costura.ts`,
+ * que a Onda 5 apaga) e passou a montar o NUCLEO NEUTRO de
+ * `worker/surface/core.ts` sobre o ADAPTADOR que o registry resolver.
  *
  * ===========================================================================
- * COMO ESTE FICHEIRO E LANCADO — E PORQUE E `.js` E NAO `.ts`
+ * A SEQÜENCIA DO BOOT (D1/D4/D5)
  * ===========================================================================
- * O worker vive em `worker/`, NO MESMO PACOTE npm: nao ha monorepo e nao ha
- * binario publicado a parte. O `tsconfig.build.json` compila `src/` e o
- * `tsconfig.worker.json` compila `worker/` para `dist/worker/`, e o `argv` do
- * spawn resolve `dist/worker/telegram-bot.js` RELATIVO A `import.meta.url` —
- * nunca por `cwd`. O `cwd` de um plugin carregado por um host e o do HOST, e
- * nao o do pacote; resolver por `cwd` funciona na maquina de quem escreveu e
- * falha em toda a gente.
+ * So corre quando e o processo real (ver {@link main}); `runTelegramWorker` e o
+ * caminho testavel com env/argv/log/time/ipc injetaveis. A ordem:
  *
- * Spawnar o `.ts` de dentro de `node_modules` E IMPOSSIVEL: o Node recusa type
- * stripping ali (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`). Dai compilar-se.
+ *   1. resolver o provedor (`worker/providers/registry.ts`, fail-closed);
+ *   2. ler o token do ambiente (via o token reader DO PROVEDOR); o logger nasce
+ *      ANTES, para a falha de leitura sair por algum lado;
+ *   3. `assertTokenNaoEmArgv` (TG-069: token NUNCA em `argv`);
+ *   4. criar o adaptador: `createTelegramProvider({token, apiRoot?, log, time})`;
+ *   5. `sender = adapter.sender()` e `limites = adapter.limits`;
+ *   6. armar o canal IPC (`bindWorkerIpcToProcess` + despacho por TABELA +
+ *      ponte de nonce + `pairing.owner` -> `nucleo.onOwner` = `auth.semearDono`);
+ *   7. montar o NUCLEO neutro com as deps (log, time, ipc bridge, sender,
+ *      limites, emitirNonce, parar, auth, comandos);
+ *   8. `adapter.start(tratarEvento)` (o polling arranca; 409/401 fazem o
+ *      `start()` rejeitar e o proceso SAI com 11/12 — o e2e depende disto);
+ *   9. `adapter.publishCommands(COMANDOS_PUBLICADOS)` — TG-080: uma falha e
+ *      logada, NAO derruba o boot.
+ *
+ * O dead-man's switch fica PRESERVADO: o bind do canal (`worker/ipc.ts`)
+ * mantém o EOF no stdin -> `proc.exit(0)` quando o host desaparece.
  *
  * ===========================================================================
  * S2 — `stdout` E EXCLUSIVAMENTE JSONL
  * ===========================================================================
- * Nada neste ficheiro escreve em `stdout`. Todo o log humano vai para `stderr`
- * atraves de `./lib/log.ts`. O lado JSONL do canal e de T4.3 (`worker/ipc.ts`):
- * a costura entra pelo gancho {@link WorkerRuntime.configure}, e nao por um
- * `import` que esta sub-tarefa nao pode fazer sem colidir com a de outrem.
+ * Nada aqui escreve em `stdout`. Todo o log humano vai para `stderr` via
+ * `./lib/log.ts`. O lado JSONL do canal e de T4.3 (`worker/ipc.ts`).
  *
  * ===========================================================================
  * A DEPENDENCIA
  * ===========================================================================
- * `grammy` e a UNICA dependencia de runtime deste pacote (D23), e e carregada
- * SO por este processo — o plugin host continua a usar apenas builtins `node:`.
- * A frase "zero dependencias de runtime" deixa de ser verdade no mesmo commit
- * em que ela entra; o argumento verificavel passa a ser "UMA dependencia de
- * runtime, carregada so pelo processo `worker/`".
+ * `grammy` e a UNICA dependencia de runtime do pacote e e carregada SO pelo
+ * adaptador telegram. Este boot nao a importa (o adaptador fornece o contrato
+ * neutro). A frase "UMA dependencia de runtime, carregada so pelo processo
+ * `worker/`" continua verdadeira.
  */
 
 import { pathToFileURL } from 'node:url'
 
-import { createBot } from './lib/client.ts'
-import { configure as configureBot } from './commands/costura.ts'
+import type { IpcMessageToWorker } from '../src/contracts/ipc.ts'
+
 import { systemTime, type TimeSource } from './lib/clock.ts'
-import { exitCodeFor, WORKER_EXIT, WorkerError } from './lib/errors.ts'
 import { createWorkerLogger, type WorkerLogger, type WorkerLogLevel } from './lib/log.ts'
-import { buildPollingOptions, runPolling } from './lib/polling.ts'
-import { describeForLog } from './lib/redact.ts'
-import { API_ROOT_ENV_VAR, assertTokenNotInArgv, readBotToken } from './lib/token.ts'
+import { bindWorkerIpcToProcess, type WorkerIpc } from './ipc.ts'
+import {
+  ProvedorDesconhecidoError,
+  criarPonteDeNonce,
+  criarSurfaceIpcBridge,
+  resolverProvedor,
+  type PonteDeNonce,
+  type ProvedorDescrito,
+} from './providers/registry.ts'
+import {
+  ProviderError,
+  WORKER_EXIT,
+  describeForLog,
+  exitCodeFor,
+} from './providers/telegram/interno.ts'
+import { classifyPollingError } from './providers/telegram/polling.ts'
+import { API_ROOT_ENV_VAR } from './providers/telegram/token.ts'
+import { criarAuthDeSuperficie, criarDesafioDePareamento } from './surface/auth.ts'
+import { criarComandosDeSuperficie, COMANDOS_PUBLICADOS } from './surface/commands.ts'
+import type { ProviderAdapter } from './surface/contract.ts'
+import { criarNucleo, type Nucleo, type SurfaceAuth } from './surface/core.ts'
+
+/** O que um teste pede ao boot para o parar limpo e ler o codigo de saida. */
+export interface BootEmCurso {
+  /** Para o adaptador (o polling) e resolve o `runTelegramWorker` com OK. */
+  readonly parar: () => Promise<void>
+}
 
 /** Tudo o que o processo toca do mundo exterior, para o teste poder substitui-lo. */
 export interface WorkerRuntime {
@@ -50,17 +86,30 @@ export interface WorkerRuntime {
   readonly argv?: readonly string[]
   readonly log?: WorkerLogger
   readonly time?: TimeSource
+  /** Processo a que ligar o canal (o dead-man's switch). Omitido, `process`. */
+  readonly proc?: NodeJS.Process
   /**
-   * Costura das outras sub-tarefas da Onda 4/5: allowlist (T4.4), canal IPC
-   * (T4.3) e comandos (T5.2) registam-se aqui, DEPOIS de o bot existir e ANTES
-   * de o polling arrancar.
-   *
-   * PORQUE UM GANCHO E NAO UM `import` DIRECTO: a costura (T5.2) e dona de
-   * `worker/commands/**` e o call site de producao (`main`) passa-a — ver
-   * `configureBot` abaixo. O gancho mantem o entrypoint testavel com
-   * configuracao injetada; a producao liga a costura num unico lugar.
+   * Canal IPC PRONTO. Omitido, o boot arma o canal real com
+   * `bindWorkerIpcToProcess` (o dead-man's switch do processo). Injetado, o
+   * boot usa-o directamente — o que faz o boot testavel sem tocar no `process`
+   * do runner (o fake nao emite mensagens do host; so o `send` conta).
    */
-  readonly configure?: (bot: ReturnType<typeof createBot>) => void | Promise<void>
+  readonly ipc?: WorkerIpc
+  /**
+   * Descricao do provedor. Omitido, o boot resolve via `resolverProvedor(env)`.
+   * Injetado, permite testar falhas do arranque de um provedor arbitrario.
+   */
+  readonly provider?: ProvedorDescrito
+  /** Chamado quando o boot ficou a receber updates e o handle de paragem existe. */
+  readonly onBooted?: (boot: BootEmCurso) => void
+}
+
+/** Extrai os campos que o nucleo precisa do adaptador — sem conhecer o provedor. */
+function montarDoAdaptador(adapter: ProviderAdapter): {
+  readonly sender: ReturnType<ProviderAdapter['sender']>
+  readonly limites: ProviderAdapter['limits']
+} {
+  return { sender: adapter.sender(), limites: adapter.limits }
 }
 
 /**
@@ -68,6 +117,15 @@ export interface WorkerRuntime {
  *
  * NAO chama `process.exit`: devolve. Quem mata o processo e {@link main}, e essa
  * separacao e o que torna todo este caminho testavel sem subprocesso.
+ *
+ * O retorno resolve:
+ *   - com o codigo CLASSIFICADO quando o `adapter.start` rejeita (409->11,
+ *     401->12, BOOT_TIMEOUT->14 — o erro terminal chega como {@link ProviderError}
+ *     e o codigo e preservado ANTES do `classifyPollingError`) ou o arranque
+ *     falha (config->10, desconhecido->10);
+ *   - com OK apos {@link BootEmCurso.parar} (paragem limpa);
+ *   - em producao NORMAL, fica pendente ate o dead-man's switch do canal chamar
+ *     `proc.exit(0)` — a promessa e irrelevante quando o processo ja saiu.
  */
 export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<number> {
   const env = runtime.env ?? process.env
@@ -75,83 +133,200 @@ export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<nu
   const time = runtime.time ?? systemTime
 
   // O logger nasce ANTES de haver token: se a leitura do token falhar, a falha
-  // tem de sair por algum lado. Os segredos entram por FUNCAO, e nao por valor,
-  // precisamente para que este logger — criado antes — mascare o token que so
-  // vai existir daqui a duas linhas.
+  // tem de sair por algum lado. Os segredos entram por FUNCAO (e nao por valor)
+  // para que este logger mascare o token que so vai existir daqui a duas linhas.
   let token: string | undefined
+  const segredosDe = (): readonly string[] => (token === undefined ? [] : [token])
   const log =
     runtime.log ??
     createWorkerLogger({
       clock: time,
       level: WORKER_LOG_LEVEL,
-      secrets: () => (token === undefined ? [] : [token]),
+      secrets: segredosDe,
     })
 
-  try {
-    // Ordem deliberada: primeiro le-se, depois verifica-se o `argv`. Sem o token
-    // lido, a verificacao literal nao tem com que comparar.
-    token = readBotToken(env)
-    assertTokenNotInArgv(argv, token)
+  let adapter: ProviderAdapter | undefined
+  // Para o adaptador (o polling). Com o `start()` do adaptador a aguardar o
+  // outcome (resolve no `stopped`/rejeita no 409/401), parar aqui e o que faz
+  // o `await adapter.start()` da linha final resolver com OK.
+  const parar = async (): Promise<void> => {
+    if (adapter !== undefined) {
+      try {
+        await adapter.stop()
+      } catch (error) {
+        log.error('falha ao parar o adaptador', { detail: describeForLog(error, segredosDe()) })
+      }
+    }
+  }
 
+  try {
+    // 1. resolver o provedor (fail-closed); 2-3. token + argv.
+    const prov = runtime.provider ?? resolverProvedor(env)
+    token = prov.lerToken(env)
+    prov.assertTokenNaoEmArgv(argv, token)
+
+    // 4-5. o adaptador e os campos que o nucleo consome.
     const apiRoot = env[API_ROOT_ENV_VAR]
-    const bot = createBot({
+    adapter = prov.create({
       token,
       log,
       time,
       ...(apiRoot === undefined || apiRoot === '' ? {} : { apiRoot }),
     })
-
-    await runtime.configure?.(bot)
-
-    const outcome = await runPolling({
-      bot,
-      log,
-      options: buildPollingOptions(),
-      secrets: () => (token === undefined ? [] : [token]),
-    })
-    return outcome.exitCode
   } catch (error) {
     // Nunca engolir: a causa sai mascarada, com codigo quando ha codigo.
-    if (error instanceof WorkerError) {
+    if (error instanceof ProviderError) {
       log.error(error.message, { code: error.code })
       return exitCodeFor(error.code)
     }
+    if (error instanceof ProvedorDesconhecidoError) {
+      log.error(error.message)
+      return WORKER_EXIT.CONFIG
+    }
     log.error('falha nao classificada no arranque do worker', {
-      detail: describeForLog(error, token === undefined ? [] : [token]),
+      detail: describeForLog(error, segredosDe()),
     })
     return WORKER_EXIT.POLLING
   }
+
+  // O catch retorna SEMPRE: aqui o adaptador existe (TS estreitou-o).
+  const { sender, limites } = montarDoAdaptador(adapter)
+
+  // 6. canal IPC + despacho por tabela + ponte de nonce. O `nucleo` nasce
+  // DEPOIS do bind (estrutura circular resolvida por closure: o onMessage le
+  // uma variavel preenchida a seguir). O `pairing.owner` (host -> worker) nao
+  // e renderizavel: o `nucleo.onOwner` re-monta o dono via `auth.semearDono`
+  // (8c). A ponte de nonce consome `nonce.issued`/`error` ANTES do nucleo.
+  let nucleo: Nucleo | undefined
+  let ponte: PonteDeNonce | undefined
+  let ipc: WorkerIpc
+  const despachar = (msg: IpcMessageToWorker): void => {
+    const n = nucleo
+    if (n === undefined) return
+    switch (msg.type) {
+      case 'pairing.owner':
+        n.onOwner(msg)
+        return
+      case 'state':
+        n.onState(msg)
+        return
+      case 'ack':
+        n.onAck(msg)
+        return
+      case 'error':
+        if (ponte?.onMessage(msg) === true) return
+        n.onError(msg)
+        return
+      case 'notify':
+        n.onNotify(msg)
+        return
+      case 'pairing.challenge':
+        n.onPairingChallenge(msg)
+        return
+      case 'nonce.issued':
+        ponte?.onMessage(msg)
+        return
+    }
+  }
+
+  if (runtime.ipc !== undefined) {
+    ipc = runtime.ipc
+  } else {
+    ipc = bindWorkerIpcToProcess(runtime.proc ?? process, { onMessage: (msg) => despachar(msg) })
+  }
+
+  const bridge = criarSurfaceIpcBridge(ipc)
+  ponte = criarPonteDeNonce({ log, time, ipc })
+
+  // O funil de autorizacao NEUTRO: desafio MORTO (expira no instante 0) ate o
+  // host mandar `pairing.challenge`; o dono persistido chega por `pairing.owner`
+  // e o `nucleo.onOwner` chama `auth.semearDono` (8c).
+  const auth: SurfaceAuth = criarAuthDeSuperficie({
+    challenge: criarDesafioDePareamento('000000', 0),
+    clock: time,
+  })
+
+  // 7. o NUCLEO neutro — monta exatamente o que `criarNucleo` pede. A factory
+  // dos comandos e `criarComandosDeSuperficie` (satisfaz `SurfaceComandosFactory`).
+  nucleo = criarNucleo({
+    log,
+    time,
+    ipc: bridge,
+    sender,
+    limites,
+    emitirNonce: ponte.emitir,
+    parar,
+    auth,
+    comandos: criarComandosDeSuperficie,
+  })
+
+  // 8. arranca o polling. O `adapter.start` cria o bot e entra no `runPolling`;
+  // a parte sincrona corre JA (o `bot` existe), pelo que a publicacao e o handle
+  // de paragem saem na MESMA tickada, sem esperar o outcome. O `await` da linha
+  // final e o EIXO do ciclo de vida:
+  //   - normal: o polling corre; `adapter.start` resolve quando o polling parar
+  //     (`parar` da emergencia) e o processo devolve OK;
+  //   - 409/401: `adapter.start` REJEITA (o bug de Onda 3 corrigido) e o processo
+  //     sai com 11/12 — o e2e 409/401 depende disto.
+  const arrancouDoPeer = adapter.start((event) => nucleo!.tratarEvento(event))
+
+  // 9. publica a lista canonica (TG-080: falha logada, NAO derruba o boot).
+  // O adaptador telegram ja tem `bot` nesta tickada (o `start` acima correu a
+  // parte sincrona); se OUTRO provedor ainda nao o tiver, o publish loga e segue.
+  void adapter
+    .publishCommands(COMANDOS_PUBLICADOS)
+    .catch((error: unknown) => {
+      log.error('setMyCommands falhou; a lista nao ficou publicada (TG-080, nao derruba o boot)', {
+        detail: describeForLog(error, segredosDe()),
+      })
+    })
+
+  // Boot "up": o caller (teste) pode pegar no handle de paragem desde ja.
+  runtime.onBooted?.({ parar })
+
+  try {
+    await arrancouDoPeer
+  } catch (error) {
+    // Um {@link ProviderError} rejeitado pelo `adapter.start` (ex.: o BOOT_TIMEOUT
+    // do `runPolling`) JÁ traz o codigo (e o `runPolling` já registou o fatal).
+    // O codigo e preservado AQUI, ANTES do `classifyPollingError` — que so recebe
+    // os 409/401 (GrammyError 11/12) que o e2e exige. Sem isto, o BOOT_TIMEOUT
+    // (14) cairia no POLLING_FAILED (13). E C: sem log duplo — o runPolling já
+    // logou o fatal; o boot só repete em `debug`.
+    if (error instanceof ProviderError) {
+      const code = exitCodeFor(error.code)
+      log.debug('arranque terminou com veredito terminal', {
+        code: error.code,
+        exit_code: code,
+      })
+      await parar()
+      return code
+    }
+    // 409/401 (e afins) terminam o PROCESSO com o codigo proprio — o e2e
+    // depende disto (11/12), logo o comportamento real e preservado.
+    const verdict = classifyPollingError(error)
+    log.error(verdict.message, {
+      code: verdict.code,
+      exit_code: verdict.exitCode,
+      cause: describeForLog(error, segredosDe()),
+    })
+    await parar()
+    return verdict.exitCode
+  }
+
+  // O polling parou limpo (via `parar`/emergencia). Em producao NORMAL isto
+  // nunca resolve: o dead-man's switch do canal termina o processo primeiro.
+  return WORKER_EXIT.OK
 }
 
 /**
  * Nivel de log do processo. CONSTANTE, e nao lido do ambiente.
  *
- * ===========================================================================
- * PORQUE DEIXOU DE SER CONFIGURAVEL (achado de revisao adversarial)
- * ===========================================================================
- * Este ficheiro lia `WORKER_LOG_LEVEL` do ambiente. So que o ambiente do worker
- * e construido por ALLOWLIST no host (`WORKER_ENV_ALLOWLIST`, `src/proc/env.ts`)
- * e `WORKER_LOG_LEVEL` **nao esta la**. Consequencia: a variavel nunca chegava,
- * o nivel ficava permanentemente `info`, e todas as chamadas `log.debug` deste
- * worker eram CODIGO MORTO no processo real.
- *
- * Pior do que inutil: era a APARENCIA DE UM CONTROLO QUE NAO EXISTE. Um operador
- * a diagnosticar uma avaria poria `WORKER_LOG_LEVEL=debug`, nao veria nada
- * mudar, e concluiria que nao havia mais nada para ver — quando o que havia era
- * um botao desligado do fio.
- *
- * As duas saidas honestas eram acrescentar a variavel a allowlist (fica em
- * `src/`, que NAO e desta sub-tarefa) ou tirar a leitura. Tirou-se a leitura.
- *
  * O valor e `debug` e nao `info` para que nada aqui seja codigo morto: os unicos
- * sitios que registam a este nivel sao eventos RAROS (uma mensagem particionada,
- * uma espera de 429 abortada). Nao ha, nem pode passar a haver, `log.debug` num
- * caminho por-update.
- *
- *   >>> SE ACRESCENTAR UM `log.debug` A UM CAMINHO POR-UPDATE, MUDE ISTO <<<
- *   >>> PARA `'info'` NO MESMO COMMIT — senao um chat activo enche o log do  <<<
- *   >>> DSH. E se algum dia quiser mesmo o controlo por ambiente, o sitio e  <<<
- *   >>> `WORKER_ENV_ALLOWLIST`; sem passar por la, ele nao existe.           <<<
+ * sitios que registam a este nivel sao eventos RAROS. MUDE SO PARA `'info'` se
+ * acrescentar `log.debug` a um caminho por-update — senao um chat activo
+ * enche o log do DSH (o `WORKER_ENV_ALLOWLIST` do host nao deixa a variavel
+ * passar, pelo que ler do ambiente era um botao desligado do fio).
  */
 export const WORKER_LOG_LEVEL: WorkerLogLevel = 'debug'
 
@@ -161,21 +336,15 @@ export const WORKER_LOG_LEVEL: WorkerLogLevel = 'debug'
  * O timer e `unref()`ado: se o event loop esvaziar sozinho, o processo sai ANTES
  * disto com o `exitCode` ja definido e este timer nunca dispara. Ele so ganha
  * vida se sobrar algum handle agarrado — e ai o host precisa mesmo de ver o
- * `close`, porque e nele que baseia o `DEGRADED`. Um worker que fica pendurado
- * a seguir a um 409 e pior do que um worker morto: o supervisor nao sabe que
- * ele acabou.
+ * `close`, porque e nele que baseia o `DEGRADED`.
  */
 export const EXIT_GRACE_MS = 2000
 
 /**
  * Entrada real. Separada para que importar este modulo num teste nao arranque nada.
- *
- * O call site de producao e o PASSO DE INTEGRACAO da costura: `configureBot`
- * (T5.2, `worker/commands/costura.ts`) liga allowlist, pareamento, canal IPC e
- * comandos ao bot, DEPOIS de o bot existir e ANTES de o polling arrancar.
  */
 export async function main(): Promise<void> {
-  const code = await runTelegramWorker({ configure: configureBot })
+  const code = await runTelegramWorker()
   process.exitCode = code
   if (code !== WORKER_EXIT.OK) {
     const timer = setTimeout(() => {
@@ -187,10 +356,6 @@ export async function main(): Promise<void> {
 
 /**
  * So corre quando este ficheiro E o processo — nunca quando e importado.
- *
- * `process.argv[1]` pode ser `undefined` (REPL, `--eval`); `pathToFileURL` de
- * `undefined` lancaria, e uma excecao no topo de um modulo importado por um
- * teste seria um falhanco sem relacao nenhuma com o que o teste mede.
  */
 const entry = process.argv[1]
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {

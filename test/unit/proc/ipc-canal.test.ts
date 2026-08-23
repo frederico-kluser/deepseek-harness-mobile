@@ -2,7 +2,7 @@
  * A FIACAO do canal IPC ao supervisor do worker (`src/proc/worker.ts` +
  * `src/proc/supervisor.ts`).
  *
- * O codec esta em `test/unit/telegram/ipc.test.ts` e o comportamento contra
+ * O codec esta em `test/unit/ipc/channel.test.ts` e o comportamento contra
  * processos reais em `test/integration/proc/**`. O que SO aqui se prova e a
  * composicao: que o canal nasce e morre com o filho a que pertence, que
  * `send()` fala com o filho CORRENTE, e que a mudanca de `stdio` nao regrediu
@@ -14,7 +14,7 @@ import { describe, it } from 'node:test'
 
 import type { IpcIntentMessage, IpcMessageToWorker } from '../../../src/contracts/ipc.ts'
 import { createWorkerSupervisor } from '../../../src/proc/supervisor.ts'
-import { serializeIpcMessage } from '../../../src/telegram/ipc.ts'
+import { serializeIpcMessage } from '../../../src/ipc/channel.ts'
 import { FakeScheduler, makeSupervisorDeps } from '../../support/child-double.ts'
 import { flush, makeConfig } from '../../support/fixtures.ts'
 import { makeContextoComStdio } from './ipc-seat.ts'

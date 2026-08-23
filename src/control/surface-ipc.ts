@@ -1,6 +1,6 @@
 /**
  * A SUPERFICIE Telegram do controlador: mapeia `IpcIntentMessage` (o canal
- * host <-> worker de T4.3, `src/telegram/ipc.ts`) para `ControlIntent` e
+ * host <-> worker de T4.3, `src/ipc/channel.ts`) para `ControlIntent` e
  * devolve a resposta `IpcMessageToWorker` que o canal exige.
  *
  * DONO: T5.1 (a fiacao do canal IPC do host e desta sub-tarefa).

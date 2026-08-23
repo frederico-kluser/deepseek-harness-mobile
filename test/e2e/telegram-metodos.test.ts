@@ -21,8 +21,8 @@ import {
   TOKEN_DE_TESTE,
   type FakeBotApi,
 } from './telegram-apoio.ts'
-import { createBot } from '../../worker/lib/client.ts'
-import { buildPollingOptions, runPolling } from '../../worker/lib/polling.ts'
+import { createTelegramBot as createBot } from '../../worker/providers/telegram/cliente.ts'
+import { runPolling } from '../../worker/providers/telegram/polling.ts'
 
 assertSemTokenRealNoAmbiente()
 
@@ -112,7 +112,7 @@ describe('e2e metodos — getUpdates no fio', () => {
       recebidos.push(ctx.update)
     })
 
-    const corrida = runPolling({ bot, log: captureLog().logger, options: buildPollingOptions() })
+    const corrida = runPolling({ bot, log: captureLog().logger })
     await aguardar(() => recebidos.length >= 2, 'os dois updates chegam ao middleware', 8000)
     await bot.stop()
     const outcome = await corrida

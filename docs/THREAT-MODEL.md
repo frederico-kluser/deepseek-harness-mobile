@@ -44,7 +44,7 @@ acesso. A ordem das verificações é contrato e está no código
 | **L2 — bind em loopback** | o socket do DSH nunca é alargado (`0.0.0.0`/`::` recusados no load); a exposição é o proxy dedicado, não o servidor | `src/config/bind.ts`, `assertSecureBind` |
 | **L2.5 — validação de `Host`** | DNS rebinding e pedidos por nome que não é o nosso | `src/http/host-header.ts` |
 | **L3 — sessão ou chave no link** | quem é pelo proxy do túnel: sessão (cookie) ou a chave `?key=` no link; fora disso → `401` sem desafio | `src/http/gate.ts`, `src/session/link-token.ts` |
-| **L6 — allowlist do Telegram** | só o `from.id` pareado comanda o bot | `worker/auth/allowlist.ts` |
+| **L6 — allowlist de mensageria** | só o dono pareado comanda o bot (allowlist de dois eixos `userKey`/`chatKey`, default deny) | `worker/surface/auth.ts` |
 | **L7 — veto de elevação** | `danger-full-access` negada (defesa em profundidade) | `src/permissions/deny.ts` |
 | **L8 — kill switch / TTL / auditoria** | `/emergencia`, expiração do túnel, registo de eventos | `src/control/controller.ts`, `src/tunnel/ttl.ts`, `src/audit/**` |
 

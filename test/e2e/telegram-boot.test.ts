@@ -22,7 +22,7 @@ import {
   type FakeBotApi,
   type WorkerFilho,
 } from './telegram-apoio.ts'
-import { LONG_POLL_MAX_TIMEOUT } from '../../worker/lib/polling.ts'
+import { LONG_POLL_MAX_TIMEOUT } from '../../worker/providers/telegram/polling.ts'
 
 assertSemTokenRealNoAmbiente()
 

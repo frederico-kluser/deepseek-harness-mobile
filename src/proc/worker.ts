@@ -31,9 +31,9 @@ import {
 import type { IpcIntentMessage, IpcMessageToWorker } from '../contracts/ipc.ts'
 import type { Context, SubprocessHandle, SubprocessSpawnSpec } from '../dsh/adapter.ts'
 import { createGuardLogger, type GuardLogger } from '../logging/logger.ts'
-import { createHostIpcChannel, type HostIpcChannel } from '../telegram/ipc.ts'
+import { createHostIpcChannel, type HostIpcChannel } from '../ipc/channel.ts'
 import type { IpcNonceRequestMessage } from '../contracts/ipc.ts'
-import { buildWorkerEnv } from './env.ts'
+import { buildWorkerEnv, DEFAULT_PROVIDER, type ProviderId } from './env.ts'
 import {
   createProcessSupervisor,
   defaultSupervisorDeps,
@@ -71,6 +71,18 @@ export interface WorkerSupervisorOptions {
    * em `src/index.ts` resolve uma vez e passa-o para as duas pontas.
    */
   readonly token?: string | undefined
+  /**
+   * O PROVEDOR de mensageria ATIVO (desacoplamento do bot, D1).
+   *
+   * AUSENTE = o default fechado `telegram` (mesmo valor que `config.worker.provider`
+   * ausente). O supervisor rotula o worker no PONTO DE SPAWN, injetando
+   * `DSH_GUARD_PROVIDER=<provider>` no env do filho via `buildWorkerEnv` — a
+   * variavel que o worker le para escolher o PROVEDOR (e o `tokenVar` de destino).
+   * A costura em `src/index.ts` resolve `config.worker.provider ?? DEFAULT_PROVIDER`
+   * e passa-o para aqui, de modo a que o rotulo do filho e o token resolvido venham
+   * da MESMA fonte.
+   */
+  readonly provider?: ProviderId | undefined
   /**
    * Decide UMA intencao vinda do worker e devolve a resposta.
    *
@@ -151,6 +163,14 @@ export function createWorkerSupervisor(
    * o env do filho E a mascara de logs.
    */
   const tokenDoBot = options.token ?? worker.token
+
+  /**
+   * O provedor ATIVO do worker: o da costura (`options.provider`, resolvido de
+   * `config.worker.provider`) ou o default fechado `telegram` quando aquele e
+   * omitido. Rotula o env do filho (`DSH_GUARD_PROVIDER`) e escolhe o
+   * `tokenVar` de destino do token.
+   */
+  const providerDoBot: ProviderId = options.provider ?? DEFAULT_PROVIDER
 
   /**
    * FORNECEDOR de segredos, PARTILHADO pelo encaminhamento de log do filho e
@@ -234,7 +254,7 @@ export function createWorkerSupervisor(
         // Ambiente CONSTRUIDO a partir de uma allowlist, nunca herdado inteiro:
         // `process.env` levava `ADMIN_USER`/`ADMIN_PASS` do plano de controlo
         // para dentro do worker. Ver `buildWorkerEnv`.
-        env: buildWorkerEnv(process.env, tokenDoBot),
+        env: buildWorkerEnv(process.env, tokenDoBot, providerDoBot),
       }),
       /**
        * O CANAL, ligado e desligado pelo supervisor generico -- ver
