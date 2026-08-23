@@ -617,7 +617,7 @@ function esperarEstavel(socket: Socket, ms: number): Promise<void> {
       socket.removeListener('error', erro)
       reject(new Error('o socket de upgrade fechou SOZINHO (upstream nao o manteve aberto -> teste vacuous)'))
     }
-    const erro = (err: Error): void => {
+    const erro = (err: NodeJS.ErrnoException): void => {
       clearTimeout(timer)
       socket.removeListener('close', caiu)
       socket.removeListener('end', caiu)
