@@ -237,14 +237,19 @@ export function createTunnelProxy(deps: TunnelProxyDeps): TunnelProxy {
       // Sincrono e idempotente (Q-2). NUNCA derruba o listener (o tunel fica de
       // pe: o proxy continua a aceitar novas ligacoes com as credenciais novas).
       // NUNCA usa `server.close()` — isso desligaria o listener.
+      //
+      // `closeAllConnections()` foi RETIRADO DAQUI (Node v24.19.0 medido): apos
+      // QUALQUER request HTTP normal atravessar o proxy, `closeAllConnections`
+      // derruba o listener para requests HTTP NOVOS (o request seguinte recebe
+      // ECONNRESET). O rastreio manual (o Set abaixo, povoado em
+      // `server.on('connection')` e alimentado pelo `connection` do servidor)
+      // cobre TODOS os sockets aceites — HTTP keep-alive e WebSocket `upgraded`
+      // incluidos — pelo que o `socket.destroy()` de cada um e suficiente e e o
+      // que garante o contrato.
       for (const socket of conexoesAtivas) {
         if (!socket.destroyed) socket.destroy()
       }
       conexoesAtivas.clear()
-      // Cobre os que escaparem ao Set (ex.: ligados durante a iteracao):
-      // `closeAllConnections` fecha os sockets HTTP vivos; os `upgraded` nao os
-      // fecha, mas esses JÁ deviam estar no Set (o `connection` corre primeiro).
-      ;(server as Server & { closeAllConnections?: () => void }).closeAllConnections?.()
     },
     dispose(): void {
       // Sincrono e idempotente (Q-2). `close()` deixa de aceitar; o

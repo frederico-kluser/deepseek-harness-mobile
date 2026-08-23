@@ -51,7 +51,12 @@ interface Resposta {
 function pedirAoProxy(port: number, path: string, host: string, headers: Record<string, string> = {}): Promise<Resposta> {
   return new Promise<Resposta>((resolve, reject) => {
     const req = httpRequest(
-      { host: '127.0.0.1', port, path, method: 'GET', headers: { host, ...headers } },
+      // `agent: false` força uma conexao NOVA por pedido, como o cloudflared.
+      // Sem isto, o `http.globalAgent` reutiliza sockets keep-alive que o
+      // `encerrarConexoesAtivas()` derrubou do lado do proxy — e a reutilizacao
+      // de um socket morto finge "o listener caiu" com ECONNRESET (artefacto de
+      // harness, nao o contrato).
+      { host: '127.0.0.1', port, path, method: 'GET', agent: false, headers: { host, ...headers } },
       (res) => {
         const chunks: Buffer[] = []
         res.on('data', (d) => void chunks.push(Buffer.from(d)))
@@ -73,6 +78,7 @@ function pedirAoProxy(port: number, path: string, host: string, headers: Record<
 
 async function setUpProxy(
   onRequest?: (req: IncomingMessage, res: ServerResponse) => void,
+  onUpgrade?: (req: IncomingMessage, socket: Duplex) => void,
 ): Promise<{ proxyPort: number; upstreamPort: number }> {
   aberta = bancada({ comSegredo: true, tunnelReady: true })
   aberta.tunnelOrigin.publish(FAKE_TUNNEL_ORIGIN)
@@ -85,10 +91,14 @@ async function setUpProxy(
     res.end('UPSTREAM-OK')
   })
   upstream = createServer(onRequestAtual)
-  upstream.on('upgrade', (_req, socket: Duplex) => {
+  // O padrao de `onRequest`: um `onUpgrade` opcional permite cenas em que o
+  // upstream MANTEM o socket de upgrade aberto (nao chama `end`) — so o rotate
+  // (via `encerrarConexoesAtivas`) e que o derruba. Por omissao o upstream
+  // escreve o 101 e fecha, que e o comportamento historico dos restantes casos.
+  upstream.on('upgrade', onUpgrade ?? ((_req, socket: Duplex) => {
     socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
     socket.end()
-  })
+  }))
   const upstreamPort = await ouvir(upstream)
 
   proxy = createTunnelProxy({
@@ -222,12 +232,25 @@ describe('WebSocket no proxy (modelo porta)', () => {
 
 describe('QUALIDADE DE SERVICO da rotacao: encerrarConexoesAtivas (onda1)', () => {
   it('(h) WebSocket ativo sob o acesso antigo morre e o listen continua', async () => {
-    const { proxyPort } = await setUpProxy()
+    // O upstream MANTEM o socket de upgrade ABERTO (nao chama `end`) — senao o
+    // socket do cliente morreria SOZINHO e este teste seria vacuous (a prova de
+    // que so `encerrarConexoesAtivas()` derruba o WebSocket upgraded).
+    let upgradeSocket: Duplex | undefined
+    const { proxyPort } = await setUpProxy(undefined, (_req, socket: Duplex) => {
+      upgradeSocket = socket
+      socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
+      // Nao chama `socket.end()`: o upgrade permanece ABERTO ate o proxy o matar.
+    })
     const cookie = aberta!.emitirSessao()
 
     // O upgrade sobe (101): a conexao fica VIVA sob o acesso antigo.
     const { bruto, socket } = await abrirUpgrade(proxyPort, hostDoTunel(), cookie)
     assert.match(bruto, /^HTTP\/1\.1 101 /u, 'o upgrade subiu (101)')
+
+    // Controle (prova de que o teste e DISCRIMINANTE): sem `encerrarConexoesAtivas`,
+    // o socket de upgrade NAO fecha sozinho — o upstream nao esta a derruba-lo.
+    await esperarEstavel(socket, 250)
+    assert.equal(socket.destroyed, false, 'o socket de upgrade sobrevive ao controle')
 
     const fechou = esperarFecho(socket)
 
@@ -245,6 +268,11 @@ describe('QUALIDADE DE SERVICO da rotacao: encerrarConexoesAtivas (onda1)', () =
     const res = await pedirAoProxy(proxyPort, '/api/state', hostDoTunel(), { cookie: novaSessao })
     assert.equal(res.status, 200, 'o proxy continua a aceitar com sessao nova')
     assert.equal(res.body, 'UPSTREAM-OK')
+
+    // Destroi o socket de upgrade do UPSTREAM que o onUpgrade manteve aberto de
+    // proposito, para o `afterEach` conseguir fechar o servidor upstream sem
+    // espera infinita (o proxy ja encerrou o lado dele).
+    upgradeSocket?.destroy()
   })
 
   it('(h2) encerrarConexoesAtivas mata um stream HTTP keep-alive em voo', async () => {
@@ -289,6 +317,14 @@ describe('QUALIDADE DE SERVICO da rotacao: encerrarConexoesAtivas (onda1)', () =
     proxy!.encerrarConexoesAtivas()
     proxy!.encerrarConexoesAtivas() // idempotente (segunda chamada nao lanca)
     await fechou // o WS autenticado pela chave do link morreu
+
+    // O listener continua de pe apos o rotate APOS o fluxo real (?key= -> 302):
+    // um request HTTP NOVO (sessao nova) responde 200 (nao ECONNRESET). O
+    // `pedirAoProxy` usa `agent: false` (conexao nova, como o cloudflared).
+    const novaSessao = aberta!.emitirSessao()
+    const res = await pedirAoProxy(proxyPort, '/api/state', hostDoTunel(), { cookie: novaSessao })
+    assert.equal(res.status, 200, 'o listener segue vivo apos o rotate no fluxo ?key=')
+    assert.equal(res.body, 'UPSTREAM-OK')
   })
 
   it('(h4) conexao TCP crua que NUNCA completa handshake (sem request) morre no rotate', async () => {
@@ -354,17 +390,20 @@ describe('QUALIDADE DE SERVICO da rotacao: encerrarConexoesAtivas (onda1)', () =
     })
     assert.equal(res.status, 200)
 
-    // Rotacionar sobre um Set que ja nao contem o socket fechado nao falha.
-    // NB: a assercao de "listener segue de pe" apos este request HTTP fica de
-    // fora de proposito — ela esbarra no bug de producao documentado no
-    // handoff (`closeAllConnections()` em `src/tunnel/proxy.ts:247` derruba o
-    // listener para requests HTTP NOVOS apos um request HTTP qualquer).
-    assert.doesNotThrow(() => {
-      aberta!.stack.secrets.rotate()
-      aberta!.linkStore.revogar()
-      proxy!.encerrarConexoesAtivas()
-      proxy!.encerrarConexoesAtivas()
-    })
+    // Rotacionar sobre um Set que ja nao contem o socket fechado nao falha e
+    // NAO derruba o listener para requests HTTP novos.
+    aberta!.stack.secrets.rotate()
+    aberta!.linkStore.revogar()
+    proxy!.encerrarConexoesAtivas()
+    proxy!.encerrarConexoesAtivas() // idempotente
+
+    // O listener segue vivo APOS um request HTTP ja encerrado: um request NOVO
+    // (sessao nova) responde 200 (nao ECONNRESET). O `pedirAoProxy` usa
+    // `agent: false` (conexao nova, como o cloudflared).
+    const novaSessao = aberta!.emitirSessao()
+    const nova = await pedirAoProxy(proxyPort, '/api/state', hostDoTunel(), { cookie: novaSessao })
+    assert.equal(nova.status, 200, 'o listener continua vivo para HTTP apos o rotate')
+    assert.equal(nova.body, 'UPSTREAM-OK')
   })
 
   it('(h8) rotacao durante um stream HTTP com resposta do upstream em partes (corpo parcial) mata o socket', async () => {
@@ -550,5 +589,43 @@ function esperarFecho(socket: Socket, timeoutMs = 1_000): Promise<void> {
     }
     socket.once('close', noFecho)
     socket.once('end', noFecho)
+  })
+}
+
+/**
+ * Prova que um socket cru do cliente PERMANECE ABERTO durante `ms` — resolve
+ * se nada o fechar nesse prazo, rejeita se fechar sozinho. Usado no controlo do
+ * (h) para garantir que o teste e DISCRIMINANTE: o upstream mantem o socket de
+ * upgrade aberto, logo sem `encerrarConexoesAtivas()` ele nao cai.
+ */
+function esperarEstavel(socket: Socket, ms: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (socket.destroyed) {
+      reject(new Error('o socket de upgrade ja estava fechado no inicio do controlo'))
+      return
+    }
+    const timer = setTimeout(() => {
+      socket.removeListener('close', caiu)
+      socket.removeListener('end', caiu)
+      socket.removeListener('error', erro)
+      resolve()
+    }, ms)
+    const caiu = (): void => {
+      clearTimeout(timer)
+      socket.removeListener('close', caiu)
+      socket.removeListener('end', caiu)
+      socket.removeListener('error', erro)
+      reject(new Error('o socket de upgrade fechou SOZINHO (upstream nao o manteve aberto -> teste vacuous)'))
+    }
+    const erro = (err: Error): void => {
+      clearTimeout(timer)
+      socket.removeListener('close', caiu)
+      socket.removeListener('end', caiu)
+      socket.removeListener('error', erro)
+      reject(new Error(`o socket de upgrade fechou SOZINHO (${err.code ?? err.message})`))
+    }
+    socket.once('close', caiu)
+    socket.once('end', caiu)
+    socket.once('error', erro)
   })
 }
