@@ -144,7 +144,7 @@
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
     <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator-agent-skill <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">vdesacoplar-telegram@2026-08-23 · 2026-08-23</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">vpainel-telegram-final@2026-08-23 · 2026-08-23</span>
   </div>
 </nav>
 
@@ -153,11 +153,11 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Desacoplamento do bot do Telegram para arquitetura de provedores plugáveis de mensageria: núcleo neutro <code>worker/surface</code> + adaptadores <code>worker/providers</code> + registry/boot genérico; manual docs/PROVIDERS.md, 2 agent skills e CONTRIBUTING/README atualizados. <strong>Plus segurança do /rotacionar:</strong> a rotação encerra ativamente TODAS as conexões abertas sob o acesso antigo (WebSocket 101 e streams em voo), além de revogar a chave e as sessões — sem derrubar o listener do proxy.</p>
+    <p class="lead text-white-50 mb-3">Painel do Telegram 100% via interface no DeepSeek Harness: aba 'Telegram Guard' no modal de settings (badge configurado/rodando, form de token com validacao getMe, instrucoes, metricas de acesso quem/quanto/IP/device), botao na sidebar abre o modal na aba, mecanismo de slots de plugin externo provado, CSRF proprio e instalacao por git funcional.</p>
     <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">vdesacoplar-telegram@2026-08-23</span>
+      <span class="badge badge-accent">vpainel-telegram-final@2026-08-23</span>
       <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-23</span>
-      <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>do/wt/desacoplar-telegram</span>
+      <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
   </header>
 
@@ -213,7 +213,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Desacoplamento do bot do Telegram para arquitetura de provedores plugáveis de mensageria: núcleo neutro <code>worker/surface</code> + adaptadores <code>worker/providers</code> + registry/boot genérico; manual docs/PROVIDERS.md, 2 agent skills e CONTRIBUTING/README atualizados. É a mesma worktree da feature precursora <code>onda1-encerrar-conexoes</code> (main): nesta execução ambas são integradas — o desacoplamento e, em paralelo, o <code>/rotacionar</code> passou a encerrar ativamente TODAS as conexões abertas sob o acesso antigo (WebSocket 101 e streams em voo) além de revogar chave e sessões, sem derrubar o listener do proxy.</p>
+      <p class="text-body-secondary">Painel do Telegram 100% via interface no DeepSeek Harness: aba 'Telegram Guard' no modal de settings (badge configurado/rodando, form de token com validacao getMe, instrucoes, metricas de acesso quem/quanto/IP/device), botao na sidebar abre o modal na aba, mecanismo de slots de plugin externo provado, CSRF proprio e instalacao por git funcional.</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -225,7 +225,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">6</div>
+              <div class="display-6 fw-bold stat-value">2</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">22</div>
+              <div class="display-6 fw-bold stat-value">8</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -243,7 +243,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">16</div>
+              <div class="display-6 fw-bold stat-value">7</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -254,7 +254,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders desacoplar-telegram@2026-08-23, 2026-08-23, do/wt/desacoplar-telegram, ...</code></pre>
+# Ou preenche manualmente os placeholders painel-telegram-final@2026-08-23, 2026-08-23, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -294,67 +294,15 @@
 
 <div class="table-responsive">
   <table class="table table-hover align-middle">
-    <thead>
-      <tr>
-        <th scope="col">Onda</th>
-        <th scope="col">Worktree</th>
-        <th scope="col">Tarefas</th>
-        <th scope="col" class="text-end">Commits</th>
-        <th scope="col">Status</th>
-      </tr>
-    </thead>
+    <thead><tr><th>Onda</th><th>Worktree</th><th>Tarefas</th><th class="text-end">Commits</th><th>Status</th></tr></thead>
     <tbody>
-      <tr>
-        <td><span class="badge badge-accent">Onda 1</span></td>
-        <td><code>onda1-contrato-superficie</code><br><code>onda1-contrato-host</code><br><code>onda1-manual-esboco</code></td>
-        <td>Contrato neutro da superfície de mensageria (<code>worker/surface/contract.ts</code>, <code>ids.ts</code>, <code>tokens.ts</code>), contratos host provedor-aware (<code>config/state/env</code> + <code>DSH_GUARD_PROVIDER</code>), esboço do manual de provedores (<code>docs/PROVIDERS.md</code>), fix do canário ADV-055</td>
-        <td class="text-end">4</td>
-        <td><span class="badge badge-ok">Concluída</span></td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-accent">Onda 2</span></td>
-        <td><code>onda2-nucleo-superficie</code><br><code>onda2-auth-comandos</code><br><code>test-onda1-contrato</code><br><code>onda2-fix-nucleo-lint</code><br><code>onda2-fix-cone-surface</code></td>
-        <td>Núcleo neutro (<code>core/text/actions/tokens</code>), auth/comandos/outbox neutros + <code>semearDono</code>, testes do contrato, fix eslint (consistent-type-imports), cone de import §5.5 restaurado (<code>SurfaceTunnelState</code> local)</td>
-        <td class="text-end">5</td>
-        <td><span class="badge badge-ok">Concluída</span></td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-accent">Onda 3</span></td>
-        <td><code>onda3-adaptador-telegram</code></td>
-        <td>Adaptador telegram (<code>worker/providers/telegram/**</code>, 16 ficheiros) — <code>ProviderAdapter</code> sobre grammY 1.45.1, gramática g1, limites 4096/1/1/64, boot via <code>getMe→deleteWebhook→getUpdates</code>, exit codes TG-044 (409→11, 401→12)</td>
-        <td class="text-end">1</td>
-        <td><span class="badge badge-ok">Concluída</span></td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-accent">Onda 4</span></td>
-        <td><code>onda4-boot-generico</code><br><code>onda4-fix-exitcode</code></td>
-        <td>Boot genérico (<code>worker/telegram-bot.ts</code> reescrito + <code>worker/providers/registry.ts</code> + <code>SurfaceIpcBridge</code> real com <code>montarEnvelopeDeIntent</code> + nonce bridge + costura absorvida); fix: exit 14 no BOOT_TIMEOUT preservado + remoção de dead code</td>
-        <td class="text-end">2</td>
-        <td><span class="badge badge-ok">Concluída</span></td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-accent">Onda 5</span></td>
-        <td><code>onda5a-delecao-worker</code><br><code>onda5b-host-provider</code></td>
-        <td>(5a) Deleção do worker legado (<code>worker/commands/</code>, <code>worker/auth/</code>, <code>worker/lib/{client,polling,keyboard,token,transport-log,auto-retry,outbox}</code>) + reconciliação de tokens/comandos em 1 fonte + outbox delegado + ponte de intent fiada sem cast; (5b) host provedor-aware (<code>src/ipc/channel</code>, <code>ui-contrib/bot-state</code>, <code>DSH_GUARD_PROVIDER</code> no spawn, <code>cordis.patch.yml</code>)</td>
-        <td class="text-end">2</td>
-        <td><span class="badge badge-ok">Concluída</span></td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-accent">Onda 6</span></td>
-        <td><code>onda6a-manual</code><br><code>onda6b-skills</code></td>
-        <td>(6a) Manual completo de provedores (<code>docs/PROVIDERS.md</code> 477 linhas) + README + CONTRIBUTING (§0 corrigido + secção de provedores) + ARCHITECTURE/TESTING/INSTALL/ONBOARDING + CHANGELOG + changeset minor; (6b) skills <code>.agents/skills/dsh-provider-bot</code> (genérica, fonte do contrato) + <code>dsh-telegram-provider</code> (só o específico grammY)</td>
-        <td class="text-end">2</td>
-        <td><span class="badge badge-ok">Concluída</span></td>
-      </tr>
+      <tr><td><span class="badge badge-accent">1</span></td><td><code>onda1-painel-backend</code><br><code>onda1-client-spike</code></td><td>Backend: POST /api/token (getMe+gravar 0600+restart; 409 token-por-env honesto), GET /api/token-state e /api/access com tracking de sessão (UA+IP confiável), gravarSecretsEnv destino único; Spike: prova de que um plugin externo registra slots (dsh.client + exports ./package.json; sidebar.footer.action/settings.section + abrir modal na aba)</td><td class="text-end">6</td><td><span class="badge badge-ok">Concluída</span></td></tr>
+      <tr><td><span class="badge badge-accent">2</span></td><td><code>onda2-painel-telegram</code></td><td>Painel completo na aba "Telegram Guard" do settings (via interface): badge configurado/rodando, form de token com validação, instruções + comandos, métricas de acesso (quem/quanto/IP/device); botão sidebar abre o modal na aba; CSS guard-* com tokens --dsw-*</td><td class="text-end">1</td><td><span class="badge badge-ok">Concluída</span></td></tr>
+      <tr><td><span class="badge badge-accent">fix</span></td><td><code>fix-final-integra</code></td><td>HIGHS de integração: prepare gera lib/client.js no install por git (check-tarball exige); GET /__guard-ui/api/csrf = fonte CSRF própria do bundle com fallback; testes commitados (client smoke)</td><td class="text-end">1</td><td><span class="badge badge-ok">Concluída</span></td></tr>
     </tbody>
   </table>
 </div>
-<p class="text-body-secondary small">16 commits squash no total (125 ficheiros, +13.059 / −11.102). Worktrees e branches de cada onda removidos após gate VERDE nos snapshots de integração <code>int-ondaN-*</code>.</p>
-
-      <div class="alert alert-primary d-flex gap-2 mt-3" role="alert">
-        <i class="bi bi-shield-lock flex-shrink-0"></i>
-        <div><strong>Ondas do /rotacionar (main, integradas nesta execução):</strong> a worktree precursora <code>onda1-encerrar-conexoes</code> (commit 16a89a4, 1 onda / 3 squash) fez o <code>/rotacionar</code> encerrar ativamente TODAS as conexões abertas sob o acesso antigo — <code>src/tunnel/proxy.ts</code> ganhou o rastreio de sockets (Set no <code>server.on('connection')</code>) e o método <code>encerrarConexoesAtivas()</code> (destroy síncrono, idempotente, que NÃO derruba o listener); <code>src/index.ts</code> ganhou o holder <code>tunnelProxyAtual</code> e a ordem fail-closed <code>revogar sessões → revogar chave → encerrar conexões</code>. Tanto o desacoplamento quanto este endurecimento coexistem na árvore integrada.</div>
-      </div>
+<p class="text-body-secondary small">6 squash commits de feature + 4 fixes de infra (lockfile esbuild, allowBuilds, lint client). Gate completo verde em cada snapshot.</p>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
       <div class="d-flex flex-wrap gap-2">
@@ -370,123 +318,74 @@
       <h2 class="h4 pane-title">Arquivos modificados</h2>
       <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
-<div class="table-responsive">
-  <table class="table table-hover align-middle">
-    <thead>
-      <tr>
-        <th scope="col">Arquivo</th>
-        <th scope="col">Tipo</th>
-        <th scope="col" class="text-end">Diff</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr><td><code>worker/surface/contract.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+506</td></tr>
-      <tr><td><code>worker/surface/core.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+923</td></tr>
-      <tr><td><code>worker/surface/auth.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+1072</td></tr>
-      <tr><td><code>worker/surface/commands.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+374</td></tr>
-      <tr><td><code>worker/surface/outbox.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+195</td></tr>
-      <tr><td><code>worker/surface/{text,actions,ids,tokens,index}.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end"><span class="diff-plus">+531</span></td></tr>
-      <tr><td><code>worker/providers/registry.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+293</td></tr>
-      <tr><td><code>worker/providers/telegram/**</code> (16 ficheiros)</td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+1674</td></tr>
-      <tr><td><code>worker/telegram-bot.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+353</span> <span class="diff-minus">−266</span></td></tr>
-      <tr><td><code>worker/commands/**</code> (5 ficheiros)</td><td><span class="badge badge-danger">removido</span></td><td class="text-end diff-minus">−1742</td></tr>
-      <tr><td><code>worker/auth/**</code> (3 ficheiros)</td><td><span class="badge badge-danger">removido</span></td><td class="text-end diff-minus">−1830</td></tr>
-      <tr><td><code>worker/lib/{client,polling,keyboard,token,transport-log,auto-retry,outbox}.ts</code></td><td><span class="badge badge-danger">removido</span></td><td class="text-end diff-minus">−1442</td></tr>
-      <tr><td><code>src/ipc/channel.ts</code> (antigo <code>src/telegram/ipc.ts</code>)</td><td><span class="badge badge-accent">renomeado</span></td><td class="text-end diff-plus">+7</td></tr>
-      <tr><td><code>src/ui-contrib/bot-state.ts</code> (antigo <code>telegram-state.ts</code>)</td><td><span class="badge badge-accent">renomeado</span></td><td class="text-end"><span class="diff-plus">+24</span> <span class="diff-minus">−19</span></td></tr>
-      <tr><td><code>src/proc/env.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+60</span> <span class="diff-minus">−9</span></td></tr>
-      <tr><td><code>src/index.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+46</span> <span class="diff-minus">−20</span></td></tr>
-      <tr><td><code>src/config/schema.ts</code> + <code>src/contracts/state.ts</code> + <code>src/state/schema.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+67</span></td></tr>
-      <tr><td><code>cordis.patch.yml</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+14</span> <span class="diff-minus">−4</span></td></tr>
-      <tr><td><code>test/unit/worker/surface/**</code> (11 ficheiros)</td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+3283</td></tr>
-      <tr><td><code>test/unit/worker/providers/**</code> (9 ficheiros)</td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+1520</td></tr>
-      <tr><td><code>test/unit/worker/{auth,commands,lib}/**</code> (antigos)</td><td><span class="badge badge-danger">removido</span></td><td class="text-end diff-minus">−4613</td></tr>
-      <tr><td><code>docs/PROVIDERS.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+478</span> <span class="diff-minus">−93</span></td></tr>
-      <tr><td><code>.agents/skills/dsh-provider-bot/SKILL.md</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+423</td></tr>
-      <tr><td><code>.agents/skills/dsh-telegram-provider/SKILL.md</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+303</td></tr>
-      <tr><td><code>CONTRIBUTING.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+44</span> <span class="diff-minus">−14</span></td></tr>
-      <tr><td><code>README.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+18</span> <span class="diff-minus">−5</span></td></tr>
-    </tbody>
-  </table>
-</div>
-<p class="text-body-secondary small"><strong>Proveniência:</strong> <code>src/tunnel/proxy.ts</code> e
-<code>test/unit/tunnel/proxy.test.ts</code> são do <strong>main (inalterado no merge)</strong> — o encerramento ativo de
-conexões (<code>encerrarConexoesAtivas</code>) já existia em <code>main</code> (onda1-encerrar-conexoes) e a
-wt <code>desacoplar-telegram</code> não tocou neles; a árvore integrada herda-os byte-idênticos. A coexistência
-com o desacoplamento está descrita na aba Ondas.</p>
+      <!-- FILES_TABLE begin (não preenchido — conteúdo demo do template) -->
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th scope="col">Arquivo</th>
+              <th scope="col">Tipo</th>
+              <th scope="col" class="text-end">Diff</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>scripts/brave-search.sh</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+310</td>
+            </tr>
+            <tr>
+              <td><code>scripts/check-brave-credits.sh</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+98</td>
+            </tr>
+            <tr>
+              <td><code>prompts/ecc-prompts.md</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+340</td>
+            </tr>
+            <tr>
+              <td><code>prompts/ecc-skills.md</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+315</td>
+            </tr>
+            <tr>
+              <td><code>prompts/search-prompts.md</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+420</td>
+            </tr>
+            <tr>
+              <td><code>templates/html-explainer.html</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+520</td>
+            </tr>
+            <tr>
+              <td><code>SKILL.md</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end"><span class="diff-plus">+140</span> <span class="diff-minus">−45</span></td>
+            </tr>
+            <tr>
+              <td><code>README.md</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end"><span class="diff-plus">+85</span> <span class="diff-minus">−15</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-body-secondary small">Exemplo demonstrativo — valores aproximados, substituídos na geração.</p>
+      <!-- FILES_TABLE end (não preenchido — conteúdo demo do template) -->
 
       <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
 <ul class="list-group list-group-flush">
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">fd809b4</span>
-    <div><strong>Onda 1:</strong> contrato neutro da superfície de mensageria (<code>worker/surface</code>)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">19fd0fa</span>
-    <div><strong>Onda 1:</strong> contratos host provedor-aware (<code>config/state/env</code> + <code>DSH_GUARD_PROVIDER</code>)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">3fc599b</span>
-    <div><strong>Onda 1:</strong> esboço do manual de provedores (<code>docs/PROVIDERS.md</code>)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">a41c4ca</span>
-    <div><strong>Onda 1:</strong> fix canário ADV-055 aceita <code>DSH_GUARD_PROVIDER</code></div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">d1ef397</span>
-    <div><strong>Onda 2:</strong> núcleo neutro da superfície (<code>core/text/actions/tokens</code>)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">14e754b</span>
-    <div><strong>Onda 2:</strong> fix eslint (<code>consistent-type-imports</code>) no apoio do núcleo</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">bcfc5e8</span>
-    <div><strong>Onda 2:</strong> auth/comandos/outbox neutros + <code>semearDono</code> + facades</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">3fc0faa</span>
-    <div><strong>Onda 2:</strong> testes do contrato neutro da superfície</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">21c3678</span>
-    <div><strong>Onda 2:</strong> fix cone de import §5.5 (<code>SurfaceTunnelState</code> local)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">4de1d7f</span>
-    <div><strong>Onda 3:</strong> adaptador telegram (<code>worker/providers/telegram</code>) — <code>ProviderAdapter</code> sobre grammY</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">678fe5d</span>
-    <div><strong>Onda 4:</strong> boot genérico (registry + <code>SurfaceIpcBridge</code> + nonce bridge + costura absorvida)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">b337e27</span>
-    <div><strong>Onda 4:</strong> fix exit 14 no BOOT_TIMEOUT + remoção de dead code</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">77ca0fc</span>
-    <div><strong>Onda 5:</strong> host provedor-aware (<code>src/ipc/channel</code>, <code>bot-state</code>, <code>DSH_GUARD_PROVIDER</code> no spawn, <code>cordis.patch.yml</code>)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">9b7d956</span>
-    <div><strong>Onda 5:</strong> deleção do worker legado + reconciliação (tokens/comandos 1 fonte; outbox delegado; ponte fiada sem cast)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">4c240f2</span>
-    <div><strong>Onda 6:</strong> skills de provedor (<code>dsh-provider-bot</code> genérica + <code>dsh-telegram-provider</code> específica)</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">42c070f</span>
-    <div><strong>Onda 6:</strong> manual de provedores + README + CONTRIBUTING + docs + CHANGELOG/changeset</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">16a89a4</span>
-    <div><strong>/rotacionar (main):</strong> encerra ativamente TODAS as conexões abertas sob o acesso antigo — <code>encerrarConexoesAtivas()</code> no proxy + ordem fail-closed no rotate</div>
-  </li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">ba6a214</span><div><strong>Onda 1:</strong> backend do painel — POST /__guard-ui/api/token (getMe+gravar 0600+restart+409 env), GET /token-state, GET /access (tracking UA/IP), gravarSecretsEnv destino único</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">d9302fc</span><div><strong>Onda 1:</strong> spike client-half — dsh.client + slots (sidebar.footer.action, settings.section) + abrir modal na aba</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">df2f169</span><div><strong>Onda 1 fix:</strong> lockfile sincronizado (esbuild devDep do build do client)</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">03adbe6</span><div><strong>Onda 1 fix:</strong> allowBuilds esbuild: true (install frozen exit 0)</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">4352d97</span><div><strong>Onda 1 fix:</strong> lint no-unused-vars sectionId → _sectionId</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">148027a</span><div><strong>Onda 2:</strong> painel Telegram Guard (badge configurado/rodando, form token, instruções, métricas de acesso; CSS guard-* tokens dsw)</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">322130a</span><div><strong>fix-final:</strong> prepare no install por git gera lib/client.js; GET /api/csrf fonte própria de CSRF; testes commitados</div></li>
 </ul>
     </div>
 
@@ -501,14 +400,12 @@ com o desacoplamento está descrita na aba Ondas.</p>
     <div class="card h-100 depara-antes">
       <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
       <div class="card-body">
-        <p class="card-text text-body-secondary">Bot do Telegram fortemente acoplado ao provedor: o worker inteiro falava <em>grammY</em> e Telegram diretamente.</p>
+        <p class="card-text text-body-secondary">O bot do Telegram se configurava 100% por CLI, e o acesso era invisível.</p>
         <ul class="list-unstyled mb-0 d-grid gap-2">
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>worker/command/router.ts</code> com 1.039 linhas: roteador de comandos <em>e</em> acionador de <code>sendMessage</code> do grammY</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>worker/lib/{client,polling,keyboard,token,transport-log,auto-retry,outbox}.ts</code> — infraestrutura telegram-específica embutida no worker</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>worker/auth/**</code> com allowlist de ids do Telegram acoplada ao formato <code>&lt;user&gt;:&lt;chat&gt;</code></li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>IDs fluíam como strings de telegram no IPC; envelope V1 numérico montado no host</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Nenhuma forma de adicionar outro provedor sem reescrever o worker</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Sem manual de provedores, sem skill de contribuição, <code>CONTRIBUTING.md</code> §0 dizia que o bot "ainda não existe"</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Token colado via <code>dsh-guard-setup</code> no terminal (sem nenhuma rota HTTP)</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Estado do bot era só um botão OFFLINE/ONLINE no chrome antigo via tapIndex</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Nenhuma forma de ver quem estava acessando o túnel (sockets opacos, sem IP/device/contagem)</li>
+          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Plugin externo NUNCA tinha contribuído UI para os slots do DSH (mecanismo não provado)</li>
         </ul>
       </div>
     </div>
@@ -517,102 +414,62 @@ com o desacoplamento está descrita na aba Ondas.</p>
     <div class="card h-100 depara-depois">
       <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
       <div class="card-body">
-        <p class="card-text text-body-secondary">Arquitetura de provedores plugáveis: núcleo neutro + adaptadores por provedor + boot genérico.</p>
+        <p class="card-text text-body-secondary">Painel completo dentro do modal de settings do DSH, 100% via interface.</p>
         <ul class="list-unstyled mb-0 d-grid gap-2">
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i><code>worker/surface/**</code> — núcleo de mensageria 100% neutro (contract/cores/auth/commands/outbox)</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i><code>worker/providers/telegram/**</code> — adaptador do provedor atual; <code>worker/providers/registry.ts</code> resolve por <code>DSH_GUARD_PROVIDER</code></li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Adicionar um provedor = criar <code>worker/providers/&lt;novo&gt;/</code> + registar no registry + config — sem tocar no núcleo</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>IDs como strings na fronteira (D4), cast numérico concentrado na <code>SurfaceIpcBridge</code></li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>ENV allowlist por provedor; token opaco S5; exit codes 10–14 preservados</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i><code>docs/PROVIDERS.md</code> (manual completo), 2 skills em <code>.agents/skills/</code>, <code>CONTRIBUTING.md</code> corrigido e com secção de provedores</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Aba "Telegram Guard" (slot settings.section): badge Configurado/Não configurado/Env + Bot ONLINE/OFFLINE</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Form de token (password + toggle) → valida getMe → grava 0600 → reinicia o worker; 409 honesto se o env manda</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Instruções copiáveis (/parear, /ligar, /status, /rotacionar, /desligar, /emergencia)</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Métricas de acesso: conexões ativas + sessões vivas + lista (device, tempo, IP quando confiável), refresh 15s</li>
+          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Botão "Telegram" ao lado do settings (sidebar.footer.action) abre o modal já na aba nova</li>
         </ul>
       </div>
     </div>
   </div>
 </div>
 
-<h3 class="h6 mt-4 text-body-secondary">De-para adicional — superfície de mensageria</h3>
-<div class="table-responsive">
-  <table class="table table-hover align-middle">
-    <thead>
-      <tr><th scope="col">Antes (telegram-específico)</th><th scope="col">Depois (neutro sobre <code>worker/surface</code>)</th></tr>
-    </thead>
-    <tbody>
-      <tr><td><code>worker/commands/router.ts</code> (roteador + grammY)</td><td><code>worker/surface/core.ts</code> (roteador neutro) + <code>worker/providers/telegram/adapter.ts</code> (grammY fora do núcleo)</td></tr>
-      <tr><td><code>worker/auth/{allowlist,guard,pairing}.ts</code></td><td><code>worker/surface/auth.ts</code> (auth neutra sobre <code>SurfaceIdentity</code>)</td></tr>
-      <tr><td><code>worker/lib/polling.ts</code> (long polling grammY)</td><td><code>worker/providers/telegram/polling.ts</code> (loop do provedor; exit codes 11/12/14)</td></tr>
-      <tr><td><code>worker/lib/client.ts</code> (cliente grammY)</td><td><code>worker/providers/telegram/{cliente,transporte,teclado,parse,token}.ts</code></td></tr>
-      <tr><td><code>src/telegram/ipc.ts</code></td><td><code>src/ipc/channel.ts</code> (canal IPC neutro, sem "telegram" no nome)</td></tr>
-      <tr><td><code>src/ui-contrib/telegram-state.ts</code></td><td><code>src/ui-contrib/bot-state.ts</code> (<code>derivarEstadoDoBot</code> provider-agnóstico)</td></tr>
-      <tr><td><code>buildWorkerEnv(source, token)</code></td><td><code>buildWorkerEnv(source, token, provider)</code> — injeta <code>DSH_GUARD_PROVIDER</code> na allowlist (ADV-055)</td></tr>
-    </tbody>
-  </table>
-</div>
-
       <h2 class="h4 pane-title">Impacto</h2>
       <p>O que cada mudança significa para quem usa o deep-orchestrator-agent-skill:</p>
 <div class="list-group list-group-flush mb-4">
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>Provedores plugáveis</strong> — o worker de mensageria passou a ser agnóstico: <code>worker/surface</code> (núcleo neutro) + <code>worker/providers/&lt;provedor&gt;</code> (adaptador) + registry resolvido por <code>DSH_GUARD_PROVIDER</code>. Adicionar WhatsApp/Discord/Signal = novo diretório de adaptador + registo, sem tocar no núcleo.</div>
-  </div>
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>Zero novas dependências runtime</strong> (decidido em D6): grammY 1.45.1 continua a única dependência; o núcleo neutro não importa nada de provedor.</div>
-  </div>
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>−10.993 linhas de worker legado</strong> — roteador de 1.039 linhas, auth telegram-específica e infraestrutura lib/* eliminadas; o contrato vive agora em <code>worker/surface/contract.ts</code> (+506) e o cone de import §5.5 é garantido por teste estrutural.</div>
-  </div>
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>Segurança preservada invariante a invariante</strong> — allowlist 2 eixos default-deny (TG-007), ids-string na fronteira, nunca username, S5 token/nonce opacos, S4 nunca lançar no handler, exit codes 10/11/12/13/14/0; canário ADV-055 atualizado para aceitar o novo rótulo <code>DSH_GUARD_PROVIDER</code>.</div>
-  </div>
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>Manual + skills para contribuidores</strong> — <code>docs/PROVIDERS.md</code> vira manual completo (passo-a-passo para provedor novo); <code>.agents/skills/dsh-provider-bot</code> (genérica, fonte do contrato) e <code>dsh-telegram-provider</code> (específica grammY); <code>CONTRIBUTING.md</code> corrigido (§0 agora verdadeiro) e com secção de provedores.</div>
-  </div>
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>Comportamento do bot inalterado para o utilizador</strong> — a entrada continua <code>worker/telegram-bot</code> (nome legado, D1/D13), variável continua <code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_API_ROOT</code> respeitado; default <code>worker.provider: telegram</code> no schema e <code>cordis.patch.yml</code>.</div>
-  </div>
-  <div class="list-group-item d-flex gap-3 align-items-start">
-    <i class="bi bi-shield-lock fs-5 stat-value flex-shrink-0 mt-1"></i>
-    <div><strong>/rotacionar mais seguro</strong> — além de revogar a chave e as sessões, a rotação encerra agora TODAS as conexões abertas sob o acesso antigo (WebSocket 101 e streams em voo) via <code>encerrarConexoesAtivas()</code> em <code>src/tunnel/proxy.ts</code>; a ordem é fail-closed (sessões → chave → encerramento) e o listener do proxy NÃO é derrubado.</div>
-  </div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Configuração do Telegram sem terminal</strong> — o dono cola o token e valida direto na GUI do DSH; a CLI continua existindo mas deixa de ser a única via</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Visibilidade de quem acessa</strong> — conexões ativas, sessões vivas, device (user-agent normalizado), tempo de uso e IP (quando a borda é confiável); decisão informada para rotacionar/derrubar</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Prova do mecanismo de UI de plugin</strong> — primeiro plugin externo a contribuir slots no DSH (dsh.client + exports ./package.json + closure-factory), repetível por qualquer provedor futuro</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Honestidade do estado</strong> — o painel nunca afirma "configurado" quando o env TELEGRAM_BOT_TOKEN manda (409 com instrução) e nunca mostra handle de token não gravado</div></div>
+  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Privacidade por construção</strong> — sessões expostas como hash truncado, UA normalizado, IP só de cf-connecting-ip confiável; token/?key nunca no bundle, na projeção ou no log</div></div>
 </div>
 
       <h2 class="h4 pane-title">Novas capacidades</h2>
-<div class="row row-cols-1 row-cols-md-2 g-3">
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-plug fs-5 stat-value"></i><strong>Adapter ProviderAdapter</strong></div>
-    <p class="card-text small text-body-secondary mb-0">Contrato <code>ProviderAdapter</code> completo (<code>id/limits/start(handleEvent)/stop/publishCommands/sender</code>) — qualquer provedor cumpre o mesmo contrato.</p>
-  </div></div></div>
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-diagram-3 fs-5 stat-value"></i><strong>Registry + resolver fail-closed</strong></div>
-    <p class="card-text small text-body-secondary mb-0"><code>resolverProvedor(env)</code> lê <code>DSH_GUARD_PROVIDER</code>; desconhecido recusa o arranque com erro claro.</p>
-  </div></div></div>
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-shield-lock fs-5 stat-value"></i><strong>SurfaceEvent discriminado</strong></div>
-    <p class="card-text small text-body-secondary mb-0"><code>comando | acao | acao-invalida</code> com <code>answerTarget</code> obrigatório (TG-027) — o núcleo decide, o adaptador responde sempre.</p>
-  </div></div></div>
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-arrows-angle-contract fs-5 stat-value"></i><strong>SurfaceLimits por canal</strong></div>
-    <p class="card-text small text-body-secondary mb-0">4096 bytes texto / 1 linha / 1 ação por linha / 64 bytes dados / edição — telegram cumpre; outro provedor declara os seus.</p>
-  </div></div></div>
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-hash fs-5 stat-value"></i><strong>SurfaceIdentity string (D4)</strong></div>
-    <p class="card-text small text-body-secondary mb-0"><code>userKey/chatKey</code> strings neutras; o cast numérico do envelope IPC V1 fica concentrado na <code>SurfaceIpcBridge</code>.</p>
-  </div></div></div>
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-book fs-5 stat-value"></i><strong>Manual + skills de contribuição</strong></div>
-    <p class="card-text small text-body-secondary mb-0">docs/PROVIDERS.md + 2 skills em <code>.agents/skills/</code> — o caminho "adicionar provedor" está documentado fim-a-fim.</p>
-  </div></div></div>
-  <div class="col"><div class="card h-100"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-plug-fill fs-5 stat-value"></i><strong>encerrarConexoesAtivas()</strong></div>
-    <p class="card-text small text-body-secondary mb-0">Método novo no contrato <code>TunnelProxy</code>: síncrono, idempotente, destroy nos sockets rastreados; o /rotacionar encerra as conexões sob o acesso antigo sem derrubar o listener.</p>
-  </div></div></div>
-</div>
+      <!-- CAPABILITIES begin (não preenchido — conteúdo demo do template) -->
+      <div class="row g-3">
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-stars fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Capacidade 1</h3>
+              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-stars fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Capacidade 2</h3>
+              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-stars fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Capacidade 3</h3>
+              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas capacidades reais.</p>
+      <!-- CAPABILITIES end (não preenchido — conteúdo demo do template) -->
     </div>
 
     <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
@@ -622,42 +479,12 @@ com o desacoplamento está descrita na aba Ondas.</p>
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
 <ul class="list-group list-group-flush">
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">D1/D13</span>
-    <div><strong>Entrada preserva o nome legado</strong> — <code>worker/telegram-bot</code> continua sendo a entrada (pinned por <code>WORKER_ENTRY_BASENAME</code> + tsconfig.worker.json); o conteúdo é o boot genérico.</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">D2</span>
-    <div><strong>Tabelas duplicadas host/worker</strong> — a tabela de provedores existe no host (<code>src/proc/env.ts</code> allowlist) e no worker (<code>worker/providers/registry.ts</code>); acoplamento por convenção de env var, sem import entre mundos.</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">D3</span>
-    <div><strong><code>provider?</code> aditivo no estado v1</strong> — campo opcional no schema; persistências antigas continuam válidas (default telegram).</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">D4</span>
-    <div><strong>Identidade como strings na fronteira</strong> — <code>SurfaceIdentity.userKey/chatKey</code>; o cast para Number do IPC V1 acontece só dentro de <code>montarEnvelopeDeIntent</code> na bridge.</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">D6</span>
-    <div><strong>Zero novas dependências</strong> — grammY 1.45.1 permanece a única dependência runtime; adaptadores futuros trazem as suas.</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">5a</span>
-    <div><strong>Ganhador do conflito de merge onda 5a</strong> — <code>montarEnvelopeDeIntent</code>/<code>IntencaoNeutra</code> re-pousados na <code>criarSurfaceIpcBridge</code> (design 5a) após resolução adversarial em subagente dedicado (commit 29bcc2a).</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">IRC</span>
-    <div><strong>Gates de snapshot em paralelo</strong> — gate de cada squash roda no snapshot <code>int-ondaN-*</code> enquanto os merges seguintes avançam; o verde de cada um precede a limpeza da sua onda (R6/F3-01).</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">flake</span>
-    <div><strong>Classificação de ruído</strong> — 3 testes temporizados pré-existentes (commits de 2026-08-20, anteriores à worktree) ficam vermelhos sob carga da máquina e passam isolados; re-registrados como ruído ambiente em todas as ondas, nunca como regressão das ondas.</div>
-  </li>
-  <li class="list-group-item d-flex gap-3 align-items-start">
-    <span class="badge badge-soft font-monospace">/rotacionar</span>
-    <div><strong>Ordem do rotate é contrato</strong> (integração com main) — sessoes + chave caem ANTES do encerramento das conexões (fail-closed); o rastreio manual de sockets (<code>server.on('connection')</code>) é obrigatório porque <code>closeAllConnections</code> do Node não fecha sockets <code>upgraded</code>; o listener do proxy permanece para a chave nova.</div>
-  </li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">UI</span><div><strong>Slots nativos do DSH, zero patch no harness</strong> — client-half via dsh.client (exports ./client + ./package.json) + ctx.slots.register; a pedra de toque era o exports ./package.json (sem ele o registry rejeita silenciosamente)</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">modal</span><div><strong>Abrir o modal do settings já na aba nova</strong> — o open é estado local do SettingsRoot sem handle global; affluent DOM (clique no trigger escopado ao .settingsArea + clique no rail de 'Telegram Guard'), provado em headless</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">token</span><div><strong>Token 100% via interface com honestidade</strong> — POST valida formato→getMe→grava 0600 atômico→restart; 409 token-por-env quando o ambiente manda (nunca mentir que configurou)</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">privacidade</span><div><strong>Métricas sem vazar segredos</strong> — sessões expostas como hash truncado (8 chars), UA normalizado, IP só quando cf-connecting-ip confiável; ?key/token nunca no bundle nem na projeção</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">CSRF</span><div><strong>Fonte própria de CSRF</strong> — GET /api/csrf (HMAC stateless, mesmo binding) para o bundle não depender do meta do chrome antigo</div></li>
+  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">dist</span><div><strong>Instalação por git funcional</strong> — prepare roda build:all (gera lib/client.js + dist); check-tarball exige lib/client.js</div></li>
 </ul>
     </div>
 
@@ -668,23 +495,17 @@ com o desacoplamento está descrita na aba Ondas.</p>
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
 <ul class="timeline list-unstyled mb-0">
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>FASE 0</strong> — Fronteira resolvida: worktree wt-root <code>desacoplar-telegram</code>, MODE=contido, branch <code>do/wt/desacoplar-telegram</code>; plano em TASK_PLAN.md (6 ondas); PORTÃO DE APROVAÇÃO desligado (wt= + PLAN_APPROVAL=OFF).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1 (contratos)</strong> — 3 subagentes + fix canário: contrato neutro da superfície, contratos host, esboço do manual. Gate combinado verde.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 2 (núcleo neutro)</strong> — listas cosidas + test-onda1 + 2 fixes (eslint, cone §5.5). REPLAN adotado: outbox órfão, reconciliação 3 fontes, host paralelo, skills, manual.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 3 (adaptador telegram)</strong> — 16 ficheiros <code>worker/providers/telegram/**</code>; revisor adverso APPROVE; certificada (isolated flake + security 136/0 + e2e 51/51).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 4 (boot genérico)</strong> — registry + SurfaceIpcBridge real + nonce bridge + costura absorvida; re-review WARNING gerou fix (exit 14 no BOOT_TIMEOUT + dead code).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 5 (host + deleções, paralela)</strong> — 5b host provedor-aware; 5a deleção do worker legado (−10.993 linhas) com conflito de merge resolvido em subagente; gate do snapshot 5a RED→flake→GREEN (test 1824/1824, security 136/0, e2e 51/51).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 6 (manual + skills, paralela)</strong> — 6a docs (PROVIDERS.md manual + README + CONTRIBUTING + docs + CHANGELOG/changeset); 6b skills (dsh-provider-bot + dsh-telegram-provider). Gates verdes nos snapshots.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>/rotacionar (main, integrado)</strong> — a worktree precursora <code>onda1-encerrar-conexoes</code> entrou nesta árvore: proxy rastreia sockets e <code>encerrarConexoesAtivas()</code> encerra as conexões sob o acesso antigo na rotação (fail-closed), sem derrubar o listener; testes (h)/(h2)-(h9) do proxy.</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Integração no main (2026-08-23)</strong> — a wt-irmã <code>do/wt/desacoplar-telegram</code> (17 commits) foi integrada ao <code>main</code> via squash-merge (ba01991) com resolução de conflito (EXPLAINER.html: versão das 6 ondas + narrativa do encerramento de conexões) e revisão adversarial APPROVE; fix de typecheck pré-existente do main (872d92b, TS2339 em handler de socket); skill genérica enriquecida com §4.5 "Como plugar OUTROS provedores" (WhatsApp/Discord/Slack/Signal/iMessage).</div></li>
-<li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>COMMIT-FINAL</strong> — gate completo em $BASE_DIR verde (lint 0 erros, typecheck, build, test 1824/1824, security 136/0, e2e 51/51); EXPLAINER.html gerado; relatório final; limpeza de estado.</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>FASE 0 + pesquisa</strong> — fronteira resolvida (MODE=normal, BASE_BRANCH=main); 2 agentes de pesquisa mapeiam o modal de settings (ui-settings/contract/slots), o mecanismo de client plugin (dsh.client), o token CLI e o tracking de acesso.</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1 (paralela)</strong> — backend (rotas token/token-state/access + tracking + gravarSecretsEnv destino único) e spike client-half (prova no runtime 3082: slots renderizam, modal abre na aba; exports ./package.json era a chave). Review APPROVE + fixes.</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 2</strong> — painel completo na aba "Telegram Guard" com tokens --dsw-* (CSS guard-*), form de token, instruções, métricas; review WARNING → fix de classes camelCase/kebab.</div></li>
+  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>COMMIT-FINAL</strong> — revisão de integração WARNING → fix-final (prepare + GET /api/csrf próprio); gate final verde (1859/1859, security 136/0, e2e 51/51); prova no runtime: client.js servido + endpoints novos 200; EXPLAINER + relatório.</div></li>
 </ul>
     </div>
 
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator-agent-skill</strong> vdesacoplar-telegram@2026-08-23 · 2026-08-23 · branch do/wt/desacoplar-telegram.
+    Gerado por <strong>deep-orchestrator-agent-skill</strong> vpainel-telegram-final@2026-08-23 · 2026-08-23 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
