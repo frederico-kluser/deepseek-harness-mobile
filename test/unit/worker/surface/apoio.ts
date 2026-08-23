@@ -221,12 +221,19 @@ export class FakeSender {
 /** Duble do lado worker do canal: regista os intents NEUTROS e pode falhar o send. */
 export class FakeIpc {
   readonly intents: IntencaoNeutra[] = []
+  /** Os donos comunicados por `pairingSuccess` (EMENDA ONDA-1-PAREAR-VIA-PAINEL). */
+  readonly pareamentos = new Array<{ userKey: string; chatKey: string; pairedAt: number }>()
   falhar = false
 
   send(pedido: IntencaoNeutra): boolean {
     if (this.falhar) return false
     this.intents.push(pedido)
     return true
+  }
+
+  /** O pareamento concluiu no worker: o dono e comunicado ao HOST (fire-and-forget). */
+  pairingSuccess(dono: { userKey: string; chatKey: string; pairedAt: number }): void {
+    this.pareamentos.push(dono)
   }
 }
 
@@ -553,7 +560,10 @@ export function montarBancada(opcoes: OpcoesDaBancada = {}): Bancada {
   const nucleo = criarNucleo({
     log: log.logger,
     time,
-    ipc: { send: (intent) => ipc.send(intent) },
+    ipc: {
+      send: (intent) => ipc.send(intent),
+      pairingSuccess: (dono) => ipc.pairingSuccess(dono),
+    },
     sender: sender.sender,
     limites: opcoes.limites ?? LIMITES_POR_OMISSAO,
     emitirNonce: opcoes.emitirNonce ?? host.emitirNonce,

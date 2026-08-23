@@ -222,6 +222,20 @@ describe('o funil: o pareamento corre ANTES da allowlist (PAIR-006/007)', () => 
     assert.equal(bancada.ipc.intents.at(-1)?.intent, 'tunnel.status')
   })
 
+  it('EMENDA ONDA-1: ao parear, a bridge comunica `pairing.success` com os DOIS eixos', async () => {
+    const bancada = montarBancada()
+
+    await bancada.tratar(comandoDoDono('/parear 123456'))
+
+    // O aviso ao HOST saiu com o dono dos dois eixos (D4: STRING).
+    assert.equal(bancada.ipc.pareamentos.length, 1)
+    const aviso = bancada.ipc.pareamentos[0]
+    assert.ok(aviso !== undefined)
+    assert.equal(aviso.userKey, DONO)
+    assert.equal(aviso.chatKey, DONO)
+    assert.equal(aviso.pairedAt, bancada.time.now(), 'o pairedAt e o do instante do pareamento')
+  })
+
   it('codigo errado: resposta generica, atrasada pelo relogio injetado', async () => {
     const bancada = montarBancada()
     const antes = bancada.time.now()

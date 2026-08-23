@@ -158,12 +158,18 @@ export function criarHostFalso(): HostFalso {
 /** Duplo do canal: regista os intents neutros enviados. */
 export class CanalFalso {
   readonly intents: IntencaoNeutra[] = []
+  /** Donos comunicados por `pairingSuccess` (EMENDA ONDA-1-PAREAR-VIA-PAINEL). */
+  readonly pareamentos = new Array<{ userKey: string; chatKey: string; pairedAt: number }>()
   falhar = false
 
   send(intent: unknown): boolean {
     if (this.falhar) return false
     this.intents.push(intent as IntencaoNeutra)
     return true
+  }
+
+  pairingSuccess(dono: { userKey: string; chatKey: string; pairedAt: number }): void {
+    this.pareamentos.push(dono)
   }
 }
 
@@ -194,7 +200,7 @@ export function montarBancada(opcoes: OpcoesDaBancada = {}): BancadaDeComandos {
   const ctx: SurfaceCommandContext = {
     log: log.logger,
     time,
-    ipc: { send: (intent) => canal.send(intent) },
+    ipc: { send: (intent) => canal.send(intent), pairingSuccess: (dono) => canal.pairingSuccess(dono) },
     emitirNonce: opcoes.emitirNonce ?? host.emitirNonce,
     parar: async () => {
       emissor.paradas += 1

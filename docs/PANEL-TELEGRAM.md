@@ -117,6 +117,55 @@ a saída do build, não fonte. O `files` do tarball já inclui `lib` e `dist`, e
 
 ---
 
+## PAREAR PELO PAINEL
+
+Com o token configurado e o bot ainda **sem pareamento**, o painel mostra o
+cartão **"Parear pelo Telegram"** (em vez de só o badge OFFLINE). É o caminho
+"tudo via interface": não é preciso abrir o terminal para parear.
+
+**Fluxo passo a passo:**
+
+1. **Garanta o token configurado.** Sem token, o painel mostra o cartão
+   @BotFather; o botão "Parear pelo Telegram" só aparece depois de configurar a
+   chave (fonte `ENV` ou `secrets.env`).
+2. **Toque em "Parear pelo Telegram".** O painel pede à costura do host a rota
+   `POST /__guard-ui/api/pair` (com CSRF, como qualquer escrita da superficie).
+3. **O host gera um código de 6 dígitos** (a MESMA máquina do CLI:
+   `criarSessaoDePareamento`, TTL 5 min, anti-reuso/dobra `PAIR-010`) e envia ao
+   worker `pairing.challenge` com o **digest sha256** do código — nunca o claro.
+4. **O painel mostra o código em destaque** (mono, grande) e a instrução:
+   `No Telegram, envie: /parear <código> no bot @<handle>`, com contagem
+   regressiva (`m:ss`) e o estado **"Aguardando pareamento…"**.
+5. **O dono digita `/parear <código>` no bot** (a conversa com o bot; não é o
+   host que envia — o código viajou só do host para o painel).
+6. O worker valida o digest, responde no chat **e** avisa o host por
+   `pairing.success` (nova mensagem IPC worker→host). O host **grava o dono no
+   `state.json`** (`pairing.ownerUserId/ownerChatId/pairedAt`) e **devolve
+   `pairing.owner`**, que liberta a allowlist **no ato** (`auth.semearDono`) —
+   sem reiniciar.
+7. O painel **sonda `GET /__guard-ui/api/pair-state` a cada ~3 s** e, quando
+   `pareado:true`, troca para **"Pareado ✓"** e mostra as instruções de uso.
+
+**Expiração e repetição.** Se a contagem chegar a `0:00` e ainda não houver
+pareamento, o painel avisa **"O código expirou"** e oferece **"Gerar novo
+código"**. O código expirado/descartado não deixa janela aberta (a sessão morre;
+o estado é seguro).
+
+**O que acontece com o menu do bot.** O `setMyCommands` já publicou o menu `/`
+no Telegram (os 7 comandos: `/ligar /desligar /status /acessar /rotacionar
+/parear /emergencia`). O pareamento pelo painel **não muda o menu** — só usa o
+`/parear <código>` existente para fechar o handshake; o menu continua a aparecer
+na conversa com o bot normalmente.
+
+**Nota de segurança.** O código de 6 dígitos **só existe no host (memória) e
+neste painel** — nunca em log, nunca em auditoria, nunca enviado por Telegram.
+O que viaja pelo canal é apenas o **digest sha256** (`pairing.challenge`); quem
+digita `/parear` é o dono, ao dedo, na conversa com o bot. A rota `POST /pair`
+é protegida pela MESMA barreira de loopback/túnel autenticado e pelo CSRF da
+superficie (`x-dsh-csrf`, binding `ui-contrib`).
+
+---
+
 ## FORA DE ESCOPO (next / Onda 3)
 - O smoke headless agora é o teste commitado `test/unit/client/index.test.ts`;
   um refinamento futuro seria renderizar a aba inteira num DOM (jsdom/smoke de

@@ -222,6 +222,10 @@ function superficieUi(b: Bancada): Superficie {
       gravar: () => undefined,
       estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
     },
+    pairOps: {
+      estado: () => ({ pareado: false }),
+      gerar: async () => ({ ok: true as const, codigo: '123456', expiraEm: b.clock.now() + 60_000 }),
+    },
     acesso: () => ({
       conexoesAtivas: 0,
       totalSessoes: 0,

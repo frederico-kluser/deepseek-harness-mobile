@@ -35,6 +35,8 @@ import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
+  UI_PATH_PAIR,
+  UI_PATH_PAIR_STATE,
   UI_PATH_RESET,
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
@@ -108,6 +110,10 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
         token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
       gravar: () => undefined,
       estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+    },
+    pairOps: {
+      estado: () => ({ pareado: false }),
+      gerar: async () => ({ ok: true, codigo: '123456', expiraEm: clock.now() + 60_000 }),
     },
     acesso: () => ({
       conexoesAtivas: 0,
@@ -371,5 +377,116 @@ describe('GET /__guard-ui/api/csrf', () => {
 
   it('o token do /csrf usa o MESMO vinculo (UI_CSRF_BINDING) do CSRF da superficie', () => {
     assert.equal(UI_CSRF_BINDING, 'ui-contrib')
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA ONDA-1: o pareamento VIA PAINEL (POST /pair + GET /pair-state)       */
+/* ========================================================================== */
+
+describe('o pareamento VIA PAINEL (POST /pair)', () => {
+  it('403 SEM CSRF: o POST /pair e uma escrita como qualquer outra', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_PAIR, { metodo: 'POST', pedacos: ['{}'] })
+    assert.equal(resposta.status, 403)
+    assert.equal(resposta.corpo.erro, 'csrf-recusado')
+  })
+
+  it('gera um codigo de 6 digitos com expiraEm e devolve-o (200)', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_PAIR, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{}'],
+    })
+    assert.equal(resposta.status, 200)
+    assert.match(String(resposta.corpo.codigo), /^\d{6}$/u)
+    assert.equal(resposta.corpo.expiraEm, 1_000_000 + 60_000)
+  })
+
+  it('409 ja-pareado: mensagem PT-BR amigavel, sem vazar o codigo', async () => {
+    const bancada = criarBancada({
+      pairOps: { estado: () => ({ pareado: true }), gerar: async () => ({ ok: false as const, erro: 'ja-pareado' as const }) },
+    })
+    const resposta = await bancada.enviar(UI_PATH_PAIR, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{}'],
+    })
+    assert.equal(resposta.status, 409)
+    assert.equal(resposta.corpo.erro, 'ja-pareado')
+    assert.match(String(resposta.corpo.mensagem), /já tem um dono/u)
+  })
+
+  it('409 sem-token: mensagem PT-BR acionavel, sem vazar a chave', async () => {
+    const bancada = criarBancada({
+      pairOps: { estado: () => ({ pareado: false }), gerar: async () => ({ ok: false as const, erro: 'sem-token' as const }) },
+    })
+    const resposta = await bancada.enviar(UI_PATH_PAIR, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{}'],
+    })
+    assert.equal(resposta.status, 409)
+    assert.equal(resposta.corpo.erro, 'sem-token')
+    assert.match(String(resposta.corpo.mensagem), /Configure a chave do bot/u)
+  })
+
+  it('409 worker-indisponivel: mensagem PT-BR, sem vazar detalhe de topologia', async () => {
+    const bancada = criarBancada({
+      pairOps: { estado: () => ({ pareado: false }), gerar: async () => ({ ok: false as const, erro: 'worker-indisponivel' as const }) },
+    })
+    const resposta = await bancada.enviar(UI_PATH_PAIR, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{}'],
+    })
+    assert.equal(resposta.status, 409)
+    assert.equal(resposta.corpo.erro, 'worker-indisponivel')
+    assert.match(String(resposta.corpo.mensagem), /não está a correr/u)
+  })
+
+  it('corpo excessivo responde 400 antes de chegar ao gerar', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_PAIR, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['x'.repeat(5000)],
+    })
+    assert.equal(resposta.status, 400)
+    assert.equal(resposta.corpo.erro, 'corpo-grande')
+  })
+})
+
+describe('o estado do pareamento (GET /pair-state)', () => {
+  it('devolve pareado+handle+codigo ativo quando a costura os tem', async () => {
+    const bancada = criarBancada({
+      pairOps: {
+        estado: () => ({ pareado: false, handle: 'exemplo_bot', codigo: '123456', expiraEm: 1_000_000_000 + 60_000 }),
+        gerar: async () => ({ ok: true, codigo: '123456', expiraEm: 1_000_000_000 + 60_000 }),
+      },
+    })
+    const resposta = await bancada.enviar(UI_PATH_PAIR_STATE, { metodo: 'GET' })
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.corpo.pareado, false)
+    assert.equal(resposta.corpo.handle, 'exemplo_bot')
+    assert.equal(resposta.corpo.codigo, '123456')
+    assert.equal(resposta.corpo.expiraEm, 1_000_000_000 + 60_000)
+  })
+
+  it('devolve pareado quando a costura afirma o dono; o codigo nao sai nesse caso', async () => {
+    const bancada = criarBancada({
+      pairOps: { estado: () => ({ pareado: true, handle: 'exemplo_bot' }), gerar: async () => ({ ok: true, codigo: '123456', expiraEm: 1 }) },
+    })
+    const resposta = await bancada.enviar(UI_PATH_PAIR_STATE, { metodo: 'GET' })
+    assert.equal(resposta.corpo.pareado, true)
+    assert.equal(Object.hasOwn(resposta.corpo, 'codigo'), false, 'pareado nao deixa sessao viva por a mostrar')
+  })
+
+  it('metodo errado responde 405 com allow: GET', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_PAIR_STATE, { metodo: 'POST', pedacos: ['{}'] })
+    assert.equal(resposta.status, 405)
+    assert.equal(resposta.cabecalhos.allow, 'GET')
   })
 })

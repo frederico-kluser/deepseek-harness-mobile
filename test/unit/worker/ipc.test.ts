@@ -125,6 +125,10 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     // EMENDA-COSTURA-5: nonce.request (worker -> host) e nonce.issued (host -> worker).
     '{"v":1,"type":"nonce.request","acao":"start","requestId":"req-nonce-1"}',
     '{"v":1,"type":"nonce.issued","acao":"reset","requestId":"req-nonce-2","nonce":"0123456789abcdef","expiresAt":1}',
+    // EMENDA ONDA-1-PAREAR-VIA-PAINEL: pairing.success (worker -> host).
+    '{"v":1,"type":"pairing.success","from":111,"chat":222,"pairedAt":1700000000000}',
+    '{"v":1,"type":"pairing.success","from":111,"chat":-100123}',
+    '{"v":1,"type":"pairing.success","from":"@nao-numerico","chat":222,"pairedAt":1}',
     // Recusadas.
     '',
     '   ',
@@ -215,6 +219,8 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
       // EMENDA-COSTURA-5: as duas mensagens novas serializam igual nos dois lados.
       [{ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req' }, 'to-host'],
       [{ v: 1, type: 'nonce.issued', acao: 'reset', requestId: 'req', nonce: 'opaco', expiresAt: 7 }, 'to-worker'],
+      // EMENDA ONDA-1-PAREAR-VIA-PAINEL: `pairing.success` serializa igual.
+      [{ v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 7 }, 'to-host'],
     ]
     for (const [message, direction] of amostras) {
       assert.equal(

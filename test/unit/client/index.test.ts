@@ -172,6 +172,35 @@ test('bundle: o botão da sidebar foi removido e o cartão @BotFather está pres
   assert.ok(codigo.includes('use /token no @BotFather'), 'o bundle deve conter a nota de revogação /token')
 })
 
+test('bundle: o pareamento VIA PAINEL está presente (botão + código + espera) e NÃO loga o código', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // Os textos-chave do fluxo existem no bundle (a fidelidade do conteúdo é
+  // verificada na string compilada, como o smoke não renderiza React).
+  assert.ok(codigo.includes('Parear pelo Telegram'), 'o bundle deve conter o botão/cartão "Parear pelo Telegram"')
+  assert.ok(codigo.includes('Aguardando pareamento'), 'o bundle deve conter o estado de espera "Aguardando pareamento"')
+  assert.ok(codigo.includes('Envie na conversa com'), 'o bundle deve conter a instrução de onde enviar o comando')
+  // "Gerar novo código" tem acento (escapado \xF3 no bundle); segura-se o
+  // prefixo ASCII "Gerar novo" + o estado de expiração que o renderiza.
+  assert.ok(codigo.includes('Gerar novo'), 'o bundle deve conter a ação "Gerar novo código" na expiração')
+
+  // NUNCA deve existir um console.log do código nem do token no bundle.
+  assert.ok(!/console\.log\(\s*codigo\s*\)/u.test(codigo), 'não pode haver console.log(codigo) no bundle')
+  assert.ok(!/console\.log\(\s*par\b/u.test(codigo), 'não pode haver console.log do estado de pareamento no bundle')
+})
+
+test('bundle: formatarContagem exporta o countdown m:ss (expiração + formato)', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const fmt = modulo.formatarContagem as (expiraEm: number, agoraMs: number) => string
+
+  assert.equal(fmt(1_000_000_000, 1_000_000_000 - 60_000 - 5_000), '1:05')
+  assert.equal(fmt(1_000_000_000, 1_000_000_000 - 245_000), '4:05')
+  assert.equal(fmt(1_000_000_000, 1_000_000_000), '0:00', 'no prazo, 0:00')
+  assert.equal(fmt(1_000_000_000, 1_000_000_000 + 10_000), '0:00', 'já expirou, 0:00')
+  void chamadas
+})
+
 test('CSRF HIGH-2: buscarTokenCsrf busca /__guard-ui/api/csrf e usa o token novo', { skip: BUNDLE_AUSENTE }, async () => {
   const { chamadas, fetchStub } = capturarFetch([
     { urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(200, { token: 'TOKEN-FRESCO-ABC' }) },

@@ -80,6 +80,10 @@ export const UI_PATH_ACCESS = `${UI_PREFIX}/api/access`
  * e o mesmo token stateless que o `tapIndex` embute no indice antigo.
  */
 export const UI_PATH_CSRF = `${UI_PREFIX}/api/csrf`
+/** Inicia o pareamento pelo painel — POST, CSRF como as demais escritas. */
+export const UI_PATH_PAIR = `${UI_PREFIX}/api/pair`
+/** O estado do pareamento (pareado? handle? código ativo) — GET, só leitura. */
+export const UI_PATH_PAIR_STATE = `${UI_PREFIX}/api/pair-state`
 
 /** O vinculo do token anti-CSRF: a superficie inteira. */
 export const UI_CSRF_BINDING = 'ui-contrib'
@@ -125,6 +129,12 @@ export interface UiContribCore {
    * logado nem ecoado por este modulo.
    */
   readonly tokenOps: UiTokenOps
+  /**
+   * Operacoes do pareamento VIA PAINEL, fiadas pela costura em `src/index.ts`.
+   * O codigo de 6 digitos NUNCA chega a log por este modulo — a costura o gera
+   * com `criarSessaoDePareamento` e so o devolve na resposta de `gerar()`.
+   */
+  readonly pairOps: UiPairOps
   /**
    * Projecao de acesso, fiada pela costura: a contagem de sockets ativos do
    * proxy do tunel e a lista de sessoes vivas, ja com os metadados de acesso.
@@ -188,6 +198,36 @@ export interface UiTokenOps {
   readonly gravar: (token: string, handle: string) => void
   /** Estado do token (fonte+handle) para o `token-state`; le o disco a cada chamada. */
   readonly estado: () => EstadoDoToken
+}
+
+/**
+ * O servico de PAREAMENTO VIA PAINEL fiado a superficie. Cada operacao e
+ * executada pela costura em `src/index.ts` (que detem `config`, `statePaths`,
+ * o supervisor do worker e a sessao de pareamento em memoria); este modulo so
+ * orquestra o HTTP. O CODIGO DE 6 DIGITOS NUNCA e logado nem viaja para o
+ * Telegram — so existe no host (memoria) e na resposta a `gerar()`.
+ */
+export interface UiPairOps {
+  /**
+   * O estado do pareamento para o `pair-state`: `pareado` + o `@handle` do bot
+   * (lido do token-state). Enquanto houver uma sessao de pareamento VIVA em
+   * memoria, devolve o `codigo` (por re-exibicao no refresh) e o `expiraEm`.
+   */
+  readonly estado: () => {
+    readonly pareado: boolean
+    readonly handle?: string | undefined
+    readonly codigo?: string | undefined
+    readonly expiraEm?: number | undefined
+  }
+  /**
+   * Gera UM codigo de pareamento novo e envia o `pairing.challenge` ao worker.
+   * Devolve `{ok:true,codigo,expiraEm}` (o unico sitio onde o claro existe fora
+   * do host) ou `{ok:false,erro}` com uma CAUSA acionavel, NUNCA o codigo.
+   */
+  readonly gerar: () => Promise<
+    | { readonly ok: true; readonly codigo: string; readonly expiraEm: number }
+    | { readonly ok: false; readonly erro: 'ja-pareado' | 'sem-token' | 'worker-indisponivel' | 'interno' }
+  >
 }
 
 /** Uma sessao viva, ja redigida, com os metadados de acesso capturados. */
@@ -736,6 +776,80 @@ export function createAccessHandler(core: UiContribCore): UiContribRequestHandle
   return (req, res) => {
     if (!exigeMetodo(req, res, 'GET')) return
     json(res, 200, projetarAcesso(core.acesso()))
+  }
+}
+
+/* ========================================================================== */
+/* O pareamento VIA PAINEL (POST /api/pair + GET /api/pair-state)             */
+/* ========================================================================== */
+
+/**
+ * A mensagem PT-BR amigavel por codigo de erro de /pair. NUNCA vaza o codigo
+ * nem o token: cada entrada e uma causa acionavel, sem numeros nem chaves.
+ */
+const TEXTO_ERRO_PAIR: Readonly<Record<string, string>> = {
+  'ja-pareado': 'Este bot já tem um dono. Use a máquina para trocar o dono (`--reset-pairing`).',
+  'sem-token': 'Configure a chave do bot primeiro — só depois dá para parear pelo painel.',
+  'worker-indisponivel': 'O bot não está a correr agora. Verifique e tente de novo.',
+  interno: 'Algo correu mal ao gerar o código. Tente de novo.',
+}
+
+/**
+ * GET /__guard-ui/api/pair-state — o estado do pareamento. SO LE: corpo com
+ * `pareado` + `handle?` (lido do token-state), e `codigo`/`expiraEm` enquanto
+ * houver sessao viva em memoria (re-exibicao no refresh). NUNCA vaza o token.
+ */
+export function createPairStateHandler(core: UiContribCore): UiContribRequestHandler {
+  return (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    const estado = core.pairOps.estado()
+    const corpo: Record<string, unknown> = { pareado: estado.pareado }
+    if (estado.handle !== undefined) corpo['handle'] = estado.handle
+    if (estado.codigo !== undefined && estado.expiraEm !== undefined) {
+      corpo['codigo'] = estado.codigo
+      corpo['expiraEm'] = estado.expiraEm
+    }
+    json(res, 200, corpo)
+  }
+}
+
+/**
+ * POST /__guard-ui/api/pair — inicia o pareamento pelo painel.
+ *
+ * Exige CSRF como qualquer POST desta superficie (NIST SP 800-63B-4 5.1.1).
+ * A costura (`core.pairOps.gerar`) gera o codigo com `criarSessaoDePareamento`,
+ * envia o digest (`pairing.challenge`) ao worker e guarda a sessao em memoria.
+ * Sucesso -> 200 `{codigo, expiraEm}`; ja-pareado/sem-token/worker-indisponivel
+ * -> 409 `{erro}` (mensagem amigavel PT-BR); o resto -> 500 `{erro:'interno'}`.
+ * O CODIGO NUNCA sai para log: so nesta resposta.
+ */
+export function createPairHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    if (!exigeMetodo(req, res, 'POST')) return
+    const corpo = await lerCorpo(req)
+    if (!corpo.ok) {
+      json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' })
+      return
+    }
+    if (!csrfValido(core, req, corpo.corpo)) {
+      recusarCsrf(res)
+      return
+    }
+    let resultado
+    try {
+      resultado = await core.pairOps.gerar()
+    } catch {
+      json(res, 500, { erro: 'interno', mensagem: TEXTO_ERRO_PAIR['interno'] })
+      return
+    }
+    if (!resultado.ok) {
+      json(res, 409, {
+        erro: resultado.erro,
+        mensagem: TEXTO_ERRO_PAIR[resultado.erro] ?? TEXTO_ERRO_PAIR['interno'],
+      })
+      return
+    }
+    json(res, 200, { codigo: resultado.codigo, expiraEm: resultado.expiraEm })
   }
 }
 

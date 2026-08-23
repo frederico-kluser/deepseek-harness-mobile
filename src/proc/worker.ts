@@ -32,7 +32,7 @@ import type { IpcIntentMessage, IpcMessageToWorker } from '../contracts/ipc.ts'
 import type { Context, SubprocessHandle, SubprocessSpawnSpec } from '../dsh/adapter.ts'
 import { createGuardLogger, type GuardLogger } from '../logging/logger.ts'
 import { createHostIpcChannel, type HostIpcChannel } from '../ipc/channel.ts'
-import type { IpcNonceRequestMessage } from '../contracts/ipc.ts'
+import type { IpcNonceRequestMessage, IpcPairingSuccessMessage } from '../contracts/ipc.ts'
 import { buildWorkerEnv, DEFAULT_PROVIDER, type ProviderId } from './env.ts'
 import {
   createProcessSupervisor,
@@ -116,6 +116,15 @@ export interface WorkerSupervisorOptions {
    * liga-o ao `ConfirmService` de T5.1 via `criarRespondedorDeNonce`.
    */
   readonly onNonceRequest?: ((request: IpcNonceRequestMessage) => IpcMessageToWorker) | undefined
+  /**
+   * Decide UM `pairing.success` (EMENDA ONDA-1-PAREAR-VIA-PAINEL) e devolve a
+   * resposta — tipicamente `pairing.owner`, que fecha o handshake e liberta a
+   * allowlist; a costura em `src/index.ts` tambem persiste o dono no `state.json`.
+   *
+   * AUSENTE, o canal responde `error INTERNAL` ao aviso — o pareamento fica
+   * valido no worker mas o host nao aprende o dono (fail-closed).
+   */
+  readonly onPairingSuccess?: ((msg: IpcPairingSuccessMessage) => IpcMessageToWorker) | undefined
 }
 
 /**
@@ -288,6 +297,15 @@ export function createWorkerSupervisor(
             options.onIntent?.(intent) ?? rejeitarSemControlador(log, intent),
           onNonceRequest: (request: IpcNonceRequestMessage): IpcMessageToWorker =>
             options.onNonceRequest?.(request) ?? rejeitarSemNonce(log, request),
+          onPairingSuccess: (msg: IpcPairingSuccessMessage): IpcMessageToWorker =>
+            options.onPairingSuccess
+              ? options.onPairingSuccess(msg)
+              : {
+                  v: 1,
+                  type: 'error',
+                  code: 'INTERNAL',
+                  message: 'O pareamento nao foi gravado. Reinicie o plugin e tente de novo.',
+                },
         })
         channel = corrente
 

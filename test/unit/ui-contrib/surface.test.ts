@@ -38,9 +38,12 @@ import {
   type UiContribDeps,
 } from '../../../src/ui-contrib/surface.ts'
 import {
+  UI_PATH_ACCESS,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
+  UI_PATH_PAIR,
+  UI_PATH_PAIR_STATE,
   UI_PATH_RESET,
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
@@ -50,7 +53,6 @@ import {
   UI_PATH_TELEGRAM_CLICK,
   UI_PATH_TOKEN,
   UI_PATH_TOKEN_STATE,
-  UI_PATH_ACCESS,
   type UiContribRoute,
 } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -156,6 +158,10 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
         token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
       gravar: () => undefined,
       estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+    },
+    pairOps: {
+      estado: () => ({ pareado: false }),
+      gerar: async () => ({ ok: true, codigo: '123456', expiraEm: clock.now() + 60_000 }),
     },
     acesso: () => ({
       conexoesAtivas: 0,
@@ -286,6 +292,8 @@ describe('registo da contribuicao', () => {
         UI_PATH_TOKEN_STATE,
         UI_PATH_ACCESS,
         UI_PATH_CSRF,
+        UI_PATH_PAIR,
+        UI_PATH_PAIR_STATE,
       ].toSorted(),
     )
     for (const rota of bancada.rotas.values()) {
@@ -297,7 +305,7 @@ describe('registo da contribuicao', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-    assert.equal(bancada.rotaDesmontadas, 13, 'as treze rotas (telegram + token + acesso + csrf) sao removidas')
+    assert.equal(bancada.rotaDesmontadas, 15, 'as quinze rotas (telegram + token + par + acesso + csrf) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
@@ -339,6 +347,10 @@ describe('registo da contribuicao', () => {
           token.trim().length > 0 ? { ok: true, handle: 'exemplo_bot' } : { ok: false, erro: 'token-invalido' },
         gravar: () => undefined,
         estado: () => ({ configurado: false, handle: null, fonte: 'nenhum' } as const),
+      },
+      pairOps: {
+        estado: () => ({ pareado: false }),
+        gerar: async () => ({ ok: true, codigo: '123456', expiraEm: 1_000_000_000 }),
       },
       acesso: () => ({
         conexoesAtivas: 0,

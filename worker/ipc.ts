@@ -63,6 +63,7 @@ import {
   type IpcNotifyMessage,
   type IpcPairingChallengeMessage,
   type IpcPairingOwnerMessage,
+  type IpcPairingSuccessMessage,
   type IpcParseResult,
   type IpcStateMessage,
 } from '../src/contracts/ipc.ts'
@@ -169,7 +170,7 @@ const ACTIONS: readonly ControlAction[] = ['start', 'stop', 'reset']
  * host -> worker.
  */
 const LEGAL_TYPES: Readonly<Record<IpcDirection, readonly string[]>> = {
-  'to-host': ['intent', 'nonce.request'],
+  'to-host': ['intent', 'nonce.request', 'pairing.success'],
   'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge', 'nonce.issued', 'pairing.owner'],
 }
 
@@ -299,6 +300,7 @@ const HANDLERS: Readonly<Record<string, IpcTypeHandler>> = {
   'nonce.request': buildNonceRequest,
   'nonce.issued': buildNonceIssued,
   'pairing.owner': buildPairingOwner,
+  'pairing.success': buildPairingSuccess,
 }
 
 /**
@@ -498,6 +500,26 @@ function buildPairingOwner(bag: Record<string, unknown>): IpcParseResult {
   const message: IpcPairingOwnerMessage = {
     v: IPC_PROTOCOL_VERSION,
     type: 'pairing.owner',
+    from,
+    chat,
+    pairedAt,
+  }
+  return { ok: true, message }
+}
+
+/**
+ * `pairing.success` (EMENDA ONDA-1-PAREAR-VIA-PAINEL, worker -> host): o
+ * pareamento concluido NO WORKER. Espelha `buildPairingOwner` — dois eixos
+ * inteiros e `pairedAt` finito. O host responde com `pairing.owner`.
+ */
+function buildPairingSuccess(bag: Record<string, unknown>): IpcParseResult {
+  const { from, chat, pairedAt } = bag
+  if (!isId(from) || !isId(chat)) return fail('forma-invalida')
+  if (!isFiniteNumber(pairedAt)) return fail('forma-invalida')
+
+  const message: IpcPairingSuccessMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'pairing.success',
     from,
     chat,
     pairedAt,

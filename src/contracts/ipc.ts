@@ -407,6 +407,30 @@ export interface IpcPairingOwnerMessage extends IpcEnvelope {
   /** Epoch ms do pareamento original. */
   readonly pairedAt: number
 }
+
+/**
+ * >>> EMENDA ONDA-1-PAREAR-VIA-PAINEL: o pareamento concluido NO WORKER. <<<
+ *
+ * worker -> host. Quando o `/parear <codigo>` do dono passa no worker
+ * (`worker/surface/core.ts` no ramo `pareamento.kind === 'pareado'`), o worker
+ * avisa o host por esta mensagem. O HOST responde devolvendo `pairing.owner`
+ * (que liberta a allowlist no ato via `auth.semearDono`) e grava o dono no
+ * `state.json` — fechando o handshake sem exigir reinicio. `from`/`chat`/`pairedAt`
+ * sao os DOIS EIXOS do dono, com o mesmo formato de `pairing.owner`.
+ *
+ * Best-effort por construcao (S4): se a entrega falhar, o worker segue; quem
+ * re-pareia depois re-envia. NAO e segredo (S3) e NAO autoriza nada por si:
+ * quem valida intents e o HOST (S6).
+ */
+export interface IpcPairingSuccessMessage extends IpcEnvelope {
+  readonly type: 'pairing.success'
+  /** `from.id` do dono que acabou de parear. Numerico. */
+  readonly from: number
+  /** `chat.id` do dono. Numerico; em grupo e o id do grupo. */
+  readonly chat: number
+  /** Epoch ms do pareamento (o `pairedAt` gravado pelo worker). */
+  readonly pairedAt: number
+}
 // ---------------------------------------------------------------------------
 // A uniao
 // ---------------------------------------------------------------------------
@@ -425,7 +449,10 @@ export type IpcMessageToWorker =
   | IpcPairingOwnerMessage
 
 /** worker -> host. A EMENDA-COSTURA-5 acrescentou `nonce.request`. */
-export type IpcMessageFromWorker = IpcIntentMessage | IpcNonceRequestMessage
+export type IpcMessageFromWorker =
+  | IpcIntentMessage
+  | IpcNonceRequestMessage
+  | IpcPairingSuccessMessage
 
 export type IpcMessage = IpcMessageToWorker | IpcMessageFromWorker
 

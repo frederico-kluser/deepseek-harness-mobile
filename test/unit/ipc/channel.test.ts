@@ -20,6 +20,7 @@ import type {
   IpcIntentMessage,
   IpcIntentName,
   IpcMessageToWorker,
+  IpcPairingSuccessMessage,
   IpcStateMessage,
 } from '../../../src/contracts/ipc.ts'
 import type { GuardLogger } from '../../../src/logging/logger.ts'
@@ -195,6 +196,11 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
       const verdict = parseIpcLine(serializeIpcMessage(message, 'to-host').trimEnd(), 'to-host')
       assert.deepEqual(verdict.ok ? verdict.message : undefined, message)
     }
+
+    // EMENDA ONDA-1-PAREAR-VIA-PAINEL: `pairing.success` round-trips fiel.
+    const success: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    const verdictSuccess = parseIpcLine(serializeIpcMessage(success, 'to-host').trimEnd(), 'to-host')
+    assert.deepEqual(verdictSuccess.ok ? verdictSuccess.message : undefined, success)
   })
 })
 
@@ -474,6 +480,68 @@ describe('S5: o nonce viaja OPACO', () => {
   it('a intencao SEM nonce nao ganha um por omissao', () => {
     const verdict = parseIpcLine(serializeIpcMessage(INTENCAO, 'to-host').trimEnd(), 'to-host')
     assert.equal(verdict.ok && Object.hasOwn(verdict.message, 'nonce'), false)
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA ONDA-1-PAREAR-VIA-PAINEL: `pairing.success` worker -> host          */
+/* ========================================================================== */
+
+describe('pairing.success (worker -> host): o handshake fecha-com-pairing.owner', () => {
+  it('o handler montado recebe o aviso e o RETORNO vira o reply (pairing.owner)', async () => {
+    const { log } = makeLog()
+    const entrada = new PassThrough()
+    const saida = new PassThrough()
+    let avisos: IpcPairingSuccessMessage[] = []
+    const canal = createHostIpcChannel({
+      input: entrada,
+      output: saida,
+      log,
+      secrets: (): readonly string[] => [],
+      onIntent: () => ({ v: 1, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }),
+      onPairingSuccess: (msg): IpcMessageToWorker => {
+        avisos.push(msg)
+        return { v: 1, type: 'pairing.owner', from: msg.from, chat: msg.chat, pairedAt: msg.pairedAt }
+      },
+    })
+    const aviso: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    entrada.write(serializeIpcMessage(aviso, 'to-host'))
+    await new Promise((r) => setImmediate(r))
+    assert.equal(avisos.length, 1)
+    assert.deepEqual(avisos[0], aviso)
+    const linha = saida.read()?.toString() ?? ''
+    assert.ok(linha.includes('"type":"pairing.owner"'), 'o reply do host e pairing.owner')
+    assert.ok(linha.includes('"from":111') && linha.includes('"chat":222'), 'os dois eixos devolvidos')
+    canal.dispose()
+  })
+
+  it('SEM handler, o canal responde error INTERNAL (fail-closed: nao grava dono nao confirmado)', async () => {
+    const { log } = makeLog()
+    const entrada = new PassThrough()
+    const saida = new PassThrough()
+    const canal = createHostIpcChannel({
+      input: entrada,
+      output: saida,
+      log,
+      secrets: (): readonly string[] => [],
+      onIntent: () => ({ v: 1, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }),
+    })
+    const aviso: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    entrada.write(serializeIpcMessage(aviso, 'to-host'))
+    await new Promise((r) => setImmediate(r))
+    const linha = saida.read()?.toString() ?? ''
+    assert.ok(linha.includes('"type":"error"'), 'responde error')
+    assert.ok(linha.includes('"code":"INTERNAL"'), 'com INTERNAL')
+    canal.dispose()
+  })
+
+  it('o tipo NAO e legal no sentido errado (to-worker): rejeitado por S4', () => {
+    const answer: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    // Serializar como to-worker tem de recusar (raio do sentido nao o conhece).
+    assert.throws(() => serializeIpcMessage(answer, 'to-worker'), IpcChannelError)
+    // E como to-host, parse de um tipo fora da allowlist -> tipo-desconhecido.
+    const verdict = parseIpcLine('{"v":1,"type":"pairing.success","from":1,"chat":2,"pairedAt":3}', 'to-worker')
+    assert.deepEqual(verdict, { ok: false, reason: 'tipo-desconhecido' })
   })
 })
 

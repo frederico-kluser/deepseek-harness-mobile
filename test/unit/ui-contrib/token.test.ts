@@ -101,6 +101,10 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
     now: () => clock.now(),
     botState: (): BotEstado => ({ online: false, motivo: 'sem-chave' }),
     tokenOps: operações,
+    pairOps: {
+      estado: () => ({ pareado: false }),
+      gerar: async () => ({ ok: true, codigo: '123456', expiraEm: clock.now() + 60_000 }),
+    },
     acesso: () => ({
       conexoesAtivas: 2,
       totalSessoes: 1,

@@ -200,10 +200,27 @@ interface EstadoDeAcesso {
   readonly sessoes: readonly SessaoDeAcesso[]
 }
 
+/** O estado do pareamento devolvido por GET /pair-state. */
+interface EstadoPareamento {
+  readonly pareado: boolean
+  readonly handle?: string
+  readonly codigo?: string
+  readonly expiraEm?: number
+}
+
 type FeedbackDeForm = {
   readonly tipo: 'ok' | 'erro' | 'aviso'
   readonly texto: string
 }
+
+/** O fluxo do pareamento VIA PAINEL, estado a estado (renderizado no cartão). */
+type EstadoDePareamentoUi =
+  | { readonly fase: 'ocioso' }
+  | { readonly fase: 'gerando' }
+  | { readonly fase: 'codigo'; readonly codigo: string; readonly expiraEm: number }
+  | { readonly fase: 'pareado' }
+  | { readonly fase: 'expirou' }
+  | { readonly fase: 'erro'; readonly mensagem: string }
 
 /* ========================================================================== */
 /* Helper puro de formatação (testável em isolamento)                         */
@@ -264,6 +281,17 @@ export function tempoRelativo(milissegundos: number, agora: number): string {
 export function encurtarIdentidade(hash: string): string {
   const limpo = (hash ?? '').trim()
   return limpo.length > 8 ? limpo.slice(0, 8) : limpo
+}
+
+/**
+ * Contagem regressiva no formato `m:ss` (ex.: `4:23`) a partir de um prazo em
+ * epoch ms. `0` ou passado devolve `0:00`. Exportada para o teste de expiração.
+ */
+export function formatarContagem(expiraEm: number, agoraMs: number): string {
+  const falta = Math.max(0, Math.floor((expiraEm - agoraMs) / 1000))
+  const minutos = Math.floor(falta / 60)
+  const segundos = falta % 60
+  return `${minutos}:${segundos.toString().padStart(2, '0')}`
 }
 
 /* ========================================================================== */
@@ -402,6 +430,104 @@ function CartaoBotFather(): React.ReactNode {
 }
 
 /* ========================================================================== */
+/* O pareamento VIA PAINEL                                                    */
+/* ========================================================================== */
+
+/**
+ * O cartão "Parear pelo Telegram" — mostra o botão quando sem pareamento, o
+ * CÓDIGO DE 6 DÍGITOS em destaque + a instrução `/parear <código>` no bot, a
+ * contagem regressiva e o estado "Aguardando pareamento…" enquanto o dono
+ * digita. NUNCA `console.log` do código: ele só vive neste state e no DOM.
+ */
+function CartaoParear(props: {
+  readonly handle?: string
+  readonly estado: EstadoDePareamentoUi
+  readonly agora: number
+  readonly aoGerar: () => void
+  readonly aoNovoCodigo: () => void
+}): React.ReactNode {
+  const destino = props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot'
+
+  switch (props.estado.fase) {
+    case 'gerando':
+      return h('div', { className: 'guard-card' },
+        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+        paragrafo('guard-intro', 'A gerar um código de pareamento…'),
+      )
+    case 'codigo': {
+      const contagem = formatarContagem(props.estado.expiraEm, props.agora)
+      const expirou = props.agora >= props.estado.expiraEm
+      if (expirou) {
+        return h('div', { className: 'guard-card' },
+          h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+          paragrafo('guard-error', 'O código expirou. Gere um novo para tentar de novo.'),
+          h('div', { className: 'guard-actions' },
+            h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoNovoCodigo },
+              'Gerar novo código'),
+          ),
+        )
+      }
+      return h('div', { className: 'guard-card' },
+        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+        paragrafo('guard-intro',
+          `Envie na conversa com ${destino}:`),
+        h('div', { className: 'guard-pair-step' },
+          h('code', { className: 'guard-pair-code' }, props.estado.codigo),
+        ),
+        paragrafo('guard-intro',
+          'No Telegram, escreva o comando seguido do código acima.'),
+        h('div', { className: 'guard-pair-status' },
+          h('span', { className: 'guard-chip' },
+            h('span', { className: 'guard-chip-dot' }),
+            `Aguardando pareamento… · ${contagem}`,
+          ),
+        ),
+      )
+    }
+    case 'pareado':
+      return h('div', { className: 'guard-card' },
+        h('span', { className: 'guard-card-title' },
+          'Pareado',
+          h('span', { className: 'guard-chip guard-chip-success' },
+            h('span', { className: 'guard-chip-dot' }),
+            'Pareado ✓',
+          ),
+        ),
+        paragrafo('guard-intro', 'Este navegador passou a ser autorizado a comandar o bot. Use os comandos na conversa com o bot.'),
+      )
+    case 'expirou':
+      return h('div', { className: 'guard-card' },
+        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+        paragrafo('guard-error', 'O código expirou. Gere um novo para tentar de novo.'),
+        h('div', { className: 'guard-actions' },
+          h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoNovoCodigo },
+            'Gerar novo código'),
+        ),
+      )
+    case 'erro':
+      return h('div', { className: 'guard-card' },
+        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+        paragrafo('guard-error', props.estado.mensagem),
+        h('div', { className: 'guard-actions' },
+          h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: props.aoNovoCodigo },
+            'Tentar de novo'),
+        ),
+      )
+    default:
+      // ocioso: botão "Parear pelo Telegram"
+      return h('div', { className: 'guard-card' },
+        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+        paragrafo('guard-intro',
+          'Pareie este painel com o bot para o poder comandar a partir daqui. Gera um código de 6 dígitos que só aparece neste ecrã.'),
+        h('div', { className: 'guard-actions' },
+          h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoGerar },
+            'Parear pelo Telegram'),
+        ),
+      )
+  }
+}
+
+/* ========================================================================== */
 /* O PAINEL — a section `settings.section`                                    */
 /* ========================================================================== */
 
@@ -422,6 +548,12 @@ function TelegramGuardSection(): React.ReactNode {
   const [enviando, setEnviando] = useState(false)
   const [feedback, setFeedback] = useState<FeedbackDeForm | null>(null)
 
+  // O fluxo do PAREAMENTO VIA PAINEL.
+  const [par, setPar] = useState<EstadoDePareamentoUi>({ fase: 'ocioso' })
+  const [pareado, setPareado] = useState(false)
+  // Referencia para parar a sondagem no unmount / quando parear.
+  const sondaParRef = useRef<number | null>(null)
+
   // "Agora" para tempos relativos — ticker de 1s só para re-render.
   const [agora, setAgora] = useState(() => Date.now())
 
@@ -440,7 +572,20 @@ function TelegramGuardSection(): React.ReactNode {
   const buscarTelegrama = React.useCallback(async (): Promise<void> => {
     try {
       const dados = await apiGet<EstadoTelegrama>('/telegram')
-      if (vivo.current) setTelegrama(dados)
+      if (vivo.current) {
+        setTelegrama(dados)
+        // O bot ONLINE = token configurado E pareamento feito (a fonte única
+        // do marcador). Se já está pareado (ex.: via CLI, ou por outra aba),
+        // o painel reflete logo "Pareado" e NUNCA mostra o botão de parear.
+        if (dados.online) {
+          setPareado(true)
+          setPar({ fase: 'pareado' })
+          if (sondaParRef.current !== null) {
+            window.clearInterval(sondaParRef.current)
+            sondaParRef.current = null
+          }
+        }
+      }
     } catch {
       /* o marcador fica em "verificando…"; sem ação para o user */
     }
@@ -461,6 +606,84 @@ function TelegramGuardSection(): React.ReactNode {
   const recarregarTudo = React.useCallback(async (): Promise<void> => {
     await Promise.all([buscarToken(), buscarTelegrama(), buscarAcesso()])
   }, [buscarToken, buscarTelegrama, buscarAcesso])
+
+  // Sonda /pair-state a cada ~3s enquanto houver um código a aguardar (ou a
+  // gerar), até o `pareado:true` chegar (o dono digitou /parear no Telegram).
+  // Também reflete o pareamento feito por OUTRA via (ex.: o CLI): se ficou
+  // pareado e o painel ainda mostra o botão, troca para "Pareado ✓" e para.
+  const sondarPareado = React.useCallback(async (): Promise<void> => {
+    if (!vivo.current) return
+    let estado: EstadoPareamento
+    try {
+      estado = await apiGet<EstadoPareamento>('/pair-state')
+    } catch {
+      return // servidor inacessível — a próxima sondagem tenta de novo
+    }
+    if (!vivo.current) return
+    if (estado.pareado) {
+      setPareado(true)
+      setPar({ fase: 'pareado' })
+      if (sondaParRef.current !== null) {
+        window.clearInterval(sondaParRef.current)
+        sondaParRef.current = null
+      }
+      return
+    }
+    // Continua a aguardar: nada a mudar — a contagem regressiva já corre.
+  }, [])
+
+  // Arma a sondagem quando o fluxo está em `gerando`/`codigo`; desarma quando
+  // sai ou quando o componente vive mais.
+  React.useEffect(() => {
+    if (par.fase === 'ocioso' || par.fase === 'pareado' || par.fase === 'expirou') return
+    if (sondaParRef.current !== null) return
+    sondaParRef.current = window.setInterval(() => {
+      void sondarPareado()
+    }, 3000)
+    return () => {
+      if (sondaParRef.current !== null) {
+        window.clearInterval(sondaParRef.current)
+        sondaParRef.current = null
+      }
+    }
+  }, [par.fase, sondarPareado])
+
+  // Gera UM código de pareamento (POST /pair com CSRF) e mostra-o em destaque.
+  const gerarCodigo = React.useCallback(async (): Promise<void> => {
+    if (!vivo.current) return
+    setPar({ fase: 'gerando' })
+    const r = await apiPost('/pair', {}, document)
+    if (!vivo.current) return
+    if (r.csrfIndisponivel) {
+      setPar({ fase: 'erro', mensagem: 'CSRF indisponível — recarregue a página e tente de novo.' })
+      return
+    }
+    if (r.status === 200) {
+      const codigo = typeof r.dados.codigo === 'string' ? r.dados.codigo : ''
+      const expiraEm = typeof r.dados.expiraEm === 'number' ? r.dados.expiraEm : 0
+      if (codigo.length === 0 || expiraEm <= 0) {
+        setPar({ fase: 'erro', mensagem: 'O servidor respondeu sem código. Tentou gerar de novo.' })
+        return
+      }
+      setPar({ fase: 'codigo', codigo, expiraEm })
+      await sondarPareado()
+      return
+    }
+    // 409 (ja-pareado/sem-token/worker-indisponivel) ou outro erro.
+    const mensagem =
+      typeof r.dados.mensagem === 'string' && r.dados.mensagem.length > 0
+        ? r.dados.mensagem
+        : 'Não foi possível gerar o código. Tente de novo.'
+    setPar({ fase: 'erro', mensagem })
+    if (r.status === 409 && r.dados.erro === 'ja-pareado') {
+      setPareado(true)
+      await recarregarTudo()
+    }
+  }, [sondarPareado, recarregarTudo])
+
+  const novoCodigo = React.useCallback((): void => {
+    setPar({ fase: 'ocioso' })
+  }, [])
 
   // Monte: marca vivo e re-busca tudo. Desmonte: marca morto.
   useEffect(() => {
@@ -622,6 +845,17 @@ function TelegramGuardSection(): React.ReactNode {
           : null,
       ),
     ),
+
+    // --- Cartão de pareamento VIA PAINEL (só quando configurado e NÃO pareado)
+    configurado && !pareado
+      ? h(CartaoParear, {
+          handle: handleChave ?? undefined,
+          estado: par,
+          agora,
+          aoGerar: () => void gerarCodigo(),
+          aoNovoCodigo: () => novoCodigo(),
+        })
+      : null,
 
     // --- Cartão de instruções + marcador do bot ----------------------------
     configurado

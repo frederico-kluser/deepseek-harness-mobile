@@ -188,6 +188,22 @@ export function montarEnvelopeDeIntent(pedido: IntencaoNeutra): IpcIntentMessage
 export function criarSurfaceIpcBridge(ipc: WorkerIpc): SurfaceIpcBridge {
   return {
     send: (pedido: IntencaoNeutra): boolean => ipc.send(montarEnvelopeDeIntent(pedido)),
+    /**
+     * O pareamento concluiu NO WORKER (`/parear <codigo>` valido). Emite
+     * `pairing.success` pelo canal, Na FONTE da conversao numerica (analogo ao
+     * `send`). NAO autoriza nada por si: quem valida intents e o HOST (S6).
+     */
+    pairingSuccess: (dono): void => {
+      // Best-effort/fire-and-forget (S4): o retorno do send nao derruba o
+      // nucleo — quem re-pareia depois re-envia. O `pairedAt` viaja fiel.
+      ipc.send({
+        v: 1,
+        type: 'pairing.success',
+        from: Number(dono.userKey),
+        chat: Number(dono.chatKey),
+        pairedAt: dono.pairedAt,
+      })
+    },
   }
 }
 

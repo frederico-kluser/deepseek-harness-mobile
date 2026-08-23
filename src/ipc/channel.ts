@@ -63,6 +63,7 @@ import {
   type IpcNotifyMessage,
   type IpcPairingChallengeMessage,
   type IpcPairingOwnerMessage,
+  type IpcPairingSuccessMessage,
   type IpcParseResult,
   type IpcStateMessage,
 } from '../contracts/ipc.ts'
@@ -207,7 +208,7 @@ const ACTIONS: readonly ControlAction[] = ['start', 'stop', 'reset']
  * host -> worker.
  */
 const LEGAL_TYPES: Readonly<Record<IpcDirection, readonly string[]>> = {
-  'to-host': ['intent', 'nonce.request'],
+  'to-host': ['intent', 'nonce.request', 'pairing.success'],
   'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge', 'nonce.issued', 'pairing.owner'],
 }
 
@@ -340,6 +341,7 @@ const HANDLERS: Readonly<Record<string, IpcTypeHandler>> = {
   'nonce.request': buildNonceRequest,
   'nonce.issued': buildNonceIssued,
   'pairing.owner': buildPairingOwner,
+  'pairing.success': buildPairingSuccess,
 }
 
 /**
@@ -572,6 +574,27 @@ function buildPairingOwner(bag: Record<string, unknown>): IpcParseResult {
   return { ok: true, message }
 }
 
+/**
+ * `pairing.success` (EMENDA ONDA-1-PAREAR-VIA-PAINEL, worker -> host): o
+ * pareamento concluido NO WORKER. Os DOIS EIXOS sao inteiros (como `pairing.owner`)
+ * e `pairedAt` e um epoch finito. O reply do host a esta mensagem e `pairing.owner`,
+ * que fecha o handshake e liberta a allowlist no ato.
+ */
+function buildPairingSuccess(bag: Record<string, unknown>): IpcParseResult {
+  const { from, chat, pairedAt } = bag
+  if (!isId(from) || !isId(chat)) return fail('forma-invalida')
+  if (!isFiniteNumber(pairedAt)) return fail('forma-invalida')
+
+  const message: IpcPairingSuccessMessage = {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'pairing.success',
+    from,
+    chat,
+    pairedAt,
+  }
+  return { ok: true, message }
+}
+
 /* ========================================================================== */
 /* CODEC                                                                      */
 /* ========================================================================== */
@@ -735,6 +758,17 @@ export interface HostIpcChannelOptions {
    */
   readonly onNonceRequest?: ((request: IpcNonceRequestMessage) => IpcMessageToWorker) | undefined
   /**
+   * Decide UM `pairing.success` (EMENDA ONDA-1-PAREAR-VIA-PAINEL) e devolve a
+   * resposta — tipicamente `pairing.owner`, que fecha o handshake e liberta a
+   * allowlist no ato (a costura tambem grava o dono no `state.json`).
+   *
+   * AUSENTE, o canal responde `error INTERNAL` ao aviso — o pareamento ainda
+   * fica valido no worker (ele ja autorizou), mas o host nao aprende o dono e
+   * a allowlist nao liberta ate reiniciar. Fail-closed: o host NUNCA persiste
+   * um dono que nao confirmou.
+   */
+  readonly onPairingSuccess?: ((msg: IpcPairingSuccessMessage) => IpcMessageToWorker) | undefined
+  /**
    * Segredos a mascarar em TUDO o que este canal escreve no log.
    *
    * >>> FORNECEDOR, avaliado a cada linha -- nao uma lista capturada aqui. <<<
@@ -772,6 +806,21 @@ function responderSemNonce(pedido: IpcNonceRequestMessage): IpcMessageToWorker {
     requestId: pedido.requestId,
     code: 'INTERNAL',
     message: 'Nao foi possivel processar o pedido. Tente novamente.',
+  }
+}
+
+/**
+ * Resposta do canal quando NENHUM tratador de `pairing.success` esta montado
+ * (EMENDA ONDA-1-PAREAR-VIA-PAINEL). Fail-closed e visivel: um `error INTERNAL`
+ * — o host NAO persiste um dono que nao confirmou, e o worker continua com o
+ * pareamento valido na sua sessao ate reiniciar.
+ */
+function responderSemPairing(): IpcMessageToWorker {
+  return {
+    v: IPC_PROTOCOL_VERSION,
+    type: 'error',
+    code: 'INTERNAL',
+    message: 'O pareamento nao foi gravado. Reinicie o plugin e tente de novo.',
   }
 }
 
@@ -836,7 +885,7 @@ export interface IpcChannelStats {
  *      forma que `./retry.ts` usa para o orcamento esgotado.
  */
 export function createHostIpcChannel(options: HostIpcChannelOptions): HostIpcChannel {
-  const { input, output, log, onIntent, onNonceRequest, secrets } = options
+  const { input, output, log, onIntent, onNonceRequest, onPairingSuccess, secrets } = options
   const maxPendingBytes = options.maxPendingBytes ?? IPC_MAX_PENDING_BYTES
   const overwhelmedBytes = options.overwhelmedBytes ?? IPC_OVERWHELMED_BYTES
   const decoder = createIpcLineDecoder({
@@ -999,11 +1048,17 @@ export function createHostIpcChannel(options: HostIpcChannelOptions): HostIpcCha
       try {
         if (intent !== undefined) {
           reply = onIntent(intent)
+        } else if (message.type === 'pairing.success') {
+          // EMENDA ONDA-1-PAREAR-VIA-PAINEL: o pareamento concluiu no worker.
+          // O host responde `pairing.owner` (fecha o handshake e liberta a
+          // allowlist) — a costura em src/index.ts aproveita o aviso para
+          // persisir o dono no state.json. Sem tratador, fail-closed.
+          reply = (onPairingSuccess ?? responderSemPairing)(message as IpcPairingSuccessMessage)
         } else {
           // EMENDA-COSTURA-5: `nonce.request` (a unica outra mensagem legal
           // neste sentido) e respondido pelo `ConfirmService` do host. Sem
           // tratador, fail-closed: um `error INTERNAL` — um nonce que nao
-          // chega nao autoriza nada (CTL-023).
+          // chega não autoriza nada (CTL-023).
           const pedido = message as IpcNonceRequestMessage
           reply = (onNonceRequest ?? responderSemNonce)(pedido)
         }
@@ -1013,11 +1068,16 @@ export function createHostIpcChannel(options: HostIpcChannelOptions): HostIpcCha
         // em claro no log do plano de controlo) e responde-se `INTERNAL`, que e
         // o codigo cuja `message` nao denuncia topologia.
       } catch (error) {
-        log.error(`O decisor de intencoes lancou em '${intent?.intent ?? 'nonce.request'}': ${descrever(error)}`)
+        log.error(`O decisor de intencoes lancou em '${message.type}': ${descrever(error)}`)
         reply = {
           v: IPC_PROTOCOL_VERSION,
           type: 'error',
-          requestId: intent?.requestId ?? (message as IpcNonceRequestMessage).requestId,
+          requestId:
+            message.type === 'intent'
+              ? (message as IpcIntentMessage).requestId
+              : message.type === 'nonce.request'
+                ? (message as IpcNonceRequestMessage).requestId
+                : undefined,
           code: 'INTERNAL',
           message: 'Nao foi possivel processar o pedido. Tente novamente.',
         }

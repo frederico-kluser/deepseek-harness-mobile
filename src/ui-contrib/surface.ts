@@ -45,6 +45,8 @@ import {
   createClientHandler,
   createConfirmHandler,
   createCsrfHandler,
+  createPairHandler,
+  createPairStateHandler,
   createResetConfirmHandler,
   createResetHandler,
   createStartHandler,
@@ -59,6 +61,8 @@ import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
+  UI_PATH_PAIR,
+  UI_PATH_PAIR_STATE,
   UI_PATH_RESET,
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
@@ -71,6 +75,7 @@ import {
   type UiAcessoBruto,
   type UiContribCore,
   type UiContribRoute,
+  type UiPairOps,
   type UiTokenOps,
 } from './routes.ts'
 import type { BotEstado } from './bot-state.ts'
@@ -122,6 +127,13 @@ export interface UiContribDeps {
    */
   readonly tokenOps: UiTokenOps
   /**
+   * O servico de pareamento VIA PAINEL, fiado pela costura em `src/index.ts`
+   * (detem `config`, `statePaths`, a sessao de pareamento em memoria e o
+   * supervisor do worker). O CODIGO NUNCA sai daqui para a UI via log — so na
+   * resposta a `gerar()`.
+   */
+  readonly pairOps: UiPairOps
+  /**
    * A projecao de acesso, fiada pela costura: contage de sockets ativos do
    * proxy + sessoes vivas com os metadados de acesso.
    */
@@ -163,6 +175,7 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     lastReady: () => lastReady,
     botState: deps.botState,
     tokenOps: deps.tokenOps,
+    pairOps: deps.pairOps,
     acesso: deps.acesso,
     csrf,
     now: deps.now,
@@ -188,6 +201,9 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     // O painel de configuracao do token (POST com CSRF) e o estado sem valor.
     { kind: 'exact', path: UI_PATH_TOKEN, handler: createTokenHandler(core) },
     { kind: 'exact', path: UI_PATH_TOKEN_STATE, handler: createTokenStateHandler(core) },
+    // O pareamento VIA PAINEL: gerar codigo (POST com CSRF) + estado (GET).
+    { kind: 'exact', path: UI_PATH_PAIR, handler: createPairHandler(core) },
+    { kind: 'exact', path: UI_PATH_PAIR_STATE, handler: createPairStateHandler(core) },
     // As metricas de acesso (GET, so leitura).
     { kind: 'exact', path: UI_PATH_ACCESS, handler: createAccessHandler(core) },
     // O token anti-CSRF fresco para o bundle (HIGH-2) — GET, so le. Sempre
@@ -231,5 +247,6 @@ export type {
   FonteDoToken,
   RegistroAcessoBruto,
   UiAcessoBruto,
+  UiPairOps,
   UiTokenOps,
 } from './routes.ts'

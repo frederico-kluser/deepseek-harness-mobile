@@ -82,6 +82,21 @@ export interface SurfaceIdentity {
 /** A assembleia minima que {@link SurfaceIdentity} carrega — util para propagar. */
 export type SurfaceIdentityLike = Readonly<Pick<SurfaceIdentity, 'userKey' | 'chatKey'>>
 
+/**
+ * O dono pareado, como portador do pareamento para a ponte IPC — os DOIS EIXOS
+ * (D4, STRING) + o instante. Espelho estrutural do `SurfaceDono` do nucleo
+ * (`worker/surface/core.ts`); declarado aqui (em vez de o importar) para o
+ * contrato continuar self-contained.
+ */
+export type SurfacePairingOwnerLike = Readonly<{
+  /** `from.id` do dono, como string (D4). */
+  userKey: string
+  /** `chat.id` do dono, como string (D4). */
+  chatKey: string
+  /** Epoch ms do pareamento. */
+  pairedAt: number
+}>
+
 /* ========================================================================== */
 /* 2. AS ACOES DE CONTROLO (o equivalente neutro do `callback_data`)           */
 /* ========================================================================== */
@@ -356,6 +371,14 @@ export interface IntencaoNeutra {
  */
 export interface SurfaceIpcBridge {
   send(pedido: IntencaoNeutra): boolean
+  /**
+   * Comunica ao host que o pareamento CONCLUIU no worker (`/parear <codigo>`
+   * valido). Best-effort e fire-and-forget: o nucleo NAO derruba nada se a
+   * entrega falhar (S4); quem re-pareia depois re-envia. O host responde
+   * `pairing.owner` (liberta a allowlist) e persiste o dono no `state.json`.
+   * NUNCA logar ids alem do minimo.
+   */
+  pairingSuccess(dono: SurfacePairingOwnerLike): void
 }
 
 /**

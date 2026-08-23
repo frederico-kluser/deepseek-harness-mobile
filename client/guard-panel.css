@@ -517,3 +517,38 @@
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
 }
+
+/* ---------------------------------------------------------------------------
+ * Pareamento VIA PAINEL — o código em destaque e o estado de espera.
+ * ---------------------------------------------------------------- */
+
+/* A caixa que põe o código em EVIDÊNCIA (mono, grande, fundo de camada 1). */
+.guard-pair-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+.guard-pair-code {
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 34px;
+  line-height: 44px;
+  font-weight: 600;
+  letter-spacing: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-brand-primary);
+  user-select: all;
+}
+
+/* A linha "Aguardando pareamento… · m:ss" do cartão. */
+.guard-pair-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}

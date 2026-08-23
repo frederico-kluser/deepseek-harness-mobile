@@ -48,7 +48,7 @@
  * =============================================================================
  */
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { createServer as createNetServer, type Server as TcpServer } from 'node:net'
 
 import type { AuditSink } from './contracts/auth.ts'
@@ -61,7 +61,7 @@ import { resolveControl, resolveExposure, shouldAutoStartTunnel, type Config } f
 import { mayTrustEdgeClientIp } from './config/schema.ts'
 import type { IncomingMessage, Server } from 'node:http'
 import type { StateStore } from './contracts/state.ts'
-import { IPC_PROTOCOL_VERSION, type IpcIntentMessage } from './contracts/ipc.ts'
+import { IPC_PROTOCOL_VERSION, type IpcIntentMessage, type IpcMessageToWorker } from './contracts/ipc.ts'
 import { createConfirmService } from './control/confirm.ts'
 import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelController } from './control/controller.ts'
 import { criarRespondedorDeNonce, criarRespondedorIpc } from './control/surface-ipc.ts'
@@ -81,6 +81,8 @@ import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
 import { createOneTimeTokenStore } from './secret/ott.ts'
 import { createMagicStore } from './session/magic.ts'
 import { createNativeUiSurface, type FonteDoToken, type UiAcessoBruto } from './ui-contrib/surface.ts'
+import type { SessaoDePareamento } from './telegram/pairing.ts'
+import { criarSessaoDePareamento } from './telegram/pairing.ts'
 import { derivarEstadoDoBot } from './ui-contrib/bot-state.ts'
 import type { WebRoute } from './dsh/adapter.ts'
 import {
@@ -1118,6 +1120,75 @@ export function apply(ctx: Context, config: Config): void {
       }),
     })
 
+    // O PAINEL DE CONFIGURACAO DO TOKEN: cada operacao e executada AQUI, na
+    // costura (que detem `config`, `statePaths` e o supervisor do worker); a
+    // superficie so orquestra o HTTP. O token NUNCA sai daqui para a UI.
+    const tokenOps = (() => {
+      // A raiz do getMe e a MESMA variavel que o worker le (`TELEGRAM_API_ROOT`
+      // em worker/providers/telegram/token.ts); omitida = `api.telegram.org`.
+      const apiRoot = process.env.TELEGRAM_API_ROOT?.trim()
+      const sonda = criarSondaHttp(apiRoot === undefined || apiRoot === '' ? {} : { apiRoot })
+      // O handle lembrado da ultima GRAVACAO bem-sucedida por ESTA rota. So e
+      // setado em `gravar` (sob sucesso): um `getMe` que nao grava NAO deixa
+      // aqui um handle estale que o token-state depois mostraria como se fosse
+      // o bot vigente (LOW-1 do revisor).
+      let handleAtual: string | undefined
+      // A FONTE EFETIVA, partilhada por `fonte` e `estado` para nunca
+      // divergirem: `config.worker.token` (env) PRIMEIRO (precedencia sobre o
+      // `secrets.env`), `secrets.env` a seguir. A MESMA logica de
+      // `resolverTokenDoBot`/`resolverToken` do onboarding.
+      const fonteEfetiva = (): FonteDoToken => {
+        const doConfig = typeof config.worker.token === 'string' ? config.worker.token.trim() : ''
+        if (doConfig.length > 0) return 'env'
+        let temSecrets = false
+        try {
+          const env = lerSecretsEnv(caminhoDoSecretsEnv(statePaths))
+          const valor =
+            env === undefined ? undefined : analisarSecretsEnv(env).get(tokenVarDoProvedor)?.trim()
+          temSecrets = valor !== undefined && valor.length > 0
+        } catch (error) {
+          // secrets.env ilegivel/exposto: trata como ausente (fail-closed).
+          void error
+          temSecrets = false
+        }
+        return temSecrets ? 'secrets' : 'nenhum'
+      }
+      return {
+        validarFormato: (bruto: string): boolean => validarFormatoDoToken(bruto).valido,
+        fonte: fonteEfetiva,
+        sondar: async (
+          token: string,
+        ): Promise<{ readonly ok: true; readonly handle: string } | { readonly ok: false; readonly erro: string }> => {
+          const resposta = await sonda.getMe(token)
+          if (!resposta.ok) return { ok: false, erro: 'token-invalido' }
+          return { ok: true, handle: resposta.bot.username }
+        },
+        gravar: (token: string, handle: string): void => {
+          // 1) Persistir em secrets.env (0600, atomico). Na falha, a excecao
+          //    sobe para o handler virar 500; nada muda (nem a escrita, nem o
+          //    handle lembrado).
+          gravarSecretsEnv(
+            { paths: statePaths, caminhoSecrets: caminhoDoSecretsEnv(statePaths) },
+            tokenVarDoProvedor,
+            token,
+          )
+          // 2) SO AQUI o handle e "committed": a gravacao aconteceu de facto.
+          handleAtual = handle
+          // 3) Reiniciar o worker com o token novo. Se o supervisor ainda nao
+          //    nasceu (nao ha bot a correr), o token fica persistido e sobe no
+          //    proximo boot — nao ha processo vivo para reiniciar.
+          if (workerSupervisor === undefined) return
+          workerSupervisor.definirToken(token)
+          workerSupervisor.restart('token reconfigurado por /__guard-ui/api/token')
+        },
+        estado: () => ({
+          configurado: fonteEfetiva() !== 'nenhum',
+          ...(handleAtual === undefined ? {} : { handle: handleAtual }),
+          fonte: fonteEfetiva(),
+        }),
+      }
+    })()
+
     const desmontarUi = createNativeUiSurface({
       tapIndex: (transform) => ctx.webServer.tapIndex(transform),
       registerRoute: (route) => ctx.webServer.register(route as WebRoute),
@@ -1145,67 +1216,100 @@ export function apply(ctx: Context, config: Config): void {
       // O PAINEL DE CONFIGURACAO DO TOKEN: cada operacao e executada AQUI, na
       // costura (que detem `config`, `statePaths` e o supervisor do worker); a
       // superficie so orquestra o HTTP. O token NUNCA sai daqui para a UI.
-      tokenOps: (() => {
-        // A raiz do getMe e a MESMA variavel que o worker le (`TELEGRAM_API_ROOT`
-        // em worker/providers/telegram/token.ts); omitida = `api.telegram.org`.
-        const apiRoot = process.env.TELEGRAM_API_ROOT?.trim()
-        const sonda = criarSondaHttp(apiRoot === undefined || apiRoot === '' ? {} : { apiRoot })
-        // O handle lembrado da ultima GRAVACAO bem-sucedida por ESTA rota. So e
-        // setado em `gravar` (sob sucesso): um `getMe` que nao grava NAO deixa
-        // aqui um handle estale que o token-state depois mostraria como se fosse
-        // o bot vigente (LOW-1 do revisor).
-        let handleAtual: string | undefined
-        // A FONTE EFETIVA, partilhada por `fonte` e `estado` para nunca
-        // divergirem: `config.worker.token` (env) PRIMEIRO (precedencia sobre o
-        // `secrets.env`), `secrets.env` a seguir. A MESMA logica de
-        // `resolverTokenDoBot`/`resolverToken` do onboarding.
-        const fonteEfetiva = (): FonteDoToken => {
-          const doConfig = typeof config.worker.token === 'string' ? config.worker.token.trim() : ''
-          if (doConfig.length > 0) return 'env'
-          let temSecrets = false
-          try {
-            const env = lerSecretsEnv(caminhoDoSecretsEnv(statePaths))
-            const valor =
-              env === undefined ? undefined : analisarSecretsEnv(env).get(tokenVarDoProvedor)?.trim()
-            temSecrets = valor !== undefined && valor.length > 0
-          } catch (error) {
-            // secrets.env ilegivel/exposto: trata como ausente (fail-closed).
-            void error
-            temSecrets = false
-          }
-          return temSecrets ? 'secrets' : 'nenhum'
-        }
+      tokenOps,
+      // O PAREAMENTO VIA PAINEL: gera o codigo (com `criarSessaoDePareamento`),
+      // envia o digest (`pairing.challenge`) ao worker e guarda a sessao NUM
+      // SLOT EM MEMORIA (Map/closure, TTL 5 min) para re-exibicao no refresh.
+      // O CODIGO NUNCA e logado nem enviado por Telegram: so existe no host
+      // (memoria) e na resposta a `gerar()` — o unico sitio onde o claro
+      // viaja para o painel. O `handle` vem do token-state ja gravado.
+      pairOps: (() => {
+        // OS ORTLHOS EM MEMORIA: o par {sessao} da UTIMA geracao. Um so slot
+        // (a politica anti-dobra do CLI e "um codigo de cada vez").
+        let sessaoAtiva: SessaoDePareamento | undefined
+        const relogio = { now: agora }
+
         return {
-          validarFormato: (bruto: string): boolean => validarFormatoDoToken(bruto).valido,
-          fonte: fonteEfetiva,
-          sondar: async (token: string) => {
-            const resposta = await sonda.getMe(token)
-            if (!resposta.ok) return { ok: false, erro: 'token-invalido' }
-            return { ok: true, handle: resposta.bot.username }
+          estado: () => {
+            // `pareadoAtual` = ha `pairing` persistido no state.json.
+            let pareadoAtual = false
+            try {
+              pareadoAtual = authStack().state.read().pairing !== undefined
+            } catch (error) {
+              // fail-closed: leitura impossivel = nao pareado (nao se inventa).
+              void error
+            }
+            const base: {
+              pareado: boolean
+              handle?: string
+              codigo?: string
+              expiraEm?: number
+            } = { pareado: pareadoAtual }
+            // handle do token-state (o token ja foi validado pelo getMe).
+            const handle = tokenOps.estado().handle
+            if (handle !== undefined) base['handle'] = handle
+            // Re-exibicao enquanto a sessao NAO expirou (restanteMs() > 0).
+            const sessao = sessaoAtiva
+            if (sessao !== undefined && sessao.restanteMs() > 0) {
+              try {
+                // A sessao do painel nunca e oferecida (so gera o digest), logo
+                // so pode estar 'aberto'/'expirado' — `revelarCodigo` cobre os
+                // dois. Um throw aqui NAO pode derrubar a leitura (S4).
+                base['codigo'] = sessao.revelarCodigo()
+                base['expiraEm'] = sessao.resumo().expiraEm
+              } catch (error) {
+                // Sessao consumida/esgotada (teorico): nao re-exibe o codigo.
+                void error
+              }
+            }
+            return base
           },
-          gravar: (token: string, handle: string): void => {
-            // 1) Persistir em secrets.env (0600, atomico). Na falha, a excecao
-            //    sobe para o handler virar 500; nada muda (nem a escrita, nem o
-            //    handle lembrado).
-            gravarSecretsEnv(
-              { paths: statePaths, caminhoSecrets: caminhoDoSecretsEnv(statePaths) },
-              tokenVarDoProvedor,
-              token,
-            )
-            // 2) SO AQUI o handle e "committed": a gravacao aconteceu de facto.
-            handleAtual = handle
-            // 3) Reiniciar o worker com o token novo. Se o supervisor ainda nao
-            //    nasceu (nao ha bot a correr), o token fica persistido e sobe no
-            //    proximo boot — nao ha processo vivo para reiniciar.
-            if (workerSupervisor === undefined) return
-            workerSupervisor.definirToken(token)
-            workerSupervisor.restart('token reconfigurado por /__guard-ui/api/token')
+          gerar: async () => {
+            // 1) ja-pareado: a janela fechou-se (PAIR-005) — o bot tem dono.
+            try {
+              if (authStack().state.read().pairing !== undefined) {
+                return { ok: false as const, erro: 'ja-pareado' as const }
+              }
+            } catch (error) {
+              // FAIL-CLOSED real: ler a pairing falhou (state.json ilegivel).
+              // Nao se sabe se ja ha dono — logo NAO se gera nem se envia
+              // challenge. O 'interno' e o codigo cuja mensagem nao vaza
+              // topologia nem estado real.
+              void error
+              return { ok: false as const, erro: 'interno' as const }
+            }
+            // 2) sem-token: o resolvedor do token (config/secrets.env) decide.
+            if (resolverTokenDoBot() === undefined) {
+              return { ok: false as const, erro: 'sem-token' as const }
+            }
+            // 3) worker-indisponivel: sem supervisor vivo nao ha para onde
+            //    enviar o desafio (o worker tem de o receber para o dono
+            //    poder `/parear <codigo>`).
+            const workerSup = workerSupervisor
+            if (workerSup === undefined) {
+              return { ok: false as const, erro: 'worker-indisponivel' as const }
+            }
+            // Gera a sessao NOVA: a anterior (se houver) morre.
+            const sessao = criarSessaoDePareamento({ clock: relogio })
+            const codigo = sessao.revelarCodigo()
+            const expiraEm = sessao.resumo().expiraEm
+            // Digest sha256 HEX do codigo — NUNCA o claro (S3-b). E o unico
+            // que atravessa o canal.
+            const digest = createHash('sha256').update(codigo, 'utf8').digest('hex')
+            const enviado = workerSup.send({
+              v: IPC_PROTOCOL_VERSION,
+              type: 'pairing.challenge',
+              digest,
+              expiresAt: expiraEm,
+            })
+            if (!enviado) {
+              // O canal recusou (host a fechar/fila cheia): nada se guarda.
+              return { ok: false as const, erro: 'worker-indisponivel' as const }
+            }
+            // So AQUI a sessao vira "ativa" — o desafio chegou ao worker.
+            sessaoAtiva = sessao
+            return { ok: true as const, codigo, expiraEm }
           },
-          estado: () => ({
-            configurado: fonteEfetiva() !== 'nenhum',
-            ...(handleAtual === undefined ? {} : { handle: handleAtual }),
-            fonte: fonteEfetiva(),
-          }),
         }
       })(),
       // AS METRICAS DE ACESSO: sockets ativos do proxy do tunel + sessoes vivas
@@ -1386,6 +1490,49 @@ export function apply(ctx: Context, config: Config): void {
     const supervisor = createWorkerSupervisor(ctx, config, defaultSupervisorDeps, {
       onIntent: responder,
       onNonceRequest: responderDeNonce,
+      // O PAREAMENTO CONCLUIU NO WORKER (`/parear <codigo>` valido). O host:
+      //   1) GRAVA o dono no state.json (mesma forma que o CLI — pairing.ownerUserId/ownerChatId/pairedAt);
+      //   2) DEVOLVE `pairing.owner` (que fecha o handshake e liberta a allowlist
+      //      no ato via auth.semearDono — sem esperar reinicio).
+      // Se a gravacao falhar, NAO se devolve complemento: um dono que o host
+      // nao persistiu nao autoriza nada a mais (fail-closed); o retorno e um
+      // `error INTERNAL` que o worker nao renderiza como pareamento duplo.
+      onPairingSuccess: (msg): IpcMessageToWorker => {
+        try {
+          const storePar = createStateStore({ paths: statePaths })
+          try {
+            storePar.store.update((estado) => ({
+              ...estado,
+              pairing: { ownerUserId: msg.from, ownerChatId: msg.chat, pairedAt: msg.pairedAt },
+            }))
+          } finally {
+            storePar.dispose()
+          }
+        } catch (error) {
+          log.error(
+            `nao foi possivel gravar o dono pareado no state.json: ${error instanceof Error ? error.message : String(error)}`,
+          )
+          return {
+            v: IPC_PROTOCOL_VERSION,
+            type: 'error',
+            code: 'INTERNAL',
+            message: 'O pareamento nao foi gravado. Reinicie o plugin e tente de novo.',
+          }
+        }
+        // A allowlist liberta no ato: sem esperar reinicio.
+        try {
+          authStack().audit.append({ evento: `pareamento_concluido:telegram:${String(msg.from)}`, resultado: 'permitido' })
+        } catch (error) {
+          void error
+        }
+        return {
+          v: IPC_PROTOCOL_VERSION,
+          type: 'pairing.owner',
+          from: msg.from,
+          chat: msg.chat,
+          pairedAt: msg.pairedAt,
+        }
+      },
       // O token RESOLVIDO (config ou secrets.env) — o supervisor injeta-o no
       // env do filho. Sem o override, ele usaria so `config.worker.token` e um
       // token apenas em `secrets.env` nao ligaria o worker (o bug HIGH do botao).

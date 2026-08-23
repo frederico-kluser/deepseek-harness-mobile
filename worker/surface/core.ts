@@ -716,6 +716,17 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       if (pareamento.kind !== 'ignorado') {
         if (pareamento.kind === 'pareado') {
           await enviarPara(pareamento.dono.chatKey, pareamento.reply)
+          // EMENDA ONDA-1-PAREAR-VIA-PAINEL: avisa o HOST que o pareamento
+          // concluiu — ele responde `pairing.owner` (liberta a allowlist no
+          // ato via auth.semearDono) e persiste o dono no state.json. Best-
+          // effort e fire-and-forget (S4): NAO se derruba nada se a entrega
+          // falhar — quem re-pareia depois re-envia. NUNCA logar ids alem do
+          // minimo; `pairedAt` e o do dono ja autorizado pelo worker.
+          deps.ipc.pairingSuccess({
+            userKey: pareamento.dono.userKey,
+            chatKey: pareamento.dono.chatKey,
+            pairedAt: pareamento.dono.pairedAt,
+          })
           return
         }
         if (pareamento.kind === 'boas-vindas') {
