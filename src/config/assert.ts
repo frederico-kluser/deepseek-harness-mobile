@@ -19,7 +19,7 @@
  * manifesto NAO falha alto por si. O que se segue e o que falha.
  *
  * A assinatura de "a entrada foi descartada" e precisamente a ausencia das
- * chaves proprias deste plugin (`realm`, `allowedHosts`, `trustedRemotes`,
+ * chaves proprias deste plugin (`allowedHosts`, `trustedRemotes`,
  * `guardedPrefixes`, `deniedPermissions`, `worker`): qualquer uma em falta lanca
  * aqui, com o nome da chave na mensagem.
  *
@@ -55,30 +55,6 @@ const TUNNEL_MODES: readonly TunnelMode[] = ['quick', 'named']
 
 /** Os dois unicos modos de exposicao. */
 const EXPOSURE_MODES: readonly ExposureConfig['mode'][] = ['loopback', 'tunnel']
-
-/**
- * Caracteres proibidos no `realm`.
- *
- *   - aspas e barra invertida quebrariam a quoted-string do cabecalho
- *     `WWW-Authenticate`;
- *   - o intervalo U+0000..U+001F mais U+007F cobre CR/LF e restantes controlos
- *     (injecao de cabecalhos);
- *   - tudo acima de U+00FF e recusado porque um cabecalho HTTP/1.1 viaja em
- *     Latin-1. Um `realm` com caracteres fora desse intervalo (um emoji, um
- *     alfabeto nao latino) passava na validacao e so rebentava em tempo de
- *     execucao, DENTRO do `res.writeHead(401, ...)`, com `ERR_INVALID_CHAR`. O
- *     efeito pratico e o pior possivel: em vez do 401 com o desafio, o cliente
- *     recebe uma resposta vazia e o socket fechado -- a barreira continua a
- *     barrar, mas deixa de ser legivel e o operador nao percebe porque.
- *     Recusa-se no arranque, como manda o "fail loud at load".
- *
- * Espacos SAO permitidos -- 'Secure DSH Interface' e um realm legitimo.
- */
-// Os controlos U+0000..U+001F e U+007F sao o ALVO desta validacao (CR/LF =
-// injecao de cabecalho), nao um acidente: e o caso legitimo que a propria doc
-// do `no-control-regex` preve. Desativacao escopada a ESTA linha.
-// oxlint-disable-next-line no-control-regex
-const UNSAFE_REALM_PATTERN = /["\\\u0000-\u001f\u007f]|[^\u0000-\u00ff]/u
 
 /**
  * Lados de credencial que NUNCA sao aceitaveis.
@@ -343,17 +319,6 @@ export function assertValidConfig(config: Config): void {
   if (config.encodedAuthString !== undefined) {
     assertNonEmptyString(config.encodedAuthString, 'encodedAuthString')
     assertUsableCredential(config.encodedAuthString, 'encodedAuthString')
-  }
-
-  assertNonEmptyString(config.realm, 'realm')
-
-  // O realm entra literalmente num cabecalho de resposta. Aspas, barras
-  // invertidas e caracteres de controlo permitiriam injecao de cabecalhos
-  // (CRLF) -- recusa-se no arranque em vez de "higienizar" a cada pedido.
-  if (UNSAFE_REALM_PATTERN.test(config.realm)) {
-    throw new Error(
-      `[${PLUGIN_NAME}] config.realm nao pode conter aspas, barras invertidas nem caracteres de controlo.`,
-    )
   }
 
   assertStringArray(config.allowedHosts, 'allowedHosts')

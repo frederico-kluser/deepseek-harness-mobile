@@ -67,8 +67,6 @@ export interface Config {
    * estatica configurada = nenhuma requisicao passa a barreira.
    */
   encodedAuthString?: string
-  /** Texto do desafio devolvido em `WWW-Authenticate` nas respostas 401. */
-  realm: string
   /** Interfaces de bind aceites para `ctx.webServer.host` (allowlist do BIND). */
   allowedHosts: string[]
   /** Origens remotas confiadas (`req.socket.remoteAddress`). Vazio = nega tudo. */

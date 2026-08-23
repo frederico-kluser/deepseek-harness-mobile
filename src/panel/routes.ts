@@ -196,13 +196,6 @@ export const CSRF_REJECTION_EVENT = 'painel_csrf_recusado'
 export interface PanelDeps {
   readonly log: GuardLogger
   readonly audit: Pick<AuditSink, 'append'>
-  /**
-   * `realm` do desafio Basic da VONDA antiga de login. Conservado so para a
-   * composicao nao quebrar (a fiacao em `src/index.ts` continua a passar); o
-   * painel NAO emite mais o cabecalho de desafio Basic (Onda 1/2) — o 401 e texto
-   * puro. Nao e segredo.
-   */
-  readonly realm: string
   readonly snapshot: () => TunnelSnapshot
   readonly secrets: Pick<SecretStore, 'verify'>
   readonly sessions: Pick<GuardSessionStore, 'regenerate' | 'validate'>

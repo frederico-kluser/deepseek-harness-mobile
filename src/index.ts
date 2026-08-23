@@ -1022,7 +1022,6 @@ export function apply(ctx: Context, config: Config): void {
         // O PORTEIRO de auditoria e lazy: a pilha nasce no primeiro pedido que
         // decide — nunca no apply() (a doutrina deste ficheiro).
         audit: { append: (evento) => authStack().audit.append(evento) },
-        realm: config.realm,
         snapshot: (): TunnelSnapshot => controlador.snapshot(),
         secrets: { verify: (candidato) => authStack().secrets.verify(candidato) },
         sessions: {

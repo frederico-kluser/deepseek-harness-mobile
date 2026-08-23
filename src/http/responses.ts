@@ -1,5 +1,5 @@
 /**
- * `challengeBasicAuth`, `denyUntrustedOrigin`, `denyUpgrade` -- os corpos de
+ * `denyUnauthorized`, `denyUntrustedOrigin`, `denyUpgrade` -- os corpos de
  * recusa, byte a byte.
  *
  * Escrita direta no objeto de resposta (`ServerResponse`) ou no socket cru, sem
@@ -121,29 +121,14 @@ export function denyNotFound(res: ServerResponse): void {
 }
 
 /**
- * Emite o desafio 401 com `WWW-Authenticate: Basic realm="..."`.
- *
- * >>> MANTIDO A PEDIDO DA REVISAO; SO O PAINEL (OUTRA ONDA) O USA. <<<
- * O portao do modelo novo ("expose-port") NUNCA emite `WWW-Authenticate` -- o
- * seu 401 e `denyUnauthorized` (logo abaixo). Este desafio sobrevive SO porque
- * `src/panel/routes.ts` (outra onda, fora do escopo desta sub-tarefa) ainda o
- * importa e chama na porta de login: remove-lo QUEBRA a compilacao desse
- * ficheiro. Provado: `pnpm build` -> `TS2305: Module "../http/responses.ts" has
- * no exported member 'challengeBasicAuth'` em `src/panel/routes.ts:55`. Quando
- * a onda dona do painel deixar de o usar, esta funcao e o import a saem juntos.
- */
-export function challengeBasicAuth(res: ServerResponse, realm: string): void {
-  res.writeHead(401, {
-    'WWW-Authenticate': `Basic realm="${realm}", charset="UTF-8"`,
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer',
-  })
-  res.end('Acesso Intercetado: Credenciais invalidas.\n')
-}
-
-/**
  * O 401 do PORTAO no modelo novo: TEXTO PURO, SEM `WWW-Authenticate`.
+ *
+ * >>> A UNICA FORMA DE 401 DESTE PACOTE. <<<
+ * O desafio antigo (`challengeBasicAuth`, com `WWW-Authenticate: Basic` e o
+ * popup de credenciais do navegador) foi REMOVIDO a pedido do dono: nenhuma
+ * superfície pede login/senha, nunca. Gate, túnel e painel partilham esta
+ * função — não existem dois literais de 401 a divergir (ver a REGRA DE
+ * FICHEIRO de `denyNotFound`).
  *
  * ---------------------------------------------------------------------------
  * A Onda 1 remove o login do portao: o gate NUNCA emite `WWW-Authenticate`

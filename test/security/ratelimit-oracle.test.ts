@@ -26,14 +26,13 @@ import { connect } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { challengeBasicAuth } from '../../src/http/responses.ts'
+import { denyUnauthorized } from '../../src/http/responses.ts'
 import { FakeResponse } from '../support/ctx-double.ts'
 import type { Identity } from '../../src/contracts/auth.ts'
 import { computeAuthDelayMs, DEFAULT_RATE_LIMIT_POLICY } from '../../src/ratelimit/policy.ts'
 import { createFailureTracker, runThrottledAttempt, type FailureTracker } from '../../src/ratelimit/tracker.ts'
 
 const policy = DEFAULT_RATE_LIMIT_POLICY
-const REALM = 'DSH'
 /** Sob tunel toda a gente e 127.0.0.1: `Identity.ip` vem `undefined` (spike S2). */
 const anonymous: Identity = {}
 /**
@@ -104,7 +103,7 @@ before(async () => {
         return
       }
       // O UNICO caminho de recusa. O mesmo para banido e para senha errada.
-      challengeBasicAuth(res, REALM)
+      denyUnauthorized(res)
     })()
   })
 
@@ -154,10 +153,10 @@ describe('o 401 do ban e byte a byte o 401 de senha errada', () => {
   it('M-17: o corpo do 401 e EXATAMENTE o literal partilhado -- muda-lo e mutacao', () => {
     // A igualdade byte a byte entre casos nao apanha um corpo novo em TODOS os
     // casos (todos continuariam iguais entre si). O que apanha e o literal:
-    // challengeBasicAuth tem UM corpo, e o teste congela-o.
+    // denyUnauthorized tem UM corpo, e o teste congela-o.
     const alvo = new FakeResponse()
-    challengeBasicAuth(alvo.asServerResponse(), 'DSH')
-    assert.equal(alvo.body, 'Acesso Intercetado: Credenciais invalidas.\n', 'o corpo do 401 mudou -- M-17')
+    denyUnauthorized(alvo.asServerResponse())
+    assert.equal(alvo.body, 'Acesso Intercetado: autorizacao necessaria.\n', 'o corpo do 401 mudou -- M-17')
   })
 
   it('ACEITE 7: apos 15 falhas a resposta nao muda um unico byte', async () => {

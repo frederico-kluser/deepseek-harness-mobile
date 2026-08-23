@@ -18,7 +18,6 @@ describe('fail loud at load', () => {
       /encodedAuthString/u,
     )
     assert.throws(() => assertValidConfig(makeConfig({ allowedHosts: [] })), /allowedHosts/u)
-    assert.throws(() => assertValidConfig(makeConfig({ realm: 'realm "injetado"' })), /realm/u)
 
     const semComando = makeConfig()
     semComando.worker.command = ''
@@ -27,33 +26,6 @@ describe('fail loud at load', () => {
     const backoffInvalido = makeConfig()
     backoffInvalido.worker.backoff.maxDelayMs = 100
     assert.throws(() => assertValidConfig(backoffInvalido), /maxDelayMs/u)
-  })
-
-  it('L2: recusa no arranque um realm nao representavel em Latin-1', () => {
-    // Um cabecalho HTTP/1.1 viaja em Latin-1: isto rebentaria DENTRO do
-    // `res.writeHead(401, ...)` com ERR_INVALID_CHAR e devolveria resposta VAZIA
-    // em vez do desafio -- a barreira continuaria a barrar, mas deixaria de ser
-    // legivel e o operador nao perceberia porque.
-    assert.throws(() => assertValidConfig(makeConfig({ realm: 'DSH \u{1F512}' })), /realm/u)
-    assert.throws(() => assertValidConfig(makeConfig({ realm: 'DSH \u4f60\u597d' })), /realm/u)
-
-    // Latin-1 legitimo continua a passar (os acentos do portugues estao abaixo
-    // de U+00FF). Sem esta metade, "recusar tudo" satisfazia o teste.
-    assert.doesNotThrow(() =>
-      assertValidConfig(makeConfig({ realm: 'Interface Segura \u00e7\u00e3o' })),
-    )
-  })
-
-  it('recusa caracteres de controlo no realm (injecao de cabecalhos por CRLF)', () => {
-    assert.throws(
-      () => assertValidConfig(makeConfig({ realm: 'DSH\r\nX-Injetado: 1' })),
-      /realm/u,
-    )
-    assert.throws(() => assertValidConfig(makeConfig({ realm: 'DSH\u007f' })), /realm/u)
-  })
-
-  it('recusa barra invertida no realm (quebra a quoted-string)', () => {
-    assert.throws(() => assertValidConfig(makeConfig({ realm: 'DSH\\quebrado' })), /realm/u)
   })
 
   it('aceita trustedRemotes vazio (fail-closed e configuracao valida)', () => {

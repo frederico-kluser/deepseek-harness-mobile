@@ -177,7 +177,6 @@ export function criarBancada(opcoes: OpcoesBancada = {}): Bancada {
     deps: {
       log,
       audit: { append: (evento: AuditEvent): void => void eventos.push(evento) },
-      realm: 'Secure DSH Interface',
       snapshot: (): TunnelSnapshot => bancada.estado,
       clock,
       secrets,

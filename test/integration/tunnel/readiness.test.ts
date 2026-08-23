@@ -37,6 +37,7 @@ import {
   defaultReadinessDeps,
   type ReadinessDeps,
 } from '../../../src/tunnel/readiness.ts'
+import { denyUnauthorized } from '../../../src/http/responses.ts'
 import { FakeClock } from '../../support/clock.ts'
 
 /* ========================================================================== */
@@ -157,8 +158,9 @@ describe('TUN-012 — porta aberta NAO e aplicacao pronta', () => {
         res.end()
         return
       }
-      res.writeHead(401, { 'www-authenticate': 'Basic realm="Secure DSH Interface"' })
-      res.end()
+      // O 401 REAL do modelo novo: texto puro, SEM `WWW-Authenticate` (o
+      // desafio Basic foi removido a pedido do dono).
+      denyUnauthorized(res)
     })
     const url = await escutar(servidor)
     const clock = new FakeClock(0)

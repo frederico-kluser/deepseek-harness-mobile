@@ -35,7 +35,6 @@ export function flush(): Promise<void> {
 export function makeConfig(overrides: Partial<Config> = {}): Config {
   const base: Config = {
     encodedAuthString: VALID_CREDENTIAL,
-    realm: 'Secure DSH Interface',
     allowedHosts: ['127.0.0.1', '::1'],
     trustedRemotes: ['127.0.0.1'],
     guardedPrefixes: ['/api'],

@@ -111,22 +111,25 @@
 #   >>> mecanismo. Não o ressuscite.
 #
 # -----------------------------------------------------------------------------
-# CREDENCIAL: NÃO ESTÁ AQUI, E ISSO É A DECISÃO
+# CREDENCIAL: NÃO HÁ. O MODELO É "SEM LOGIN", COMO O EXPOSE-PORT.
 # -----------------------------------------------------------------------------
-# Este ficheiro NÃO declara `encodedAuthString`, e não deriva credencial de
-# `ADMIN_USER`/`ADMIN_PASS` por `!!js`. Essas variáveis SAÍRAM DO FLUXO.
+# Este plugin NUNCA pede login/senha — nem prompt, nem formulário, nem
+# `WWW-Authenticate` (decisão do dono; ver `docs/THREAT-MODEL.md`). O acesso
+# local (loopback) abre direto; o acesso pelo TÚNEL só entra com a CHAVE NO
+# LINK que o bot envia (`https://<url>?key=<token>`), e sem chave a resposta é
+# 401 em texto puro, SEM desafio.
 #
-# A credencial é GERADA PELO PRÓPRIO PLUGIN por CSPRNG (≥128 bits), impressa uma
-# única vez no arranque, e o seu digest vive em
-# `$XDG_STATE_HOME/dsh-guarded-bot/state.json` (ficheiro `0600`, diretório
-# `0700`). O utilizador do Basic Auth é fixo, `dsh`, e não é segredo.
+# Por isso este ficheiro NÃO declara credencial nenhuma: nem `encodedAuthString`
+# (removido do fluxo), nem derivação de `ADMIN_USER`/`ADMIN_PASS` por `!!js`
+# (essas variáveis SAÍRAM DO FLUXO).
 #
 # PORQUÊ: um manifesto é um ficheiro versionável e partilhável. Enquanto existisse
 # uma chave de credencial aqui, existiria um lugar onde uma senha pode acabar
 # commitada. Além disso a derivação antiga tinha um modo de falha fail-OPEN:
 # `Buffer.from(`${ADMIN_USER}:${ADMIN_PASS}`)` com as duas variáveis ausentes
 # interpola a string "undefined" e produz `dW5kZWZpbmVkOnVuZGVmaW5lZA==` — uma
-# credencial VÁLIDA, FIXA e derivável por qualquer leitor.
+# credencial VÁLIDA, FIXA e derivável por qualquer leitor. O modelo novo elimina
+# a classe inteira: não há senha para derivar, guardar ou imprimir.
 #
 # O `!!js` continua válido, mas SÓ para valores NÃO SENSÍVEIS.
 # (`02-SEGURANCA.md` §8.2 regra 6; `09-DECISOES-CANONICAS.md` D19.)
@@ -139,9 +142,9 @@
     # =========================================================================
     # O QUÊ: regista o orquestrador guardado, que faz duas coisas:
     #        (a) instala a BARREIRA sobre o `webServer`, trocando o dono do
-    #            despacho no `node:http.Server`; exige credencial nos prefixos
-    #            guardados, no fallback da SPA e em TODO o handshake de
-    #            WebSocket; valida no carregamento que o endereço de bind consta
+    #            despacho no `node:http.Server`; o acesso LOCAL abre direto, o
+    #            do TÚNEL só entra com sessão ou `?key=` (401 texto puro, SEM
+    #            desafio); valida no carregamento que o endereço de bind consta
     #            de `allowedHosts`; e mantém um veto de permissões proibidas;
     #        (b) mantém, sob `ctx.effect()`, o worker de long-polling do Telegram
     #            como subprocesso atómico, com disposer LIFO e tree-kill.
@@ -158,11 +161,6 @@
     - id: guarded-bot-orchestrator
       name: 'dsh-guarded-bot-orchestrator'
       config:
-        # --- Desafio HTTP ----------------------------------------------------
-        # Texto devolvido no cabeçalho `WWW-Authenticate` das respostas 401.
-        # Puramente informativo para o cliente. NÃO é segredo.
-        realm: 'Secure DSH Interface'
-
         # --- Perímetro de rede -----------------------------------------------
         # `allowedHosts` é a ALLOWLIST DO ENDEREÇO DE BIND, isto é, os valores
         # que `ctx.webServer.host` pode assumir. No carregamento o plugin lê
@@ -182,14 +180,14 @@
           - '::1'
 
         # `trustedRemotes` é a ALLOWLIST DA ORIGEM DA CONEXÃO
-        # (`req.socket.remoteAddress`), avaliada ANTES de sequer se olhar para a
-        # credencial. É o primeiro portão; o Basic Auth é o segundo.
+        # (`req.socket.remoteAddress`). É o primeiro portão; a autenticação do
+        # túnel (sessão/`?key=`, 401 sem desafio) é o segundo.
         #
         # Os dois códigos de recusa NÃO são intermutáveis:
         #   - origem fora desta lista            -> 403 Forbidden. Repetir a
         #     credencial não ajuda: o pedido nunca chega à autenticação.
-        #   - origem confiada, credencial errada -> 401 Unauthorized, com o
-        #     desafio `WWW-Authenticate` e o `realm` acima.
+        #   - origem confiada, sem sessão/chave -> 401 Unauthorized, TEXTO PURO,
+        #     SEM o desafio `WWW-Authenticate` (modelo sem-login do dono).
         #
         # >>> LISTA VAZIA = NINGUÉM CONFIADO = NEGA TUDO. <<<
         # É fail-closed literal — mas com `[]` a instalação fica INOPERANTE:
