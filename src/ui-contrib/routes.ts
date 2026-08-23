@@ -37,6 +37,9 @@
  *                                        das instrucoes (conectar se offline,
  *                                        uso se online). Exige CSRF, como todo
  *                                        POST desta superficie.
+ *   GET  /__guard-ui/api/csrf       — um token anti-CSRF FRESCO para o bundle
+ *                                        (HIGH-2): fonte INDEPENDENTE do meta
+ *                                        do indice antigo, para o painel novo.
  *
  * Toda rota POST exige o token anti-CSRF desta superficie (cabecalho
  * `x-dsh-csrf` ou campo `csrf` do corpo) — doutrina NIST SP 800-63B-4 5.1.1.
@@ -71,6 +74,12 @@ export const UI_PATH_TOKEN = `${UI_PREFIX}/api/token`
 export const UI_PATH_TOKEN_STATE = `${UI_PREFIX}/api/token-state`
 /** Quem/quanto esta a acessar (sessoes e conexoes do proxy) — GET. */
 export const UI_PATH_ACCESS = `${UI_PREFIX}/api/access`
+/**
+ * O token anti-CSRF FRESCO para o bundle — GET, so le. Nao exige CSRF (e uma
+ * leitura, como as demais GETs) e NUNCA transporta credencial: o valor emitido
+ * e o mesmo token stateless que o `tapIndex` embute no indice antigo.
+ */
+export const UI_PATH_CSRF = `${UI_PREFIX}/api/csrf`
 
 /** O vinculo do token anti-CSRF: a superficie inteira. */
 export const UI_CSRF_BINDING = 'ui-contrib'
@@ -727,5 +736,29 @@ export function createAccessHandler(core: UiContribCore): UiContribRequestHandle
   return (req, res) => {
     if (!exigeMetodo(req, res, 'GET')) return
     json(res, 200, projetarAcesso(core.acesso()))
+  }
+}
+
+/* ========================================================================== */
+/* O token anti-CSRF fresco (GET /api/csrf — HIGH-2)                          */
+/* ========================================================================== */
+
+/**
+ * GET /__guard-ui/api/csrf — emite um token anti-CSRF NOVO para o VINCULO da
+ * superficie e devolve-o. E o caminho de CSRF INDEPENDENTE do meta do indice
+ * antigo, que o bundle novo usa em cad a POST (a fonte mais robusta: um GET
+ * barato e stateless a cada escrita, sem depender do `tapIndex`).
+ *
+ * ATRAS DA MESMA BARREIRA (loopback/tunel autenticado) e SEM exigir CSRF — e
+ * uma LEITURA, como as outras GETs desta superficie; o token nao e credencial
+ * (quem alcanca o servidor consegue emitir um para si), e a extracao por
+ * leitura de resposta e exactamente o que o `SameSite`/CORS fecha para o
+ * navegador da vitima. O token devolvido e verificavel com o MESMO
+ * `core.csrf.verify(token, UI_CSRF_BINDING)` dos POSTs.
+ */
+export function createCsrfHandler(core: UiContribCore): UiContribRequestHandler {
+  return (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    json(res, 200, { token: core.csrf.issue(UI_CSRF_BINDING) })
   }
 }

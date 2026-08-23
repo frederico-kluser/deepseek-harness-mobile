@@ -60,11 +60,34 @@ DSH_HOME=/home/ondokai/.dsh-guardbot  pnpm dsh cert   # se ainda não tiver
    Sem `trustEdgeHeaders` o IP aparece como tag **"IP não confiável"** e há um
    aviso discreto no cartão.
 
-### Smoke headless (registo não lança)
-O bundle deve ser verificado a cada mudança com: `pnpm run build:client` e um
-smoke que carrega `lib/client.js` num sandbox com `window.__ModuleLoader__`
-esticado, chama `apply(ctx)` com um `ctx.slots` stub e confirma que os dois
-slots (`sidebar.footer.action`, `settings.section`) registam sem exceção.
+### Smoke headless (registo não lança + CSRF novo)
+O bundle deve ser verificado a cada mudança com: `pnpm run build:client` e o
+teste `test/unit/client/index.test.ts` (roda em `pnpm test`). Ele carrega
+`lib/client.js` num sandbox com `window.__ModuleLoader__` esticado, chama
+`apply(ctx)` com um `ctx.slots` stub e confirma que os dois slots
+(`sidebar.footer.action`, `settings.section`) registam sem exceção — E cobre o
+CSRF novo (HIGH-2): o `buscarTokenCsrf` busca `GET /__guard-ui/api/csrf` no
+fetch stub, o fallback ao meta do chrome antigo funciona, e o `apiPost` envia o
+token **novo** no header `x-dsh-csrf`.
+
+### Instalação por git roda o `prepare` (HIGH-1)
+`package.json` ganhou `"prepare": "pnpm run build:all"` — qualquer
+`git clone` + `pnpm install` do repositório **gera `lib/client.js` e `dist/`
+automaticamente** antes de o harness montar o bundle (`exports["./client"]` →
+`lib/client.js`). Sem isso a ativação do client lançaria
+`MissingClientBundleError` (packages/client/modules/src/index.ts). O `prepare`
+não altera o lockfile (`pnpm install --frozen-lockfile` continua a passar) e os
+artefatos (`lib/`, `dist/`) continuam **ignorados no git** (`.gitignore`) — são
+a saída do build, não fonte. O `files` do tarball já inclui `lib` e `dist`, e o
+`scripts/check-tarball.mjs` (no `package:check`) exige `lib/client.js` no pack.
+
+---
+
+## FORA DE ESCOPO (next / Onda 3)
+- O smoke headless agora é o teste commitado `test/unit/client/index.test.ts`;
+  um refinamento futuro seria renderizar a aba inteira num DOM (jsdom/smoke de
+  UI) para cobrir o fluxo de formulário end-to-end — hoje cobre o registo dos
+  slots e o CSRF novo, não a renderização React.
 
 ---
 
@@ -96,16 +119,15 @@ herda o tema light E dark do shell. Sem literais hardcoded.
   **409 `token-por-env`** e avisa que um token gravado no `secrets.env` não
   mudaria o bot até a variável sair do ambiente.
 - O valor do token **nunca** sai do backend nem entra no bundle: as respostas
-  só devolvem `handle`/`ok`/`erro`; o client envia `x-dsh-csrf` lido do
-  `<meta name="dsh-guard-ui-csrf">` (injetado pelo `tapIndex`) em todo POST.
+  só devolvem `handle`/`ok`/`erro`. Todo POST envia `x-dsh-csrf`, e a fonte do
+  token **não é uma só** (HIGH-2):
+  - **Fonte preferida** — `GET /__guard-ui/api/csrf`, o mesmo guard da
+    superficie emitindo um token stateless **fresco por POST** (barato e
+    stateless, sem depender do chrome antigo). O bundle busca-o a cada
+    escrita; se a GET falhar cai no fallback abaixo.
+  - **Fallback (chrome antigo)** — `<meta name="dsh-guard-ui-csrf">` que o
+    `tapIndex` injeta no índex (compat reversa).
+  - Se **nenhuma** das duas der, o POST recusa com mensagem clara ("CSRF
+    indisponível — recarregue") — nunca envia sem token.
 - A lista de acesso **nunca** mostra `?key` nem o id de sessão em claro: o hash
   é truncado a 8 chars como identidade visual.
-
----
-
-## FORA DE ESCOPO (next / Onda 3)
-- Automatizar o **smoke headless** como um teste `test/unit/**` (hoje é um
-  executável ad-hoc documentado aqui) — o backend é dono de `src/**`; o smoke
-  unitário ficaria em `test/unit/client/**`.
-- `pnpm build:client` re-gera `lib/client.js` (ignorado no git, `.gitignore`
-  `lib/`); definir se `lib` passa a ser commitado ou construído no consumo.

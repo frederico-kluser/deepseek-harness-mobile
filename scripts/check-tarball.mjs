@@ -40,6 +40,11 @@ const REQUIRED = [
   'dist/index.d.ts',
   'dist/worker/telegram-bot.js',
   'dist/bin/dsh-guard-setup.js', // o alvo do campo `bin` (06 §9.2, item 10 do smoke)
+  // HIGH-1: o bundle do dsh.client (`exports["./client"]` -> `lib/client.js`).
+  // Sem ele o harness lanca MissingClientBundleError na ativacao do plugin
+  // (packages/client/modules/src/index.ts). `prepare`/`prepack` geram-no antes
+  // do pack; este gate prova que o tarball o leva.
+  'lib/client.js',
   'dist/src/contracts/ipc.js', // o UNICO ficheiro de dist/src exigido em runtime:
   // `worker/ipc.ts` importa `../src/contracts/ipc.ts`, que o tsconfig.worker.json
   // (rootDir \".\") emite para dist/src/contracts/ipc.js. Regressar a emissao

@@ -44,6 +44,7 @@ import {
   createAccessHandler,
   createClientHandler,
   createConfirmHandler,
+  createCsrfHandler,
   createResetConfirmHandler,
   createResetHandler,
   createStartHandler,
@@ -57,6 +58,7 @@ import {
   UI_PATH_ACCESS,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
+  UI_PATH_CSRF,
   UI_PATH_RESET,
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
@@ -130,10 +132,10 @@ export interface UiContribDeps {
 export const UI_REQUESTED_BY = 'ui:native'
 
 /**
- * Monta a superficie: tap + cinco rotas + assinatura do broadcast, e devolve
- * o disposer que reverte TUDO (tap reversivel — a propriedade que o spike S4
- * mediu; rotas removidas; assinatura cancelada). Disposer SINCRONO e
- * idempotente (LIFE-003/005).
+ * Monta a superficie: tap + as rotas (incl. o GET /api/csrf de HIGH-2) +
+ * assinatura do broadcast, e devolve o disposer que reverte TUDO (tap
+ * reversivel — a propriedade que o spike S4 mediu; rotas removidas; assinatura
+ * cancelada). Disposer SINCRONO e idempotente (LIFE-003/005).
  */
 export function createNativeUiSurface(deps: UiContribDeps): () => void {
   let lastSeq = -1
@@ -188,6 +190,9 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     { kind: 'exact', path: UI_PATH_TOKEN_STATE, handler: createTokenStateHandler(core) },
     // As metricas de acesso (GET, so leitura).
     { kind: 'exact', path: UI_PATH_ACCESS, handler: createAccessHandler(core) },
+    // O token anti-CSRF fresco para o bundle (HIGH-2) — GET, so le. Sempre
+    // registado: e o que o bundle novo usa em cada POST por fora do meta antigo.
+    { kind: 'exact', path: UI_PATH_CSRF, handler: createCsrfHandler(core) },
   ]
 
   const rotaDisposers: Array<() => void> = []

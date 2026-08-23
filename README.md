@@ -15,6 +15,12 @@
 dsh plugin --profile web add dsh-guarded-bot-orchestrator
 ```
 
+> **Instalação por git / tarball:** se instalares a partir do git (`pnpm add <git-url>`),
+> o lifecycle `prepare` (`pnpm run build:all`) gera automaticamente `lib/client.js`
+> e `dist/` — o bundle que o harness monta (`exports["./client"]` → `lib/client.js`).
+> Sem esses artefactos a ativação do client lançaria `MissingClientBundleError`.
+> Ver [`docs/PANEL-TELEGRAM.md`](docs/PANEL-TELEGRAM.md).
+
 ## Modelo de ameaça, em 5 linhas — antes de qualquer feature
 
 > Este plugin expõe, por escolha, um agente que executa código na tua máquina. Antes de continuares, lê isto:

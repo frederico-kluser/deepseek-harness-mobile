@@ -51,6 +51,7 @@
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.bin.json",
     "build:client": "node scripts/build-client.mjs",
     "build:all": "pnpm build && pnpm build:client",
+    "prepare": "pnpm run build:all",
     "test": "node --test --test-reporter=spec 'test/unit/**/*.test.ts' 'test/integration/**/*.test.ts'",
     "test:contract": "node --test 'test/contract/**/*.test.ts'",
     "test:security": "node --test --test-reporter=spec 'test/security/**/*.test.ts'",

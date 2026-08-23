@@ -34,11 +34,13 @@ import {
 import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
+  UI_PATH_CSRF,
   UI_PATH_RESET,
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
   UI_PATH_STOP,
 } from '../../../src/ui-contrib/routes.ts'
+import { UI_CSRF_BINDING } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
 
 interface RespostaCapturada {
@@ -297,5 +299,77 @@ describe('GET /__guard-ui/client.js', () => {
     const resposta = await bancada.enviar(UI_PATH_CLIENT, { metodo: 'POST', pedacos: ['{}'] })
     assert.equal(resposta.status, 405)
     assert.equal(resposta.cabecalhos.allow, 'GET')
+  })
+})
+
+/* ========================================================================== */
+/* O token anti-CSRF fresco (GET /api/csrf — HIGH-2)                          */
+/* ========================================================================== */
+
+describe('GET /__guard-ui/api/csrf', () => {
+  it('GET devolve um token 200, NO-SEM exigir CSRF, e o mesmo guard o valida no POST', async () => {
+    const bancada = criarBancada()
+    // A GET de leitura nao exige token CSRF nenhum — devolve um token novo.
+    const resposta = await bancada.enviar(UI_PATH_CSRF, { metodo: 'GET', pedacos: [] })
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.cabecalhos['cache-control'], 'no-store')
+    assert.equal(typeof resposta.corpo.token, 'string')
+    const token = resposta.corpo.token as string
+    assert.ok(token.length > 0, 'o token emitido nao deve vir vazio')
+
+    // O token emitido é verificavel contra o MESMO vinculo da superficie: usado
+    // num POST de mutacao tem de passar (200), nao ser recusado (403).
+    const noCorpo = await bancada.enviar(UI_PATH_START, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: token },
+      pedacos: ['{}'],
+    })
+    assert.equal(noCorpo.status, 200, 'o token do /csrf deve valer num POST como o do tap')
+    assert.equal(noCorpo.corpo.passo, 'confirmar')
+  })
+
+  it('metodo errado responde 405 com allow: GET', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_CSRF, { metodo: 'POST', pedacos: ['{}'] })
+    assert.equal(resposta.status, 405)
+    assert.equal(resposta.cabecalhos.allow, 'GET')
+  })
+
+  it('token antigo expira no TTL; uma GET nova re-eme o token e volta a valer', async () => {
+    const bancada = criarBancada()
+    const antes = await bancada.enviar(UI_PATH_CSRF, { metodo: 'GET', pedacos: [] })
+    const tokenAntigo = antes.corpo.token as string
+
+    // Um POST com o token ANTIGO passa agora...
+    const okAgora = await bancada.enviar(UI_PATH_START, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: tokenAntigo },
+      pedacos: ['{}'],
+    })
+    assert.equal(okAgora.status, 200)
+
+    // ...mas passa a expirar em 30min: adianta o relogio past o TTL e o MESMO
+    // token e recusado (403), enquanto uma GET nova devolve um token que vale.
+    bancada.clock.advance(31 * 60 * 1000)
+    const recusado = await bancada.enviar(UI_PATH_START, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: tokenAntigo },
+      pedacos: ['{}'],
+    })
+    assert.equal(recusado.status, 403, 'o token emitido expira no TTL e o POST recusa')
+
+    const novo = await bancada.enviar(UI_PATH_CSRF, { metodo: 'GET', pedacos: [] })
+    const tokenNovo = novo.corpo.token as string
+    assert.notEqual(tokenNovo, tokenAntigo, 'a GET nova re-eme (expira em outro instante)')
+    const revalidado = await bancada.enviar(UI_PATH_STOP, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: tokenNovo },
+      pedacos: ['{}'],
+    })
+    assert.equal(revalidado.status, 200, 'a GET nova restabelece o CSRF')
+  })
+
+  it('o token do /csrf usa o MESMO vinculo (UI_CSRF_BINDING) do CSRF da superficie', () => {
+    assert.equal(UI_CSRF_BINDING, 'ui-contrib')
   })
 })

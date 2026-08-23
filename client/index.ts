@@ -20,9 +20,14 @@
  *
  * SEGURANÇA: o token/segredo NUNCA entra neste bundle. O `@handle` (devolvido
  * pela rota quando o `getMe` o confirmou) é a única informação do bot aqui — e
- * sai do SERVIDOR, não do teu bundle. Todo POST envia `x-dsh-csrf` lido do
- * `<meta name="dsh-guard-ui-csrf">` que o tapIndex injeta no índex. Nenhuma
- * ?key, nenhum id de sessão em claro, nenhuma dependência nova.
+ * sai do SERVIDOR, não do teu bundle. Todo POST envia `x-dsh-csrf`. A fonte do
+ * token NÃO é uma só: o caminho preferido (HIGH-2) é `GET /api/csrf`, o mesmo
+ * guard da superficie emitindo um token stateless FRESCO por pedido — sem
+ * depender do chrome antigo. Só se o GET falhar é que o bundle cai no
+ * `<meta name="dsh-guard-ui-csrf">` que o `tapIndex` injeta no índex (compat
+ * com o chrome antigo). Se nenhuma das duas der, os POSTs falham com mensagem
+ * clara ("CSRF indisponível — recarregue"). Nenhuma ?key, nenhum id de sessão
+ * em claro, nenhuma dependência nova.
  *
  * CSS: `./guard-panel.css` (classes com prefixo `guard-`, só tokens `--dsw-*`)
  * é embebido como string pelo esbuild (loader `text`) e injetado num
@@ -65,15 +70,52 @@ function asegurarCss(documento: Document): void {
 
 const API_BASE = '/__guard-ui/api'
 
-/** O token anti-CSRF do meta que o tapIndex injeta no índex. */
-function csrfToken(documento: Document): string {
-  const meta = documento.querySelector<HTMLMetaElement>('meta[name="dsh-guard-ui-csrf"]')
-  return meta ? meta.getAttribute('content') ?? '' : ''
+/** Nome do meta do chrome antigo — compat reversa, NÃO a fonte preferida. */
+const CSRF_META_NAME = 'dsh-guard-ui-csrf'
+
+/** Teto curto do GET /csrf: o token é barato; se atrasar, cai no meta. */
+const CSRF_TIMEOUT_MS = 2500
+
+/** CSRF indisponível — sinaliza ao chamador para recusar o POST. */
+const CSRF_INDISPONIVEL = ''
+
+/**
+ * O token anti-CSRF a usar num POST. Fonte preferida (HIGH-2): `GET /api/csrf`,
+ * o mesmo guard da superficie emitindo um token stateless FRESCO. Só se essa
+ * GET falhar (rede/timeout) é que cai no `<meta name="dsh-guard-ui-csrf">` do
+ * chrome antigo. `''` = nenhuma fonte deu → o POST recusa com mensagem clara.
+ *
+ * Exportada para o smoke de teste (test/unit/client) exercitar o fetch /csrf e
+ * a ordem fonte-nova → fallback-meta sem montar o React.
+ */
+export async function buscarTokenCsrf(documento: Document): Promise<string> {
+  const controller = new AbortController()
+  const temporizador = setTimeout(() => controller.abort(), CSRF_TIMEOUT_MS)
+  try {
+    const resposta = await fetch(API_BASE + '/csrf', {
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (resposta.ok) {
+      const corpo = (await resposta.json()) as { token?: unknown }
+      if (typeof corpo.token === 'string' && corpo.token.length > 0) return corpo.token
+    }
+  } catch {
+    /* queda de rede/timeout: cai no meta abaixo */
+  } finally {
+    clearTimeout(temporizador)
+  }
+  // Compat reversa com o chrome antigo (o meta que o tapIndex injeta).
+  const meta = documento.querySelector<HTMLMetaElement>(`meta[name="${CSRF_META_NAME}"]`)
+  return meta ? (meta.getAttribute('content') ?? '').trim() : CSRF_INDISPONIVEL
 }
 
 interface RespostaPost {
   readonly status: number
   readonly dados: Record<string, unknown>
+  /** `true` quando o POST não chegou a sair porque o CSRF estava indisponível. */
+  readonly csrfIndisponivel: boolean
 }
 
 /** GET JSON (só leitura das rotas de estado). Larga em qualquer falha. */
@@ -87,20 +129,29 @@ async function apiGet<T>(caminho: string): Promise<T> {
 }
 
 /**
- * POST JSON com o header anti-CSRF. Rede falhou ⇒ `{status:0}` (NUNCA uma
- * rejeição não tratada) — o painel renderiza um erro genérico sem vazar nada.
+ * POST JSON com o header anti-CSRF. O token é buscado FRESCO a CADA pedido
+ * (GET /api/csrf barato e stateless, com fallback ao meta antigo) — assim o
+ * valor nunca envelhece no prazo de 30min do TTL. Rede falhou ⇒ `{status:0}`
+ * (NUNCA uma rejeição não tratada) — o painel renderiza um erro genérico sem
+ * vazar nada. Sem CSRF disponível ⇒ `{status:0, csrfIndisponivel:true}`.
+ *
+ * Exportada para o smoke de teste exercitar o envio do token NOVO no header.
  */
-async function apiPost(caminho: string, corpo: Record<string, unknown>, documento: Document): Promise<RespostaPost> {
+export async function apiPost(caminho: string, corpo: Record<string, unknown>, documento: Document): Promise<RespostaPost> {
+  const token = await buscarTokenCsrf(documento)
+  if (token.length === 0) {
+    return { status: 0, dados: {}, csrfIndisponivel: true }
+  }
   let resposta: Response
   try {
     resposta = await fetch(API_BASE + caminho, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', 'x-dsh-csrf': csrfToken(documento) },
+      headers: { 'content-type': 'application/json', 'x-dsh-csrf': token },
       body: JSON.stringify(corpo),
     })
   } catch {
-    return { status: 0, dados: {} }
+    return { status: 0, dados: {}, csrfIndisponivel: false }
   }
   let dados: Record<string, unknown> = {}
   try {
@@ -108,7 +159,7 @@ async function apiPost(caminho: string, corpo: Record<string, unknown>, document
   } catch {
     /* corpo ilegível — usa o status */
   }
-  return { status: resposta.status, dados }
+  return { status: resposta.status, dados, csrfIndisponivel: false }
 }
 
 /* ========================================================================== */
@@ -422,6 +473,11 @@ function TelegramGuardSection(): React.ReactNode {
     const r = await apiPost('/token', { token: bruto }, document)
     setEnviando(false)
     if (!vivo.current) return
+
+    if (r.csrfIndisponivel) {
+      setFeedback({ tipo: 'erro', texto: 'CSRF indisponível — recarregue a página e tente de novo.' })
+      return
+    }
 
     switch (r.status) {
       case 200: {

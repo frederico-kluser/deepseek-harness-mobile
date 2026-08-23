@@ -40,6 +40,7 @@ import {
 import {
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
+  UI_PATH_CSRF,
   UI_PATH_RESET,
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
@@ -266,7 +267,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 /* ========================================================================== */
 
 describe('registo da contribuicao', () => {
-  it('regista um tap, NOVE rotas (telegram + reset) e a assinatura do broadcast', () => {
+  it('regista um tap, as rotas (telegram + reset + acesso + csrf) e a assinatura do broadcast', () => {
     const bancada = criarBancada()
     assert.equal(bancada.taps.length, 1)
     assert.deepEqual(
@@ -284,6 +285,7 @@ describe('registo da contribuicao', () => {
         UI_PATH_TOKEN,
         UI_PATH_TOKEN_STATE,
         UI_PATH_ACCESS,
+        UI_PATH_CSRF,
       ].toSorted(),
     )
     for (const rota of bancada.rotas.values()) {
@@ -295,7 +297,7 @@ describe('registo da contribuicao', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-    assert.equal(bancada.rotaDesmontadas, 12, 'as doze rotas (telegram + token + acesso) sao removidas')
+    assert.equal(bancada.rotaDesmontadas, 13, 'as treze rotas (telegram + token + acesso + csrf) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
