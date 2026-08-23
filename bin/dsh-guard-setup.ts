@@ -793,8 +793,9 @@ function registarAuditoria(
 function mostrarAjuda(escrever: (texto: string) => void): void {
   escrever(`${COMANDO_CLI} — liga este computador ao seu bot do Telegram.
 
-Sem opções, a ferramenta olha para o que já está feito e mostra apenas o passo
-que falta. Correr outra vez quando já está tudo pronto não muda nada.
+Sem opções, a ferramenta mostra a sua senha de acesso (uma única vez, em texto
+e em QR — a senha do portão HTTP não depende do Telegram) e depois o passo que
+falta. Correr outra vez quando já está tudo pronto não muda nada.
 
   --pedir-token     pede a chave do bot aqui no terminal e guarda-a com
                     permissão 0600, fora da pasta do projeto
@@ -873,7 +874,14 @@ export async function principal(
       }
     }
 
-    if (estado === 'PRONTO') mostrarSegredoSeFaltar(ctx)
+    // A senha do portão é independente do Telegram (INSTALL.md, Passo 4: o
+    // portão HTTP funciona só com a senha). O boot nunca a mostra — a tela
+    // /__guard/secret é da Onda 6 (src/index.ts, `reveal: () => null`) — e o
+    // plano (03-ONDAS.md, T4.1) atribui a este CLI o provision() + senha + QR.
+    // Logo, na primeira execução ela é provisionada e mostrada AQUI, antes do
+    // próximo passo do Telegram. `hasSecret()` mantém a idempotência (TG-067)
+    // e `rotate()` continua fora deste CLI.
+    mostrarSegredoSeFaltar(ctx)
     return mostrarPasso(retrato, ctx)
   } finally {
     handle.dispose()

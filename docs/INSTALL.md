@@ -34,19 +34,40 @@ dsh web
 No arranque o plugin deverá:
 
 1. validar o **bind** (em loopback) e gritar se estiver fora da allowlist;
-2. gerar a **senha** (CSPRNG, 256 bits) e mostrá-la **uma única vez** no terminal (texto + QR ASCII);
-3. imprimir a disponibilidade do Telegram ("não configurado — rode /parear").
+2. subir o **portão** — sem credencial, `/api` e a UI respondem `401`;
+3. deixar o **Telegram** disponível para configurar depois ("não configurado").
 
-Exemplo de linha de arranque:
+## Passo 2.5 — Obter a senha do portão (uma única vez)
 
-```console
-$ dsh web
-[guarded-bot] senha gerada (aparece UMA vez): K7QF-2M9X-...-4TZP
-[guarded-bot] bind 127.0.0.1:3080 — OK
-[guarded-bot] telegram: não configurado — rode /parear <código> no bot
+A senha do portão **não depende do Telegram** e é mostrada pelo CLI de
+onboarding, não pelo boot:
+
+```sh
+dsh-guard-setup
 ```
 
-> A senha é mostrada no **terminal local**. Se a perderes, não há reposição pela rede: a entrega é local (`docs/ONBOARDING-TELEGRAM.md`).
+Na primeira execução ele gera a **senha** (CSPRNG, 256 bits) e mostra-a **uma
+única vez**, em texto agrupado e em QR ASCII — mesmo que ainda não haja bot do
+Telegram configurado (o estado do Telegram é o passo seguinte, não um
+pré-requisito da senha). Correr outra vez não regenera nada (`hasSecret` guard).
+
+Exemplo de saída:
+
+```console
+$ dsh-guard-setup
+Esta é a sua senha de acesso. Ela aparece UMA única vez e não fica em lado
+nenhum em claro — em disco guarda-se apenas uma impressão digital dela.
+Aponte a câmara ao quadrado para a levar para o telemóvel.
+
+MJDN-2GVY-KP7S-<...>-4TZP
+
+█▀▀▀▀▀█ █ ... (QR ASCII)
+...
+Falta criar o bot no Telegram.
+Ainda não há nenhum bot do Telegram ligado a esta máquina. ...
+```
+
+> A senha é mostrada no **terminal local**. Se a perderes, não há reposição pela rede: a entrega é local (`docs/ONBOARDING-TELEGRAM.md`) e a rotação (`/rotacionar` no bot ou o painel) gera outra e fecha as sessões abertas.
 
 ## Passo 3 — Verificar que o portão está ativo
 

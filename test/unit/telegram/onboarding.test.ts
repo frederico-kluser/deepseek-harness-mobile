@@ -588,6 +588,45 @@ describe('TG-061: formato invalido e recusado antes de qualquer chamada de rede'
     }
   })
 
+  it('SEM_TOKEN — a senha do portão é provisionada e mostrada UMA vez (independente do Telegram)', async () => {
+    const bancada = montarBancada({
+      // Sem token não pode haver rede nenhuma: se `principal()` chamar a sonda
+      // sem `secrets.env`, isto rebenta o teste em vez de mascarar o bug.
+      getMe: async () => {
+        throw new Error('rede não pode ser chamada sem token')
+      },
+      getUpdates: async () => ({ ok: true, updates: [] }),
+    })
+    try {
+      // Fluxo default num SEM_TOKEN continua a ser "falta um passo" (exit 3),
+      // mas a senha do portão HTTP é provisionada e mostrada MESMO ASSIM —
+      // INSTALL.md Passo 4: o portão funciona só com a senha, sem Telegram.
+      assert.equal(await principal([], bancada.deps), 3)
+      const saida = bancada.saida()
+      assert.ok(
+        saida.includes('Esta é a sua senha de acesso'),
+        'a senha precisa de ser mostrada na 1ª execução, sem bot configurado',
+      )
+      assert.ok(
+        saida.includes('Falta criar o bot no Telegram'),
+        'o próximo passo do Telegram continua a ser anunciado depois da senha',
+      )
+      const digest1 = bancada.estado().secretDigest
+      assert.equal(typeof digest1, 'string', 'o digest da senha tem de ficar em disco')
+      assert.ok((digest1 as string).length >= 40, 'digest não-trivial persistido')
+
+      // Idempotência (TG-067): a 2ª execução não regenera senha nem digest.
+      assert.equal(await principal([], bancada.deps), 3)
+      assert.ok(
+        bancada.saida().includes('já tinha sido gerada e é mostrada uma única vez'),
+        'a 2ª execução avisa que a senha já tinha sido mostrada',
+      )
+      assert.equal(bancada.estado().secretDigest, digest1, 'digest inalterado na 2ª execução')
+    } finally {
+      bancada.limpar()
+    }
+  })
+
   it('cada uma das oito formas erradas continua a nao chegar a rede', async () => {
     const errados = [
       'semdoispontos',
@@ -935,7 +974,7 @@ function ambienteLimpo(raiz: string): NodeJS.ProcessEnv {
 }
 
 describe('TG-067: a ferramenta e idempotente (executada de verdade)', () => {
-  it('sem token, guia o passo em falta, sai 3 e NAO escreve estado nenhum', async () => {
+  it('sem token: provisiona a senha do portão (1ª vez), guia o passo em falta, sai 3 e não toca no Telegram', async () => {
     const temp = makeTempStateDir()
     try {
       const env = ambienteLimpo(temp.path)
@@ -952,18 +991,25 @@ describe('TG-067: a ferramenta e idempotente (executada de verdade)', () => {
       assert.equal(codigo, 3, 'falta um passo => 3')
       assert.ok(saida.includes('/newbot'), saida)
 
-      // Nao ha `state.json`: a execucao por omissao e SO DE LEITURA.
+      // A senha do portão é provisionada na 1ª execução, SEM depender do
+      // Telegram (INSTALL.md Passo 4): o `state.json` nasce com o digest.
+      assert.ok(saida.includes('Esta é a sua senha de acesso'), 'a senha aparece mesmo sem bot')
       const estado = join(temp.path, 'guarded-bot', 'state.json')
-      assert.throws(() => statSync(estado), /ENOENT/u)
+      const estadoLido = JSON.parse(readFileSync(estado, 'utf8')) as Record<string, unknown>
+      assert.equal(typeof estadoLido.secretDigest, 'string', 'digest da senha persistido')
 
-      // E o diretorio de estado nasce 0700.
+      // O que NÃO é escrito: nada do Telegram (nem secrets.env, nem pairing).
+      assert.throws(() => statSync(join(temp.path, 'guarded-bot', 'secrets.env')), /ENOENT/u)
+      assert.equal(estadoLido.pairing, undefined)
+
+      // E o diretório de estado nasce 0700.
       assert.equal(statSync(join(temp.path, 'guarded-bot')).mode & 0o777, 0o700)
     } finally {
       temp.cleanup()
     }
   })
 
-  it('correr duas vezes da exatamente a mesma saida — nada se acumula', async () => {
+  it('correr duas vezes: a senha aparece UMA vez; o passo do Telegram não se acumula', async () => {
     const temp = makeTempStateDir()
     try {
       const env = ambienteLimpo(temp.path)
@@ -976,8 +1022,16 @@ describe('TG-067: a ferramenta e idempotente (executada de verdade)', () => {
       }
       const primeira = await correr()
       const segunda = await correr()
-      assert.equal(primeira, segunda)
-      assert.ok(primeira.length > 0)
+      assert.ok(primeira.includes('Esta é a sua senha de acesso'), '1ª execução mostra a senha')
+      assert.ok(
+        segunda.includes('já tinha sido gerada e é mostrada uma única vez'),
+        '2ª execução não regenera a senha',
+      )
+      assert.ok(!/[▀▄█]/u.test(segunda), 'o QR não se repete na 2ª execução')
+      // O passo seguinte do Telegram é idêntico nas duas execuções (idempotente).
+      const passo = (s: string): string => s.slice(s.indexOf('Falta criar o bot no Telegram'))
+      assert.ok(passo(primeira).length > 0 && passo(segunda).length > 0, 'o passo existe nas duas')
+      assert.equal(passo(primeira), passo(segunda), 'o texto do próximo passo não se acumula')
     } finally {
       temp.cleanup()
     }
