@@ -8,26 +8,22 @@
  * Toda a lógica de negócio/servidor continua no backend; o client é SÓ UI +
  * fetch + CSRF.
  *
- * O QUE O PAINEL MOSTRA (6 blocos):
- *   1. Estado "configurado?" — chip (configurado / não configurado / env manda),
- *      consumindo `GET /token-state` + `GET /telegram`.
- *   2. "Como criar o bot" — cartão passo-a-passo do @BotFather, visível só no
- *      estado NÃO configurado (antes do campo de token), para o utilizador saber
- *      como gerar o token novo.
- *   3. Formulário de token — `type="password"` com toggle, `POST /token` com
- *      CSRF, e os estados de resposta renderizados DENTRO da aba (nunca alert).
- *   4. Instruções + marcador do bot — cartão com passos copiáveis (`/parear
- *      <código>` + comandos) e badge ONLINE/OFFLINE com `motivo`.
- *   5. "Privacidade — só para você" (quando configurado) — consulta o Telegram
- *      AO VIVO (`GET /api/privacidade` → getMe real) para decidir a descoberta:
- *      `@handle` presente → encontrável na busca (guia a remoção do username no
- *      @BotFather); `handle:null` → badge verde "Não encontrável na busca ✓"
- *      (SÓ quando o getMe confirmou sem username); `ok:false` → estado neutro
- *      honesto + botão "Verificar de novo" (nunca um verde mentiroso). Liga a
- *      re-checagem AO montar e a cada refresh (~15s).
- *   6. Métricas de acesso — `GET /access`: KPIs (conexões ativas, sessões
- *      vivas), lista de sessões vivas (userAgent→device, tempos relativos, ip
- *      só quando `ipConfiavel`), refresh manual + automático a cada ~15s.
+ * O QUE O PAINEL MOSTRA (uma TRILHA de 3 checkpoints na mesma tela — só o
+ * passo atual fica aberto; os concluídos colapsam em `✓`):
+ *   1. "Passo 1 de 3 · Criar o bot" — sem token: o formulário do token
+ *      (`POST /token` com CSRF) + `<details>` "Como criar o bot do zero"
+ *      (@BotFather); erro de token com a ação "Revisar token".
+ *   2. "Passo 2 de 3 · Parear" — configurado e NÃO pareado: CTA "Gerar código",
+ *      código de 6 dígitos em caixa monospace espaçada + "Copiar", countdown
+ *      `expira em m:ss` + "Gerar novo", uma instrução `/parear`, e o status ao
+ *      vivo "Aguardando…" → "✓ Pareado".
+ *   3. "Passo 3 de 3 · Usar" — pareado: comandos essenciais (3), `<details>`
+ *      "Avançado" (trocar token / desfazer parear com confirmação / todos os
+ *      comandos), `<details>` "E minha conversa?" (privacidade AO VIVO —
+ *      green "não encontrável" só com getMe real) e o bloco "Uso recente"
+ *      (métricas, só aqui).
+ * O estado baseia-se em `GET /token-state` + `GET /telegram` + `GET /access` +
+ * `GET /pair-state` (polling de ~15s; sondagem de pareamento a cada ~3s).
  *
  * SEGURANÇA: o token/segredo NUNCA entra neste bundle. O `@handle` (devolvido
  * pela rota quando o `getMe` o confirmou) é a única informação do bot aqui — e
@@ -335,14 +331,6 @@ function chipDoEstado(token: EstadoDoToken | null): EstadoChip {
   return { tom: 'neutro', rotulo: 'Não configurado' }
 }
 
-/** O rótulo do marcador do bot (ONLINE/OFFLINE + motivo). */
-function rotuloDoBot(telegrama: EstadoTelegrama | null): string {
-  if (telegrama === null) return 'verificando…'
-  if (telegrama.online) return telegrama.handle ? `Bot ONLINE · ${telegrama.handle}` : 'Bot ONLINE'
-  const motivo = telegrama.motivo === 'sem-chave' ? 'sem chave' : telegrama.motivo === 'sem-pareamento' ? 'sem pareamento' : undefined
-  return motivo ? `Bot OFFLINE · ${motivo}` : 'Bot OFFLINE'
-}
-
 /* ========================================================================== */
 /* Comandos de uso mostrados no cartão "Instruções"                           */
 /* ========================================================================== */
@@ -364,6 +352,18 @@ const COMANDOS_DE_USO: readonly BlocoDeComando[] = [
   { comando: '/emergencia', dica: 'derrubar tudo de imediato' },
 ]
 
+/**
+ * Os COMANDOS ESSENCIAIS do checkpoint 3 (pareado) — 3 linhas, uma ideia cada.
+ * Os demais (`/ligar /desligar /acessar /rotacionar`) ficam nos botões do
+ * cartão `/menu` do bot, não repetidos aqui — reduz a lista e o ruído (o
+ * cartão `/menu` é renderizado do lado do bot pela Onda 3).
+ */
+const COMANDOS_ESSENCIAIS: readonly BlocoDeComando[] = [
+  { comando: '/menu', dica: 'abrir o painel de controlo do bot' },
+  { comando: '/status', dica: 'ver o estado do túnel' },
+  { comando: '/emergencia', dica: 'derrubar tudo de imediato' },
+]
+
 /* ========================================================================== */
 /* Os passos do @BotFather (cartão "Como criar o bot", só não-configurado)    */
 /* ========================================================================== */
@@ -379,7 +379,7 @@ const PASSOS_BOTFATHER: readonly string[] = [
   'Dê um nome para o bot (ex.: "Meu dsh-messenger").',
   'Dê um username que termine em `bot` (5–32 caracteres, A-Za-z0-9_, ex.: `meu_dsh_messenger_bot`).',
   'O BotFather responde com um token no formato `<número>:<segredo>` — copie-o.',
-  'Cole o token no campo abaixo e clique em "Validar e configurar".',
+  'Cole o token no campo abaixo e clique em "Salvar bot".',
 ]
 
 /** Nota curta mostrada no fim do cartão do @BotFather. */
@@ -421,16 +421,6 @@ function Chip({ chip }: { readonly chip: EstadoChip }): React.ReactNode {
   )
 }
 
-/** O marcador ONLINE/OFFLINE do bot. */
-function MarcadorDoBot({ telegrama }: { readonly telegrama: EstadoTelegrama | null }): React.ReactNode {
-  const online = telegrama?.online === true
-  const classe = telegrama === null ? '' : online ? 'guard-chip-success' : 'guard-chip-warning'
-  return h('span', { className: `guard-chip ${classe}` },
-    h('span', { className: 'guard-chip-dot' }),
-    rotuloDoBot(telegrama),
-  )
-}
-
 /** Um comando copiável (monospace + botão "copiar" com feedback). */
 function LinhaDeComando({ bloco }: { readonly bloco: BlocoDeComando }): React.ReactNode {
   const [copiado, setCopiado] = useState(false)
@@ -446,24 +436,95 @@ function LinhaDeComando({ bloco }: { readonly bloco: BlocoDeComando }): React.Re
   return h('div', { className: 'guard-cmd-row' },
     h('code', { className: 'guard-code' }, bloco.comando),
     h('button', { type: 'button', className: 'guard-btn-sm', onClick: () => copiar(), 'data-guard-copy': '' },
-      copiado ? 'copiado' : 'copiar'),
+      copiado ? 'copiado' : 'Copiar'),
     bloco.dica ? h('span', { className: 'guard-muted' }, bloco.dica) : null,
   )
 }
 
 /**
- * O cartão "Como criar o bot" — passo-a-passo do @BotFather. Renderizado só no
- * estado NÃO configurado, ANTES do campo de token, para o utilizador não
- * precisar de procurar por fora como criar o bot.
+ * Um `<details>` progressivo-disclosure: o resumo verb-first e o corpo fica
+ * dobrado até abrir. Usado no passo 1 ("Como criar o bot do zero"), no passo 3
+ * ("E minha conversa?" e "Avançado") — regra painel: os detalhes não atravancam
+ * o CTA único do estado.
  */
-function CartaoBotFather(): React.ReactNode {
-  return h('div', { className: 'guard-card' },
-    h('span', { className: 'guard-card-title' }, 'Como criar o bot'),
-    h('ol', { className: 'guard-botfather-steps' },
-      PASSOS_BOTFATHER.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
+function Detalhes({
+  resumo,
+  aberto,
+  aoAlternar,
+  children,
+}: {
+  readonly resumo: React.ReactNode
+  readonly aberto?: boolean
+  readonly aoAlternar?: (aberto: boolean) => void
+  readonly children: React.ReactNode
+}): React.ReactNode {
+  const props: Record<string, unknown> = {}
+  if (aberto !== undefined) props['open'] = aberto
+  if (aoAlternar !== undefined) {
+    props['onToggle'] = (e: React.SyntheticEvent<HTMLDetailsElement>) => aoAlternar((e.target as HTMLDetailsElement).open)
+  }
+  return h('details', { className: 'guard-details', ...props },
+    h('summary', { className: 'guard-details-summary', 'data-guard-detail': '' }, resumo),
+    h('div', { className: 'guard-details-body' }, children),
+  )
+}
+
+/**
+ * O cabeçalho de um checkpoint aberto: "Passo N de 3 · <titulo>", com ✓ à frente
+ * quando concluído. É O título do passo atual (só ele fica aberto).
+ */
+function CabecalhoPasso({
+  indice,
+  titulo,
+  concluido,
+}: {
+  readonly indice: number
+  readonly titulo: string
+  readonly concluido: boolean
+}): React.ReactNode {
+  return h('span', { className: 'guard-card-title' },
+    concluido ? h('span', { className: 'guard-step-check', 'aria-hidden': 'true' }, '✓') : null,
+    `Passo ${indice} de 3 · ${titulo}`,
+  )
+}
+
+/**
+ * Um checkpoint CONCLUÍDO, colapsado (só título + resumo + um text-link de
+ * acção, ex.: "Trocar") — a atenção vai ao único passo aberto. O `<indice>` e
+ * o `<titulo>` não entram na linha fina (só o `✓` + resumo), para o painel
+ * continuar escaneável.
+ */
+function PassoConcluido({
+  resumo,
+  aoAcao,
+  rotuloAcao,
+}: {
+  readonly resumo: string
+  readonly aoAcao?: () => void
+  readonly rotuloAcao?: string
+}): React.ReactNode {
+  return h('div', { className: 'guard-card guard-step-done' },
+    h('span', { className: 'guard-card-title' },
+      h('span', { className: 'guard-step-check', 'aria-hidden': 'true' }, '✓'),
+      resumo,
     ),
-    paragrafo('guard-botfather-note', NOTA_BOTFATHER),
-    paragrafo('guard-privacy-hint', NOTA_BOTFATHER_PRIVADO),
+    aoAcao !== undefined && rotuloAcao !== undefined
+      ? h('div', { className: 'guard-step-done-actions' },
+          h('button', { type: 'button', className: 'guard-link', onClick: aoAcao }, rotuloAcao),
+        )
+      : null,
+  )
+}
+
+/**
+ * O conteúdo dobrado "Como criar o bot do zero" — os passos numerados do
+ * @BotFather (progressive disclosure: não atravancam o campo de token).
+ */
+function BotaoBotFatherDetalhado(): React.ReactNode {
+  return h('ol', { className: 'guard-botfather-steps' },
+    PASSOS_BOTFATHER.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
+    h('li', { className: 'guard-botfather-step' }, NOTA_BOTFATHER),
+    h('li', { className: 'guard-botfather-step' }, NOTA_BOTFATHER_PRIVADO),
   )
 }
 
@@ -543,7 +604,7 @@ function CartaoPrivacidade({
             ),
           )
 
-  return h('div', { className: 'guard-card' },
+  return h('div', { className: 'guard-privacy-card' },
     titulo,
     corpo,
     h('div', { className: 'guard-privacy-block' },
@@ -555,102 +616,136 @@ function CartaoPrivacidade({
   )
 }
 
+/**
+ * O cartão "Privacidade" migra para o PASS0 3, dobrado num `<details>`
+ * "E minha conversa?" — 1 linha de risco + 1 linha do que faz (texto EXATO do
+ * contrato §3), seguido do cartão AO VIVO (getMe real decide o verde de
+ * "não encontrável" — NUNCA um verde mentiroso) e das garantias deny-by-default.
+ */
+const TEXTO_PRIVACIDADE_CKPT3 =
+  'As tuas conversas com o bot ficam neste aparelho e no Telegram, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.'
+
+function CartaoPrivacidadeCkpt3(props: {
+  readonly estado: EstadoPrivacidade | null
+  readonly aoVerificar: () => void
+}): React.ReactNode {
+  return h(Detalhes, { resumo: 'E minha conversa?' },
+    paragrafo('guard-intro', TEXTO_PRIVACIDADE_CKPT3),
+    h(CartaoPrivacidade, { estado: props.estado, aoVerificar: props.aoVerificar }),
+  )
+}
+
 /* ========================================================================== */
 /* O pareamento VIA PAINEL                                                    */
 /* ========================================================================== */
 
 /**
- * O cartão "Parear pelo Telegram" — mostra o botão quando sem pareamento, o
- * CÓDIGO DE 6 DÍGITOS em destaque + a instrução `/parear <código>` no bot, a
- * contagem regressiva e o estado "Aguardando pareamento…" enquanto o dono
- * digita. NUNCA `console.log` do código: ele só vive neste state e no DOM.
+ * O corpo do Passo 2 "Parear" — mostra o CTA "Gerar código" quando sem
+ * pareamento, o CÓDIGO DE 6 DÍGITOS em caixa monospace espaçada + "Copiar", a
+ * contagem `expira em m:ss` + "Gerar novo" e o status ao vivo "Aguardando…" →
+ * "✓ Pareado" enquanto o dono digita. NUNCA `console.log` do código: ele só
+ * vive neste state e no DOM.
  */
 function CartaoParear(props: {
   readonly handle?: string
   readonly estado: EstadoDePareamentoUi
+  readonly pareado: boolean
   readonly agora: number
   readonly aoGerar: () => void
   readonly aoNovoCodigo: () => void
 }): React.ReactNode {
-  const destino = props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot'
+  const [copiado, setCopiado] = useState(false)
 
   switch (props.estado.fase) {
     case 'gerando':
-      return h('div', { className: 'guard-card' },
-        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
-        paragrafo('guard-intro', 'A gerar um código de pareamento…'),
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+        paragrafo('guard-intro', 'A gerar o código…'),
       )
     case 'codigo': {
       const contagem = formatarContagem(props.estado.expiraEm, props.agora)
       const expirou = props.agora >= props.estado.expiraEm
       if (expirou) {
-        return h('div', { className: 'guard-card' },
-          h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
-          paragrafo('guard-error', 'O código expirou. Gere um novo para tentar de novo.'),
-          h('div', { className: 'guard-actions' },
-            h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoNovoCodigo },
-              'Gerar novo código'),
-          ),
+        return h('div', { className: 'guard-actions guard-col' },
+          paragrafo('guard-error', 'Este código expirou. Gera um novo.'),
+          h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoNovoCodigo },
+            'Gerar novo código'),
         )
       }
-      return h('div', { className: 'guard-card' },
-        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
-        paragrafo('guard-intro',
-          `Envie na conversa com ${destino}:`),
+      const digitoEspacado = espacarCodigo(props.estado.codigo)
+      const copiar = async (): Promise<void> => {
+        try {
+          await navigator.clipboard.writeText(props.estado.codigo)
+          setCopiado(true)
+          window.setTimeout(() => setCopiado(false), 1200)
+        } catch {
+          setCopiado(false)
+        }
+      }
+      return h('div', { className: 'guard-pair-body' },
+        paragrafo('guard-intro', 'No Telegram, envia:'),
         h('div', { className: 'guard-pair-step' },
-          h('code', { className: 'guard-pair-code' }, props.estado.codigo),
+          h('code', { className: 'guard-pair-code' }, digitoEspacado),
+          h('button', { type: 'button', className: 'guard-btn-sm', onClick: () => void copiar(), 'data-guard-copy-code': '' },
+            copiado ? 'copiado' : 'Copiar'),
         ),
-        paragrafo('guard-intro',
-          'No Telegram, escreva o comando seguido do código acima.'),
+        paragrafo('guard-code-line',
+          `No Telegram, envia: /parear ${props.estado.codigo} no ${props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot'}`),
+        h('div', { className: 'guard-pair-countdown' },
+          h('span', { className: 'guard-muted' }, `expira em ${contagem}`),
+          h('button', { type: 'button', className: 'guard-btn-sm', onClick: props.aoNovoCodigo }, 'Gerar novo'),
+        ),
         h('div', { className: 'guard-pair-status' },
-          h('span', { className: 'guard-chip' },
-            h('span', { className: 'guard-chip-dot' }),
-            `Aguardando pareamento… · ${contagem}`,
-          ),
+          props.pareado
+            ? h('span', { className: 'guard-chip guard-chip-success' },
+                h('span', { className: 'guard-chip-dot' }),
+                '✓ Pareado',
+              )
+            : h('span', { className: 'guard-chip' },
+                h('span', { className: 'guard-chip-dot' }),
+                'Aguardando…',
+              ),
         ),
       )
     }
     case 'pareado':
-      return h('div', { className: 'guard-card' },
-        h('span', { className: 'guard-card-title' },
-          'Pareado',
-          h('span', { className: 'guard-chip guard-chip-success' },
-            h('span', { className: 'guard-chip-dot' }),
-            'Pareado ✓',
-          ),
+      return h('div', { className: 'guard-pair-body' },
+        h('span', { className: 'guard-chip guard-chip-success' },
+          h('span', { className: 'guard-chip-dot' }),
+          '✓ Pareado',
         ),
-        paragrafo('guard-intro', 'Este navegador passou a ser autorizado a comandar o bot. Use os comandos na conversa com o bot.'),
       )
     case 'expirou':
-      return h('div', { className: 'guard-card' },
-        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
-        paragrafo('guard-error', 'O código expirou. Gere um novo para tentar de novo.'),
-        h('div', { className: 'guard-actions' },
-          h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoNovoCodigo },
-            'Gerar novo código'),
-        ),
+      return h('div', { className: 'guard-actions guard-col' },
+        paragrafo('guard-error', 'Este código expirou. Gera um novo.'),
+        h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoNovoCodigo },
+          'Gerar novo código'),
       )
     case 'erro':
-      return h('div', { className: 'guard-card' },
-        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+      return h('div', { className: 'guard-actions guard-col' },
         paragrafo('guard-error', props.estado.mensagem),
-        h('div', { className: 'guard-actions' },
-          h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: props.aoNovoCodigo },
-            'Tentar de novo'),
-        ),
+        h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: props.aoNovoCodigo },
+          'Tentar de novo'),
       )
     default:
-      // ocioso: botão "Parear pelo Telegram"
-      return h('div', { className: 'guard-card' },
-        h('span', { className: 'guard-card-title' }, 'Parear pelo Telegram'),
+      // ocioso: CTA primário "Gerar código"
+      return h('div', { className: 'guard-pair-body' },
         paragrafo('guard-intro',
-          'Pareie este painel com o bot para o poder comandar a partir daqui. Gera um código de 6 dígitos que só aparece neste ecrã.'),
+          'Este painel gera um código de 6 dígitos só para ti. Tu envias esse código para o bot.'),
         h('div', { className: 'guard-actions' },
           h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: props.aoGerar },
-            'Parear pelo Telegram'),
+            'Gerar código'),
         ),
       )
   }
+}
+
+/**
+ * Espaça o código de 6 dígitos para exibição (`123456` → `1 2 3 4 5 6`) — a
+ * caixa monospace espaçada ajuda a ler/copiar. O botão "Copiar" copia o código
+ * CRU (sem espaços), porque o `/parear` espera os 6 dígitos juntos.
+ */
+function espacarCodigo(codigo: string): string {
+  return codigo.split('').join(' ')
 }
 
 /* ========================================================================== */
@@ -663,7 +758,6 @@ function CartaoParear(props: {
  */
 function TelegramGuardSection(): React.ReactNode {
   const [token, setToken] = useState<EstadoDoToken | null>(null)
-  const [telegrama, setTelegrama] = useState<EstadoTelegrama | null>(null)
   const [acesso, setAcesso] = useState<EstadoDeAcesso | null>(null)
   const [acessoFalhou, setAcessoFalhou] = useState(false)
   const [tokenErro, setTokenErro] = useState<string | null>(null)
@@ -676,6 +770,12 @@ function TelegramGuardSection(): React.ReactNode {
   const [mostrarToken, setMostrarToken] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [feedback, setFeedback] = useState<FeedbackDeForm | null>(null)
+  // "Trocar" (checkpoint 2/3) volta ao Passo 1 com o formulário de token aberto.
+  const [trocarTokenAberto, setTrocarTokenAberto] = useState(false)
+  const inputTokenRef = useRef<HTMLInputElement | null>(null)
+  // Confirmação destrutiva (checkpoint 3, Avançado): 'trocar' (token) ou
+  // 'desfazer' (parear). Textos exatos do contrato/section de confirmações.
+  const [confirmacao, setConfirmacao] = useState<'trocar' | 'desfazer' | null>(null)
 
   // O fluxo do PAREAMENTO VIA PAINEL.
   const [par, setPar] = useState<EstadoDePareamentoUi>({ fase: 'ocioso' })
@@ -702,10 +802,9 @@ function TelegramGuardSection(): React.ReactNode {
     try {
       const dados = await apiGet<EstadoTelegrama>('/telegram')
       if (vivo.current) {
-        setTelegrama(dados)
-        // O bot ONLINE = token configurado E pareamento feito (a fonte única
-        // do marcador). Se já está pareado (ex.: via CLI, ou por outra aba),
-        // o painel reflete logo "Pareado" e NUNCA mostra o botão de parear.
+        // O bot ONLINE = token configurado E pareamento feito. Se já está
+        // pareado (ex.: via CLI, ou por outra aba), o painel reflete logo
+        // "Pareado" e NUNCA mostra o botão de parear.
         if (dados.online) {
           setPareado(true)
           setPar({ fase: 'pareado' })
@@ -889,6 +988,7 @@ function TelegramGuardSection(): React.ReactNode {
         const handle = typeof r.dados.handle === 'string' && r.dados.handle.length > 0 ? r.dados.handle : null
         setValor('')
         setMostrarToken(false)
+        setTrocarTokenAberto(false)
         setFeedback({ tipo: 'ok', texto: handle ? `Configurado ✓ @${handle}` : 'Configurado ✓' })
         await recarregarTudo()
         // Token recém-aplicado: força a checagem AO VIVO de descoberta (contorna
@@ -902,7 +1002,7 @@ function TelegramGuardSection(): React.ReactNode {
           tipo: 'erro',
           texto:
             erro === 'formato-invalido'
-              ? 'Formato inválido — espera-se uma chave <número>:<segredo> do @BotFather.'
+              ? 'Formato errado. O token vem assim: 123456:aaaa… (número, dois pontos, segredo).'
               : 'Token vazio — cole a chave antes de validar.',
         })
         break
@@ -922,7 +1022,7 @@ function TelegramGuardSection(): React.ReactNode {
       case 422: {
         setFeedback({
           tipo: 'erro',
-          texto: 'O Telegram rejeitou o token — confira no @BotFather (/newbot → revogue e gere de novo).',
+          texto: 'O Telegram não aceitou este token. Veja no @BotFather (/newbot) e tira outro.',
         })
         break
       }
@@ -931,23 +1031,203 @@ function TelegramGuardSection(): React.ReactNode {
           tipo: 'erro',
           texto:
             r.status === 0
-              ? 'Rede falhou — verifique a ligação e tente de novo.'
+              ? 'Sem ligação ao Telegram. Verifica a rede e tenta de novo.'
               : 'O servidor não respondeu — recarregue a página e tente de novo.',
         })
       }
     }
   }
 
+  // Ação "Revisar token": limpa o erro e foca o campo para o dono corrigir.
+  const revisarToken = React.useCallback((): void => {
+    setFeedback(null)
+    setTrocarTokenAberto(true)
+    // Focus no render seguinte.
+    requestAnimationFrame(() => inputTokenRef.current?.focus())
+  }, [])
+
+  // "Trocar" (collapsed) / "Trocar o token" (Avançado): volta ao Passo 1 com o
+  // formulário de token aberto.
+  const abrirTrocar = React.useCallback((): void => {
+    setConfirmacao(null)
+    setFeedback(null)
+    setTrocarTokenAberto(true)
+  }, [])
+
+  // Confirma a ação destrutiva do Avançado. Para "trocar", volta ao formulário
+  // do Passo 1. Para "desfazer", o parear só se reabre com `--reset-pairing` na
+  // MÁQUINA (PAIR-008) — o painel não tem rota de desfazer (o texto guia, não
+  // força); a confirmação fecha e o copy já disse o que acontece.
+  const confirmar = React.useCallback((): void => {
+    if (confirmacao === 'trocar') {
+      abrirTrocar()
+      return
+    }
+    // 'desfazer': sem rota no painel — fecha a confirmação (orientação honesta).
+    setConfirmacao(null)
+  }, [confirmacao, abrirTrocar])
+
   const chip = chipDoEstado(token)
   const configurado = token?.configurado === true
   const handleChave = token?.handle
+  const rotuloHandle = handleChave && handleChave.length > 0 ? `@${handleChave}` : 'o bot'
+  const passo1Aberto = !configurado || trocarTokenAberto
+
+  // --- Passo 1 ✻ formulário de token (aberto quando sem token ou ao "Trocar") ---
+  const cartaoToken = h('div', { className: 'guard-card' },
+    h(CabecalhoPasso, { indice: 1, titulo: 'Criar o bot', concluido: configurado }),
+    h(CartaoTokenForm, {
+      valor,
+      mostrarToken,
+      enviando,
+      feedback,
+      inputRef: inputTokenRef,
+      aoMudar: setValor,
+      aoAlternarMostrar: () => setMostrarToken((v) => !v),
+      aoEnviar: enviarToken,
+      aoRevisar: revisarToken,
+    }),
+    h(Detalhes, { resumo: 'Como criar o bot do zero' }, h(BotaoBotFatherDetalhado)),
+    !configurado ? paragrafo('guard-step-hint', 'Depois disto, avanças para o Passo 2: parear.') : null,
+  )
+
+  // --- Passo 1 ✻ colapsado (concluído) quando configurado ---
+  const passo1Concluido = configurado && !trocarTokenAberto
+    ? h(PassoConcluido, {
+        resumo: `Bot ${rotuloHandle} conectado`,
+        aoAcao: abrirTrocar,
+        rotuloAcao: 'Trocar',
+      })
+    : null
+
+  // --- Passo 2 ✻ Parear (configurado e NÃO pareado) ---
+  const passo2 = configurado && !pareado
+    ? h('div', { className: 'guard-card' },
+        h(CabecalhoPasso, { indice: 2, titulo: 'Parear', concluido: false }),
+        h(CartaoParear, {
+          handle: handleChave ?? undefined,
+          estado: par,
+          pareado,
+          agora,
+          aoGerar: () => void gerarCodigo(),
+          aoNovoCodigo: () => novoCodigo(),
+        }),
+      )
+    : null
+
+  // --- Passo 2 ✻ "✓ Pareado" (linha fina) quando pareado ---
+  const passo2Concluido = pareado
+    ? h('div', { className: 'guard-card guard-step-done' },
+        h('span', { className: 'guard-card-title' },
+          h('span', { className: 'guard-step-check', 'aria-hidden': 'true' }, '✓'),
+          'Pareado',
+        ),
+        paragrafo('guard-intro', 'Pareado! Este painel agora controla o bot. Vai ao Passo 3 para começar.'),
+      )
+    : null
+
+  // --- Passo 3 ✻ Usar (pareado) ---
+  const passo3 = pareado
+    ? h('div', { className: 'guard-card' },
+        h(CabecalhoPasso, { indice: 3, titulo: 'Usar', concluido: false }),
+        // Comandos essenciais — 3 linhas, uma ideia cada.
+        h('span', { className: 'guard-block-title' }, 'Comandos essenciais'),
+        h('ul', { className: 'guard-steps' },
+          COMANDOS_ESSENCIAIS.map((bloco, i) =>
+            h('li', { className: 'guard-step', key: i }, h(LinhaDeComando, { bloco })),
+          ),
+        ),
+        // Avançado (dobrado): trocar token / desfazer parear / todos os comandos.
+        h(Detalhes, { resumo: 'Avançado' },
+          h('ul', { className: 'guard-links' },
+            h('li', null,
+              h('button', { type: 'button', className: 'guard-link', onClick: () => setConfirmacao('trocar') },
+                'Trocar o token'),
+            ),
+            h('li', null,
+              h('button', { type: 'button', className: 'guard-link', onClick: () => setConfirmacao('desfazer') },
+                'Desfazer parear'),
+            ),
+          ),
+          h('span', { className: 'guard-block-title' }, 'Ver todos os comandos'),
+          h('ul', { className: 'guard-steps' },
+            COMANDOS_DE_USO.map((bloco, i) =>
+              h('li', { className: 'guard-step', key: i }, h(LinhaDeComando, { bloco })),
+            ),
+          ),
+        ),
+        // E minha conversa? (privacidade, dobrada) — migrada do bloco solto.
+        h(CartaoPrivacidadeCkpt3, {
+          estado: privacidade,
+          aoVerificar: () => void buscarPrivacidade(true),
+        }),
+        // Uso recente (métricas) — SÓ aqui, enxuto, sem aviso IP a céu aberto.
+        h('div', { className: 'guard-metrics' },
+          h('div', { className: 'guard-card-title' },
+            'Uso recente',
+            h('button', {
+              type: 'button',
+              className: 'guard-btn-sm',
+              onClick: () => void recarregarTudo(),
+              'data-guard-refresh': '',
+            }, 'Atualizar'),
+          ),
+          h('div', { className: 'guard-kpis' },
+            h('div', { className: 'guard-kpi' },
+              h('span', { className: 'guard-kpi-value' }, String(acesso?.conexoesAtivas ?? '—')),
+              h('span', { className: 'guard-kpi-label' }, 'Conexões ativas'),
+            ),
+            h('div', { className: 'guard-kpi' },
+              h('span', { className: 'guard-kpi-value' }, String(acesso?.totalSessoes ?? '—')),
+              h('span', { className: 'guard-kpi-label' }, 'Sessões vivas'),
+            ),
+          ),
+          acessoFalhou && acesso === null
+            ? paragrafo('guard-error', 'não foi possível ler o acesso — servidor inacessível')
+            : null,
+          !acessoFalhou && acesso
+            ? h('ul', { className: 'guard-sessions' },
+                acesso.sessoes.length === 0
+                  ? h('li', { className: 'guard-session' },
+                      h('span', { className: 'guard-session-meta' }, 'Nenhuma sessão viva agora.'))
+                  : acesso.sessoes.map((s, i) => {
+                      const device = s.userAgent !== null ? normalizarUserAgent(s.userAgent) : 'Sessão de dispositivo'
+                      const criada = tempoRelativo(s.criadaEm, agora)
+                      const uso = tempoRelativo(s.ultimoUsoEm, agora)
+                      const identidade = encurtarIdentidade(s.hash)
+                      return h('li', { className: 'guard-session', key: i },
+                        h('span', { className: 'guard-session-id' }, identidade),
+                        h('div', { className: 'guard-session-body' },
+                          h('span', { className: 'guard-session-device' }, device),
+                          h('span', { className: 'guard-session-meta' }, `aberta ${criada} · usada ${uso}`),
+                        ),
+                        s.ip !== null
+                          ? h('span', { className: 'guard-session-ip' }, s.ip)
+                          : h('span', { className: 'guard-tag' }, 'IP não confiável'),
+                      )
+                    }),
+              )
+            : null,
+          paragrafo('guard-report-footer', 'Atualizado automaticamente a cada ~15 s enquanto a aba estiver aberta.'),
+        ),
+      )
+    : null
+
+  // --- Confirmação destrutiva (Avançado) --------------------------------
+  const caixaConfirmacao = confirmacao !== null
+    ? CartaoConfirmacao({
+        tipo: confirmacao,
+        aoConfirmar: confirmar,
+        aoCancelar: () => setConfirmacao(null),
+      })
+    : null
 
   return h('div', { className: 'guard-section' },
-    // --- Bloco de marca (logo do plugin) ----------------------------------
+    // --- Bloco de marca (logo do plugin) --------------------------------
     h('div', { className: 'guard-brand' },
       h('img', { className: 'guard-logo', src: logoUrl, alt: 'dsh-guard-messenger' }),
     ),
-    // --- Título + chip de estado ------------------------------------------
+    // --- Título + chip de estado ----------------------------------------
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
       h('h2', { className: 'guard-title', style: { margin: 0 } }, 'Telegram Guard'),
       h(Chip, { chip }),
@@ -955,143 +1235,93 @@ function TelegramGuardSection(): React.ReactNode {
     paragrafo('guard-intro', 'Acesso remoto ao Harness pelo Telegram — sem login no túnel.'),
     tokenErro ? paragrafo('guard-error', tokenErro) : null,
 
-    // --- Cartão "Como criar o bot" (só quando NÃO configurado) -------------
-    !configurado ? h(CartaoBotFather) : null,
+    // --- A TRILHA (só o passo atual aberto) -----------------------------
+    passo1Aberto ? cartaoToken : passo1Concluido,
+    passo2,
+    passo2Concluido,
+    passo3,
+    caixaConfirmacao,
+  )
+}
 
-    // --- Formulário de token ----------------------------------------------
-    h('div', { className: 'guard-card' },
-      h('span', { className: 'guard-card-title' }, 'Chave do bot'),
-      paragrafo('guard-intro', 'Cole o token que o @BotFather deu ao criar o bot. Fica no secrets.env desta máquina.'),
-      h('form', { className: 'guard-field', onSubmit: enviarToken },
-        h('label', { className: 'guard-field-label', htmlFor: 'guard-token-input' }, 'Token do bot (@BotFather)'),
-        h('div', { className: 'guard-input-wrap' },
-          h('input', {
-            id: 'guard-token-input',
-            className: 'guard-input',
-            type: mostrarToken ? 'text' : 'password',
-            value: valor,
-            autoComplete: 'off',
-            spellCheck: false,
-            placeholder: '1234567890:AAA…',
-            onChange: (e: React.ChangeEvent<HTMLInputElement>) => setValor(e.target.value),
-          }),
-          h('button', {
-            type: 'button',
-            className: 'guard-toggle',
-            'aria-label': mostrarToken ? 'Ocultar token' : 'Mostrar token',
-            onClick: () => setMostrarToken((v) => !v),
-          }, mostrarToken ? '🙈' : '👁'),
-        ),
-        h('div', { className: 'guard-actions' },
-          h('button', { type: 'submit', className: 'guard-btn guard-btn-primary', disabled: enviando },
-            enviando ? 'a validar…' : 'Validar e configurar'),
-        ),
-        feedback
-          ? h('p', {
-              className:
-                feedback.tipo === 'ok' ? 'guard-success-text' : feedback.tipo === 'erro' ? 'guard-error' : 'guard-notice',
-            }, feedback.texto)
-          : null,
-      ),
+/**
+ * O formulário do token (Passo 1). Um CTA primário ("Salvar bot"); erro com a
+ * ação "Revisar token" que limpa o feedback e foca o campo.
+ */
+function CartaoTokenForm(props: {
+  readonly valor: string
+  readonly mostrarToken: boolean
+  readonly enviando: boolean
+  readonly feedback: FeedbackDeForm | null
+  readonly inputRef: React.RefObject<HTMLInputElement | null>
+  readonly aoMudar: (v: string) => void
+  readonly aoAlternarMostrar: () => void
+  readonly aoEnviar: (e: React.FormEvent) => void
+  readonly aoRevisar: () => void
+}): React.ReactNode {
+  const mostraErro = props.feedback !== null && props.feedback.tipo === 'erro'
+  return h('form', { className: 'guard-field', onSubmit: props.aoEnviar },
+    paragrafo('guard-intro', 'Cole o token que o @BotFather te entregou ao criar o bot. Fica guardado seguro nesta máquina.'),
+    h('label', { className: 'guard-field-label', htmlFor: 'guard-token-input' }, 'Token do bot (@BotFather)'),
+    h('div', { className: 'guard-input-wrap' },
+      h('input', {
+        id: 'guard-token-input',
+        className: 'guard-input',
+        ref: props.inputRef,
+        type: props.mostrarToken ? 'text' : 'password',
+        value: props.valor,
+        autoComplete: 'off',
+        spellCheck: false,
+        placeholder: '1234567890:AAA…',
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => props.aoMudar(e.target.value),
+      }),
+      h('button', {
+        type: 'button',
+        className: 'guard-toggle',
+        'aria-label': props.mostrarToken ? 'Ocultar token' : 'Mostrar token',
+        onClick: props.aoAlternarMostrar,
+      }, props.mostrarToken ? '🙈' : '👁'),
     ),
-
-    // --- Cartão de pareamento VIA PAINEL (só quando configurado e NÃO pareado)
-    configurado && !pareado
-      ? h(CartaoParear, {
-          handle: handleChave ?? undefined,
-          estado: par,
-          agora,
-          aoGerar: () => void gerarCodigo(),
-          aoNovoCodigo: () => novoCodigo(),
-        })
-      : null,
-
-    // --- Cartão de instruções + marcador do bot ----------------------------
-    configurado
-      ? h('div', { className: 'guard-card' },
-          h('span', { className: 'guard-card-title' },
-            'Instruções',
-            h(MarcadorDoBot, { telegrama }),
-          ),
-          paragrafo('guard-intro',
-            handleChave && handleChave.length > 0
-              ? `O bot está associado a ${handleChave}. Pareie este navegador e use os comandos na conversa.`
-              : 'Pareie este navegador e use os comandos na conversa com o bot.'),
-          h('ul', { className: 'guard-steps' },
-            COMANDOS_DE_USO.map((bloco, i) =>
-              h('li', { className: 'guard-step', key: i },
-                h(LinhaDeComando, { bloco }),
-              ),
-            ),
-          ),
-        )
-      : null,
-
-    // --- Cartão "Privacidade" (só quando configurado) ----------------------
-    configurado
-      ? h(CartaoPrivacidade, {
-          estado: privacidade,
-          aoVerificar: () => void buscarPrivacidade(true),
-        })
-      : null,
-
-    // --- Métricas de acesso -------------------------------------------------
-    h('div', { className: 'guard-card' },
-      h('div', { className: 'guard-card-title' },
-        'Acesso agora',
-        h('button', {
-          type: 'button',
-          className: 'guard-btn-sm',
-          onClick: () => void recarregarTudo(),
-          'data-guard-refresh': '',
-        }, 'Atualizar'),
-      ),
-      h('div', { className: 'guard-kpis' },
-        h('div', { className: 'guard-kpi' },
-          h('span', { className: 'guard-kpi-value' }, String(acesso?.conexoesAtivas ?? '—')),
-          h('span', { className: 'guard-kpi-label' }, 'Conexões ativas'),
-        ),
-        h('div', { className: 'guard-kpi' },
-          h('span', { className: 'guard-kpi-value' }, String(acesso?.totalSessoes ?? '—')),
-          h('span', { className: 'guard-kpi-label' }, 'Sessões vivas'),
-        ),
-      ),
-      acessoFalhou && acesso === null
-        ? paragrafo('guard-error', 'não foi possível ler o acesso — servidor inacessível')
+    h('div', { className: 'guard-actions' },
+      h('button', { type: 'submit', className: 'guard-btn guard-btn-primary', disabled: props.enviando },
+        props.enviando ? 'A conectar ao Telegram…' : 'Salvar bot'),
+      mostraErro
+        ? h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: props.aoRevisar },
+            'Revisar token')
         : null,
+    ),
+    props.feedback
+      ? h('p', {
+          className:
+            props.feedback.tipo === 'ok' ? 'guard-success-text' : props.feedback.tipo === 'erro' ? 'guard-error' : 'guard-notice',
+        }, props.feedback.texto)
+      : null,
+  )
+}
 
-      !acessoFalhou && acesso && !acesso.ipConfiavel
-        ? h('div', { className: 'guard-warn-box' },
-            paragrafo('',
-              h('strong', null, 'IP da borda não confiável. '),
-              'O IP real do navegador só aparece com trustEdgeHeaders no patch do profile (o túnel não entrega cf-connecting-ip por omissão).'),
-          )
-        : null,
-
-      !acessoFalhou && acesso
-        ? h('ul', { className: 'guard-sessions' },
-            acesso.sessoes.length === 0
-              ? h('li', { className: 'guard-session' },
-                  h('span', { className: 'guard-session-meta' }, 'Nenhuma sessão viva agora.'))
-              : acesso.sessoes.map((s, i) => {
-                  const device = s.userAgent !== null ? normalizarUserAgent(s.userAgent) : 'Sessão de dispositivo'
-                  const criada = tempoRelativo(s.criadaEm, agora)
-                  const uso = tempoRelativo(s.ultimoUsoEm, agora)
-                  const identidade = encurtarIdentidade(s.hash)
-                  return h('li', { className: 'guard-session', key: i },
-                    h('span', { className: 'guard-session-id' }, identidade),
-                    h('div', { className: 'guard-session-body' },
-                      h('span', { className: 'guard-session-device' }, device),
-                      h('span', { className: 'guard-session-meta' }, `aberta ${criada} · usada ${uso}`),
-                    ),
-                    s.ip !== null
-                      ? h('span', { className: 'guard-session-ip' }, s.ip)
-                      : h('span', { className: 'guard-tag' }, 'IP não confiável'),
-                  )
-                }),
-          )
-        : null,
-      paragrafo('guard-report-footer', 'Atualizado automaticamente a cada ~15 s enquanto a aba estiver aberta.'),
+/**
+ * A confirmação destrutiva do Avançado (textos EXATOS do contrato). Dois tipos:
+ * 'trocar' (token) e 'desfazer' (parear), cada um com [ação][Cancelar].
+ */
+function CartaoConfirmacao({
+  tipo,
+  aoConfirmar,
+  aoCancelar,
+}: {
+  readonly tipo: 'trocar' | 'desfazer'
+  readonly aoConfirmar: () => void
+  readonly aoCancelar: () => void
+}): React.ReactNode {
+  const texto =
+    tipo === 'trocar'
+      ? 'Trocar o token desliga temporariamente o bot. Continuar?'
+      : 'Desfazer o parear fecha o teu acesso pelo bot a partir deste painel. Não dá para desfazer sem parear de novo. Continuar?'
+  const rotulo = tipo === 'trocar' ? 'Trocar token' : 'Desfazer parear'
+  return h('div', { className: 'guard-card guard-confirm' },
+    paragrafo('guard-error', texto),
+    h('div', { className: 'guard-actions' },
+      h('button', { type: 'button', className: 'guard-btn guard-btn-primary', onClick: aoConfirmar }, rotulo),
+      h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: aoCancelar }, 'Cancelar'),
     ),
   )
 }

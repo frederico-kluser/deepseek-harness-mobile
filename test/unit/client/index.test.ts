@@ -164,11 +164,12 @@ test('bundle: o botão da sidebar foi removido e o cartão @BotFather está pres
   assert.ok(!codigo.includes('sidebar.footer.action'), 'sidebar.footer.action deve ter sido removido do bundle')
   assert.ok(!codigo.includes('guard-bot-button'), 'guard-bot-button não pode mais existir no bundle')
 
-  // O cartão "Como criar o bot" (@BotFather) tem de existir como conteúdo.
+  // O cartão "Como criar o bot" (@BotFather) tem de existir como conteúdo
+  // dobrado num <details> "Como criar o bot do zero" (progressive disclosure).
   assert.ok(codigo.includes('Como criar o bot'), 'o bundle deve conter o título do cartão "Como criar o bot"')
   assert.ok(codigo.includes('@BotFather'), 'o bundle deve referenciar o @BotFather')
   assert.ok(codigo.includes('/newbot'), 'o bundle deve conter o passo /newbot')
-  assert.ok(codigo.includes('Validar e configurar'), 'o bundle deve conter o botão "Validar e configurar"')
+  assert.ok(codigo.includes('Salvar bot'), 'o bundle deve conter o CTA primário "Salvar bot" do Passo 1')
   assert.ok(codigo.includes('use /token no @BotFather'), 'o bundle deve conter a nota de revogação /token')
   // O passo opcional de privacidade (remover username) tem de estar no cartão do BotFather.
   assert.ok(codigo.includes('bot privado'), 'o bundle deve conter a nota de privacidade do BotFather')
@@ -250,17 +251,37 @@ test('bundle: a logo aparece embutida (data URL PNG) com o alt ASCII', { skip: B
   assert.ok(!/src=["']logo\.png["']/u.test(codigo), 'a logo não pode ser referenciada por caminho externo no bundle')
 })
 
-test('bundle: o pareamento VIA PAINEL está presente (botão + código + espera) e NÃO loga o código', { skip: BUNDLE_AUSENTE }, () => {
+test('bundle: a trilha de 3 checkpoints está presente e o pareamento NÃO loga o código', { skip: BUNDLE_AUSENTE }, () => {
   const codigo = readFileSync(BUNDLE_PATH, 'utf8')
 
-  // Os textos-chave do fluxo existem no bundle (a fidelidade do conteúdo é
-  // verificada na string compilada, como o smoke não renderiza React).
-  assert.ok(codigo.includes('Parear pelo Telegram'), 'o bundle deve conter o botão/cartão "Parear pelo Telegram"')
-  assert.ok(codigo.includes('Aguardando pareamento'), 'o bundle deve conter o estado de espera "Aguardando pareamento"')
-  assert.ok(codigo.includes('Envie na conversa com'), 'o bundle deve conter a instrução de onde enviar o comando')
-  // "Gerar novo código" tem acento (escapado \xF3 no bundle); segura-se o
-  // prefixo ASCII "Gerar novo" + o estado de expiração que o renderiza.
-  assert.ok(codigo.includes('Gerar novo'), 'o bundle deve conter a ação "Gerar novo código" na expiração')
+  // A trilha (só o passo atual aberto). O cabeçalho é `Passo ${indice} de 3 ·
+  // <titulo>` — os títulos dos checkpoints entram como literais; o "de 3" é a
+  // parte estática da template que o esbuild mantém junta.
+  assert.ok(codigo.includes('Criar o bot'), 'o bundle deve conter o título do Passo 1 "Criar o bot"')
+  assert.ok(codigo.includes('de 3'), 'o bundle deve conter o sufixo do cabeçalho "Passo N de 3"')
+  assert.ok(codigo.includes('Passo 2: parear'), 'o bundle deve conter o incentivo "Passo 2: parear" do vazio do Passo 1')
+
+  // Passo 1 — CTA primário "Salvar bot" e o loading honesto.
+  assert.ok(codigo.includes('Salvar bot'), 'o bundle deve conter o CTA "Salvar bot"')
+  assert.ok(codigo.includes('A conectar ao Telegram'), 'o bundle deve conter o loading "A conectar ao Telegram…"')
+  assert.ok(codigo.includes('Revisar token'), 'o bundle deve conter a ação de erro "Revisar token"')
+
+  // Passo 2 — pareamento VIA PAINEL.
+  assert.ok(codigo.includes('Gerar novo'), 'o bundle deve conter as ações "Gerar novo" / "Gerar novo código"')
+  assert.ok(codigo.includes('Copiar'), 'o bundle deve conter o botão "Copiar" do código')
+  assert.ok(codigo.includes('Aguardando'), 'o bundle deve conter o status ao vivo "Aguardando…"')
+  assert.ok(codigo.includes('No Telegram, envia'), 'o bundle deve conter a instrução UMA final do pareamento')
+
+  // Passo 3 — comandos essenciais + Avançado + privacidade + Uso recente.
+  assert.ok(codigo.includes('Comandos essenciais'), 'o bundle deve conter os comandos essenciais do Passo 3')
+  assert.ok(codigo.includes('/emergencia'), 'o bundle deve conter o comando essencial /emergencia')
+  assert.ok(codigo.includes('E minha conversa'), 'o bundle deve conter o <details> "E minha conversa?"')
+  assert.ok(codigo.includes('Uso recente'), 'o bundle deve conter o bloco "Uso recente"')
+
+  // Os rótulos ANTIGOS desapareceram da trilha.
+  assert.ok(!codigo.includes('Parear pelo Telegram'), 'o botão/cartão antigo "Parear pelo Telegram" deve ter saído')
+  assert.ok(!codigo.includes('Validar e configurar'), 'o CTA antigo "Validar e configurar" deve ter saído')
+  assert.ok(!codigo.includes('Envie na conversa com'), 'a instrução antiga "Envie na conversa com" deve ter saído')
 
   // NUNCA deve existir um console.log do código nem do token no bundle.
   assert.ok(!/console\.log\(\s*codigo\s*\)/u.test(codigo), 'não pode haver console.log(codigo) no bundle')

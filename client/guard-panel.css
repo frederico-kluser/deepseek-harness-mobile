@@ -118,7 +118,8 @@
 
 /* ---------------------------------------------------------------------------
  * Cartão — a superfície "outlined on panel fill" dos ModelsSection (.rowCard):
- * r12, hairline border-l2. Usado para a Chave do bot, Instruções e Acesso.
+ * r12, hairline border-l2. Usado pelos checkpoints da trilha (token, parear,
+ * usar) e pela confirmação destrutiva.
  * ---------------------------------------------------------------- */
 
 .guard-card {
@@ -177,24 +178,6 @@
 
 .guard-botfather-step {
   margin: 0;
-}
-
-/* Nota curta no rodapé do cartão ("use /token para revogar…"). */
-.guard-botfather-note {
-  margin: 2px 0 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
-  border-top: 1px solid var(--dsw-alias-border-l2);
-  padding-top: 8px;
-}
-
-/* A dica de privacidade do cartão "Como criar o bot" (@BotFather). */
-.guard-privacy-hint {
-  margin: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
 }
 
 /* ---------------------------------------------------------------------------
@@ -496,29 +479,6 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Avisos discretos (IP não confiável) — caixa r12 com hairline ligeiramente
- * tingida, lendo como o WelcomeNotice dos ui-settings-models.
- * ---------------------------------------------------------------- */
-
-.guard-warn-box {
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-top-color: var(--dsw-alias-state-warn-primary);
-  border-radius: 12px;
-  padding: 10px 14px;
-}
-
-.guard-warn-box p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.guard-warn-box strong {
-  color: var(--dsw-alias-label-primary);
-}
-
-/* ---------------------------------------------------------------------------
  * Lista de sessões vivas — cada linha um cartão delgado.
  * ---------------------------------------------------------------- */
 
@@ -622,11 +582,11 @@
 }
 
 .guard-pair-code {
-  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
   font-size: 34px;
   line-height: 44px;
   font-weight: 600;
-  letter-spacing: 8px;
+  letter-spacing: 2px;
   padding: 8px 16px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
@@ -635,10 +595,182 @@
   user-select: all;
 }
 
-/* A linha "Aguardando pareamento… · m:ss" do cartão. */
+/* A linha de status ao vivo do pareamento ("Aguardando…" → "✓ Pareado"). */
 .guard-pair-status {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Trilha de checkpoints — só o passo atual aberto; concluídos colapsam.
+ * ---------------------------------------------------------------- */
+
+/* O "✓" à frente de um passo concluído (título do passo atual ou linha fina). */
+.guard-step-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--dsw-alias-state-success-primary);
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+}
+
+/* Passo concluído, colapsado — um cartão resumido com text-link ("Trocar"). */
+.guard-step-done {
+  align-items: flex-start;
+}
+
+.guard-step-done-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+/* Texto fraco que ensina o próximo passo (vazio do checkpoint 1). */
+.guard-step-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Text-link (ações não destrutivas do painel: "Trocar", "Trocar o token", …). */
+.guard-link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-brand-primary);
+  text-align: left;
+}
+
+.guard-link:hover {
+  text-decoration: underline;
+}
+
+/* Lista de text-links do "Avançado" / "E minha conversa?". */
+.guard-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * <details> de progressive disclosure (BotFather / Avançado / privacidade).
+ * ---------------------------------------------------------------- */
+
+.guard-details {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: transparent;
+}
+
+.guard-details-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.guard-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.guard-details-summary::after {
+  content: '▸';
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+
+.guard-details[open] .guard-details-summary::after {
+  transform: rotate(90deg);
+}
+
+.guard-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Corpo do pareamento VIA PAINEL (Passo 2) — código espaçado + countdown.
+ * ---------------------------------------------------------------- */
+
+.guard-pair-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* A linha de instrução UMA final: "No Telegram, envia: /parear 123456 no @handle". */
+.guard-code-line {
+  margin: 0;
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* A fila countdown ("expira em 4:53") + botão "Gerar novo". */
+.guard-pair-countdown {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Coluna de ações para os estados de erro/expiração (botão abaixo da frase). */
+.guard-col {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* O bloco "Uso recente" (métricas) do Passo 3. */
+.guard-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+/* A confirmação destrutiva do Avançado (texto + [ação][Cancelar]). */
+.guard-confirm {
+  border-top-color: var(--dsw-alias-state-warn-primary);
+}
+
+/* O cartão de privacidade AO VIVO, dentro do <details> "E minha conversa?". */
+.guard-privacy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 12px 14px;
 }

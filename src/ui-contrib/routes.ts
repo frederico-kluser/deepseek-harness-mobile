@@ -842,10 +842,10 @@ export function createAccessHandler(core: UiContribCore): UiContribRequestHandle
  * nem o token: cada entrada e uma causa acionavel, sem numeros nem chaves.
  */
 const TEXTO_ERRO_PAIR: Readonly<Record<string, string>> = {
-  'ja-pareado': 'Este bot já tem um dono. Use a máquina para trocar o dono (`--reset-pairing`).',
-  'sem-token': 'Configure a chave do bot primeiro — só depois dá para parear pelo painel.',
-  'worker-indisponivel': 'O bot não está a correr agora. Verifique e tente de novo.',
-  interno: 'Algo correu mal ao gerar o código. Tente de novo.',
+  'ja-pareado': 'Este bot já tem um dono. Para trocar o dono, é preciso reset na máquina onde ele roda.',
+  'sem-token': 'Configura o token no Passo 1 — só depois dá para parear.',
+  'worker-indisponivel': 'O bot não está a correr agora. Confere o painel principal e tenta de novo.',
+  interno: 'Algo falhou ao gerar o código. Tenta de novo.',
 }
 
 /**

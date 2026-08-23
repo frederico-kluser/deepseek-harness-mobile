@@ -430,7 +430,7 @@ describe('o pareamento VIA PAINEL (POST /pair)', () => {
     })
     assert.equal(resposta.status, 409)
     assert.equal(resposta.corpo.erro, 'sem-token')
-    assert.match(String(resposta.corpo.mensagem), /Configure a chave do bot/u)
+    assert.match(String(resposta.corpo.mensagem), /Configura o token no Passo 1/u)
   })
 
   it('409 worker-indisponivel: mensagem PT-BR, sem vazar detalhe de topologia', async () => {
