@@ -97,7 +97,7 @@ after(async () => {
 })
 
 /** Pedido CRU por socket, com a linha de pedido exatamente como o atacante a escreve. */
-function pedidoCru(linhaDePedido: string, host: string = '127.0.0.1'): Promise<string> {
+function pedidoCru(linhaDePedido: string, host: string = HOST_DO_TUNEL): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write(`${linhaDePedido}\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
@@ -113,7 +113,7 @@ function pedidoCru(linhaDePedido: string, host: string = '127.0.0.1'): Promise<s
 async function exigeRecusa(
   linha: string,
   rotulo: string,
-  host: string = '127.0.0.1',
+  host: string = HOST_DO_TUNEL,
   permitidos: readonly number[] = [401, 403, 404],
 ): Promise<void> {
   delegadoAlcancado = false
@@ -301,10 +301,13 @@ describe('AS TRES ROTAS ISENTAS DE T3.4 -- na tabela, e em lugar nenhum alem del
     assert.deepEqual([...LOOPBACK_ONLY_PREFIXES], ['/__guard/secret'])
   })
 
-  it('comportamental: as tres isentas chegam ao delegado SEM credencial', async () => {
+  it('comportamental: as isentas do TUNEL chegam ao delegado SEM credencial', async () => {
+    // Pelo tunel, `/__guard/magic` e `/__guard/api/login` sao isentos de
+    // credencial (para a porta de magia/login). `/__guard/secret` NAO: e a rota
+    // de CANAL LOCAL APENAS e, pelo tunel, o gate devolve 404 (L2.6 antes da
+    // isencao) -- ver o case dedicado mais abaixo.
     for (const [metodo, alvo] of [
       ['GET', '/__guard/magic'],
-      ['GET', '/__guard/secret'],
       ['POST', '/__guard/api/login'],
     ]) {
       delegadoAlcancado = false
@@ -313,6 +316,18 @@ describe('AS TRES ROTAS ISENTAS DE T3.4 -- na tabela, e em lugar nenhum alem del
       assert.equal(status, 200, `${metodo} ${alvo}: esperava pass-through isento, recebi ${status}`)
       assert.equal(delegadoAlcancado, true, `${metodo} ${alvo}: o delegado nao foi alcancado`)
     }
+
+    // `/__guard/secret` pelo tunel e 404 (canal local apenas), nao pass-through.
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(`GET /__guard/secret HTTP/1.1\r\nHost: ${HOST_DO_TUNEL}\r\nConnection: close\r\n\r\n`)
+    })
+    const pedacos: Buffer[] = []
+    socket.on('data', (d: Buffer) => void pedacos.push(d))
+    const cru = await new Promise<string>((resolve, reject) => {
+      socket.on('error', reject)
+      socket.on('end', () => resolve(Buffer.concat(pedacos).toString('latin1')))
+    })
+    assert.match(cru, /^HTTP\/1\.1 404 /u)
   })
 
   it('LOOKALIKES NAO-DESCENDENTES nao sao isentos: o gate recusa-os', async () => {

@@ -151,6 +151,39 @@ export function challengeBasicAuth(res: ServerResponse, realm: string): void {
 }
 
 /**
+ * O 401 do PORTAO no modelo novo: TEXTO PURO, SEM `WWW-Authenticate`.
+ *
+ * ---------------------------------------------------------------------------
+ * PORQUE ESTA FUNCAO EXISTE AO LADO DE `challengeBasicAuth`
+ * ---------------------------------------------------------------------------
+ * A Onda 1 remove o login do portao: o gate NUNCA emite `WWW-Authenticate`
+ * (que dispara o popup de credenciais do navegador). Quando o acesso pelo
+ * TUNEL falha -- sem sessao e sem `?key=` valida -- a resposta e um 401 em
+ * texto puro, sem desafio. `denyUnauthorized` E esse 401.
+ *
+ * `challengeBasicAuth` continua a existir e a emitir o desafio porque o PAINEL
+ * (`src/panel/routes.ts`, de outra onda) ainda o usa na sua porta de login. O
+ * portao, por desenho novo, NAO a chama: o "401 do gate" e este.
+ *
+ * ---------------------------------------------------------------------------
+ * REGRA DE FICHEIRO PRESERVADA
+ * ---------------------------------------------------------------------------
+ * `Referrer-Policy: no-referrer` continua em TODA recusa deste ficheiro,
+ * incluindo este 401 (um cache sem store e um referrer nulo sao o minimo para
+ * quem possa ser servido sob a URL do tunel).
+ */
+export function denyUnauthorized(res: ServerResponse): void {
+  res.writeHead(401, {
+    // Ausencia deliberada de `WWW-Authenticate`: nada de popup de login.
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store',
+    // Ver a REGRA DE FICHEIRO no cabecalho.
+    'Referrer-Policy': 'no-referrer',
+  })
+  res.end('Acesso Intercetado: autorizacao necessaria.\n')
+}
+
+/**
  * Escreve uma resposta HTTP CRUA num socket de upgrade e destroi-o.
  *
  * Num tratador de `Connection: Upgrade` nao existe `ServerResponse`: o socket ja
@@ -161,8 +194,12 @@ export function challengeBasicAuth(res: ServerResponse, realm: string): void {
  *
  * O `socket.destroy()` e obrigatorio: sem ele o cliente fica com uma ligacao
  * meio-aberta a espera do 101 que nunca vem.
+ *
+ * A PARTIR DA ONDA 1, NENHUM STATUS EMITE `WWW-Authenticate`. O gateway de
+ * WebSocket recusado (401) responde SEM desafio -- "nunca mais o popup de
+ * login", a mesma doutrina do 401 do request (`denyUnauthorized`).
  */
-export function denyUpgrade(socket: Duplex, status: 401 | 403, realm: string): void {
+export function denyUpgrade(socket: Duplex, status: 401 | 403): void {
   const reason = status === 401 ? 'Unauthorized' : 'Forbidden'
 
   const headers = [
@@ -175,10 +212,6 @@ export function denyUpgrade(socket: Duplex, status: 401 | 403, realm: string): v
     'Referrer-Policy: no-referrer',
     'Content-Length: 0',
   ]
-
-  if (status === 401) {
-    headers.push(`WWW-Authenticate: Basic realm="${realm}", charset="UTF-8"`)
-  }
 
   try {
     socket.write(`${headers.join('\r\n')}\r\n\r\n`)

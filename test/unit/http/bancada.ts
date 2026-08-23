@@ -22,10 +22,13 @@ import type { Config } from '../../../src/config/schema.ts'
 import type { GateDeps } from '../../../src/http/gate.ts'
 import {
   createGateAuthStack,
+  createRequestOriginResolver,
   createTunnelOriginRegistry,
   type GateAuthStack,
   type TunnelOriginRegistry,
 } from '../../../src/http/session-auth.ts'
+import { assertTrustworthyOrigin, serializeSessionCookie } from '../../../src/session/cookie.ts'
+import { createLinkTokenStore } from '../../../src/session/link-token.ts'
 import { LOOPBACK_ONLY_PREFIXES } from '../../../src/index.ts'
 import { createGuardLogger } from '../../../src/logging/logger.ts'
 import { digestSecret } from '../../../src/secret/verify.ts'
@@ -81,6 +84,8 @@ export interface Bancada {
   readonly auditPath: string
   /** Emite uma sessao valida e devolve o cabecalho `Cookie` que a apresenta. */
   emitirSessao(): string
+  /** A chave no link (onda 1). `undefined` antes de criada. */
+  readonly linkStore: ReturnType<typeof createLinkTokenStore>
   cleanup(): void
 }
 
@@ -129,6 +134,8 @@ export function bancada(options: BancadaOptions = {}): Bancada {
   }
   if (options.tunnelReady === true) tunnelOrigin.publish(FAKE_TUNNEL_ORIGIN)
 
+  const linkStore = createLinkTokenStore({ clock })
+
   const gate: GateDeps = {
     ctx: ctx.asContext(),
     log,
@@ -139,6 +146,20 @@ export function bancada(options: BancadaOptions = {}): Bancada {
     loopbackAuthority: options.loopbackAuthority ?? '127.0.0.1:3080',
     loopbackOnlyPrefixes: options.loopbackOnlyPrefixes ?? LOOPBACK_ONLY_PREFIXES,
     unauthenticatedPrefixes: options.unauthenticatedPrefixes ?? [],
+    linkToken: { verificar: (c) => linkStore.verificar(c) },
+    // O mesmo padrao da fiacao em src/index.ts: resolver a origem efetiva,
+    // recusar emitir onde o cookie Secure nao chega, e regenerate (anti-fixation).
+    // O PROXY e a entrada do TUNEL (HTTPS), logo o esquema e forcado a `https`.
+    issueSession: (req: IncomingMessage, presentedId: string | undefined): string | null => {
+      const origem = createRequestOriginResolver({ config, tunnelOrigin })(req)
+      try {
+        assertTrustworthyOrigin({ scheme: 'https', host: origem.host })
+      } catch {
+        return null
+      }
+      const id = stack.sessions.regenerate(presentedId)
+      return serializeSessionCookie(id, { scheme: 'https', host: origem.host })
+    },
   }
 
   return {
@@ -152,8 +173,10 @@ export function bancada(options: BancadaOptions = {}): Bancada {
     emitirSessao(): string {
       return `__Host-dsh_sid=${stack.sessions.create()}`
     },
+    linkStore,
     cleanup(): void {
       stack.dispose()
+      linkStore.dispose()
       rmSync(dir, { recursive: true, force: true })
     },
   }

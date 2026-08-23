@@ -255,11 +255,18 @@ describe('modo restrito: o intent derruba a exposicao (Onda 2 decide, o portao a
 
     const handler = createGuardedHandler(b.gate, (): void => {}, 'dispatch:request')
 
-    // 100 tentativas com o segredo errado, todas de loopback. O atraso interno
-    // esta injetado a zero (`04-TESTES.md` 5.1.3: nao se cronometra em CI).
+    // 100 tentativas com o segredo errado, todas pelo TUNEL (o acesso local
+    // abre direto na onda 1 e nunca percorre o caminho de credencial). O
+    // atraso interno esta injetado a zero (`04-TESTES.md` 5.1.3: nao se
+    // cronometra em CI).
     for (let i = 0; i < 100; i += 1) {
       await handler(
-        pedido({ headers: { authorization: basic(`errada-${String(i)}`) } }),
+        pedido({
+          headers: {
+            host: 'marks-organization-moved-coupons.trycloudflare.com',
+            authorization: basic(`errada-${String(i)}`),
+          },
+        }),
         new FakeResponse().asServerResponse(),
       )
     }

@@ -489,10 +489,8 @@ describe('T6.1 — ciclo completo do tunel com processos REAIS', () => {
     /* ---------- 3. PELA URL DO TUNEL: 401 sem credencial. ---------- */
     const semCredencial = await pedirPelaTunelUrl('/api/state')
     assert.equal(semCredencial.status, 401, 'sem credencial, o portao responde 401')
-    assert.ok(
-      semCredencial.challenge !== undefined && semCredencial.challenge.includes('Basic'),
-      'o 401 vem com o desafio WWW-Authenticate',
-    )
+    // Onda 1: o 401 do tunel NAO emite `WWW-Authenticate` (nunca mais o popup).
+    assert.equal(semCredencial.challenge, undefined, 'o 401 do tunel NAO traz desafio')
     assert.equal(alcancouODespacho, 0, 'o 401 nao alcanca o despacho')
 
     /* ---------- 4. PELA URL DO TUNEL: 200 com SESSAO. ---------- */

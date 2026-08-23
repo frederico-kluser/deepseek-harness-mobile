@@ -27,7 +27,7 @@ import { afterEach, describe, it } from 'node:test'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { createGuardedHandler, createGuardedUpgradeHandler } from '../../src/http/gate.ts'
-import { bancada, basic, OWNER_SECRET, pedido, type Bancada } from '../unit/http/bancada.ts'
+import { bancada, basic, OWNER_SECRET, pedido, FAKE_TUNNEL_ORIGIN, type Bancada } from '../unit/http/bancada.ts'
 import { FakeResponse, FakeSocket } from '../support/ctx-double.ts'
 import { VALID_CREDENTIAL } from '../support/fixtures.ts'
 
@@ -40,6 +40,11 @@ afterEach(() => {
   aberta?.cleanup()
   aberta = undefined
 })
+
+/** O hostname do tunel publicado pela bancada (`FAKE_TUNNEL_ORIGIN`). */
+function hostDoTunel(_b: Bancada): string {
+  return new URL(FAKE_TUNNEL_ORIGIN).host
+}
 
 interface Veredito {
   readonly status: number
@@ -133,10 +138,15 @@ describe('ADV-021..024 -- cabecalhos de IP e identidade forjados nao compram ori
   })
 
   it('ADV-026: Authorization duplicado -- o Node junta por virgula e a comparacao falha', async () => {
-    const b = abrir({ comSegredo: true })
+    // O caminho de credencial do gate so corre na superficie do TUNEL (onda 1:
+    // o acesso local abre direto). Usa-se o host do tunel.
+    const b = abrir({ comSegredo: true, tunnelReady: true })
     const req = pedido({
       url: '/api/state',
-      headers: { authorization: 'Basic ' + VALID_CREDENTIAL + ', Basic ' + VALID_CREDENTIAL },
+      headers: {
+        host: hostDoTunel(b),
+        authorization: 'Basic ' + VALID_CREDENTIAL + ', Basic ' + VALID_CREDENTIAL,
+      },
     })
     const r = await decidir(b, req)
     assert.equal(r.status, 401)
@@ -146,29 +156,29 @@ describe('ADV-021..024 -- cabecalhos de IP e identidade forjados nao compram ori
 
 describe('ADV-027..028 -- decisao por pedido, sem cache e sem sessao roubada', () => {
   it('ADV-027: com credencial valida e o mesmo handler, cada pedido e avaliado de novo', async () => {
-    const b = abrir({ comSegredo: true })
-    const semCredencial = await decidir(b, pedido({ url: '/api/state' }))
+    const b = abrir({ comSegredo: true, tunnelReady: true })
+    const semCredencial = await decidir(b, pedido({ url: '/api/state', headers: { host: hostDoTunel(b) } }))
     assert.equal(semCredencial.status, 401)
     assert.equal(semCredencial.delegado, false)
     const comCredencial = await decidir(
       b,
-      pedido({ url: '/api/state', headers: { authorization: basic(OWNER_SECRET) } }),
+      pedido({ url: '/api/state', headers: { host: hostDoTunel(b), authorization: basic(OWNER_SECRET) } }),
     )
     assert.equal(comCredencial.status, 200)
     assert.equal(comCredencial.delegado, true)
-    const outraVez = await decidir(b, pedido({ url: '/api/state' }))
+    const outraVez = await decidir(b, pedido({ url: '/api/state', headers: { host: hostDoTunel(b) } }))
     assert.equal(outraVez.status, 401)
     assert.equal(outraVez.delegado, false)
   })
 
   it('ADV-028: cookie de sessao de OUTRO segredo (pos-rotacao) e rejeitado', async () => {
-    const b = abrir({ comSegredo: true })
+    const b = abrir({ comSegredo: true, tunnelReady: true })
     const cookie = '__Host-dsh_sid=' + b.stack.sessions.create()
-    const valida = await decidir(b, pedido({ url: '/api/state', headers: { cookie } }))
+    const valida = await decidir(b, pedido({ url: '/api/state', headers: { host: hostDoTunel(b), cookie } }))
     assert.equal(valida.status, 200)
     // Rotacao revoga TODAS as sessoes (SECRET-008) e emite digest novo.
     b.stack.secrets.rotate()
-    const posRotacao = await decidir(b, pedido({ url: '/api/state', headers: { cookie } }))
+    const posRotacao = await decidir(b, pedido({ url: '/api/state', headers: { host: hostDoTunel(b), cookie } }))
     assert.equal(posRotacao.status, 401, 'a sessao emitida sob o segredo antigo morre com ele')
     assert.equal(posRotacao.delegado, false)
   })

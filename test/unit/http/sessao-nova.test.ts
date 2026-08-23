@@ -34,7 +34,19 @@ import {
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
 import { createGuardedHandler, type GateDeps } from '../../../src/http/gate.ts'
 import { FakeResponse } from '../../support/ctx-double.ts'
-import { bancada, pedido, type Bancada } from './bancada.ts'
+import { bancada, pedido, FAKE_TUNNEL_ORIGIN, type Bancada } from './bancada.ts'
+
+/**
+ * O `sessao_nova` e um evento da SUPERFICIE DO TUNEL (onda 1). Um pedido
+ * LOCAL abre direto e nunca passa pelo caminho que o emite; um pedido pelo
+ * tunel com sessao valida passa por ele. Esta suite usa pedidos pelo TUNEL.
+ */
+function tunel(spec: Parameters<typeof pedido>[0] = {}): ReturnType<typeof pedido> {
+  return pedido({
+    ...spec,
+    headers: { host: new URL(FAKE_TUNNEL_ORIGIN).host, ...spec.headers },
+  })
+}
 
 /** Sink de auditoria que falha como um disco cheio (mesmo defeito de gate.test.ts). */
 function comAuditoriaAvariada(b: Bancada): GateDeps {
@@ -58,7 +70,7 @@ function comAuditoriaAvariada(b: Bancada): GateDeps {
 
 describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
   it('emite no PRIMEIRO uso autorizado da sessao, e so nele', async () => {
-    const b = bancada({ comSegredo: true })
+    const b = bancada({ comSegredo: true, tunnelReady: true })
     const cookie = b.emitirSessao()
 
     const vistos: SessaoNovaEvent[] = []
@@ -76,11 +88,11 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
     )
 
     const res1 = new FakeResponse()
-    await handler(pedido({ headers: { cookie } }), res1.asServerResponse())
+    await handler(tunel({ headers: { cookie } }), res1.asServerResponse())
     assert.equal(originais, 1, 'o primeiro pedido chega ao despacho original')
 
     const res2 = new FakeResponse()
-    await handler(pedido({ headers: { cookie } }), res2.asServerResponse())
+    await handler(tunel({ headers: { cookie } }), res2.asServerResponse())
     assert.equal(originais, 2, 'o despacho original corre nas duas vezes')
 
     assert.equal(vistos.length, 1, 'o observador viu EXATAMENTE um evento')
@@ -94,7 +106,7 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
   })
 
   it('cada sessao distinta emite uma vez — e o audit fica escrito ANTES do fan-out', async () => {
-    const b = bancada({ comSegredo: true })
+    const b = bancada({ comSegredo: true, tunnelReady: true })
 
     const ordem: string[] = []
     const desregista = registerSessaoNovaObserver(() => {
@@ -106,8 +118,8 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
     const sessaoA = b.emitirSessao()
     const sessaoB = b.emitirSessao()
 
-    await handler(pedido({ headers: { cookie: sessaoA } }), new FakeResponse().asServerResponse())
-    await handler(pedido({ headers: { cookie: sessaoB } }), new FakeResponse().asServerResponse())
+    await handler(tunel({ headers: { cookie: sessaoA } }), new FakeResponse().asServerResponse())
+    await handler(tunel({ headers: { cookie: sessaoB } }), new FakeResponse().asServerResponse())
 
     assert.equal(ordem.length, 2, 'duas sessoes, dois eventos')
 
@@ -132,7 +144,7 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
   })
 
   it('auditoria avariada no primeiro uso NEGA (fail-closed) e NAO notifica', async () => {
-    const b = bancada({ comSegredo: true })
+    const b = bancada({ comSegredo: true, tunnelReady: true })
     const cookie = b.emitirSessao()
 
     const vistos: SessaoNovaEvent[] = []
@@ -143,7 +155,7 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
     const handler = createGuardedHandler(comAuditoriaAvariada(b), (): void => {}, 'dispatch:request')
 
     const res = new FakeResponse()
-    await handler(pedido({ headers: { cookie } }), res.asServerResponse())
+    await handler(tunel({ headers: { cookie } }), res.asServerResponse())
 
     assert.equal(res.statusCode, 401, 'auditoria indisponivel: o gate nega')
     assert.equal(vistos.length, 0, 'sem log, sem notificacao')
@@ -153,7 +165,7 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
   })
 
   it('sem observadores registados, o caminho continua identico', async () => {
-    const b = bancada({ comSegredo: true })
+    const b = bancada({ comSegredo: true, tunnelReady: true })
     const cookie = b.emitirSessao()
 
     let originais = 0
@@ -166,14 +178,14 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
     )
 
     const res = new FakeResponse()
-    await handler(pedido({ headers: { cookie } }), res.asServerResponse())
+    await handler(tunel({ headers: { cookie } }), res.asServerResponse())
     assert.equal(originais, 1, 'o despacho original corre sem observadores')
 
     b.cleanup()
   })
 
   it('sem sessao (credencial estatica) NAO emite sessao_nova', async () => {
-    const b = bancada({ comSegredo: true })
+    const b = bancada({ comSegredo: true, tunnelReady: true })
     // Com credencial estatica presente, o pedido autentica por Basic:
     // outcome.session e null e o ponto de chamada nao pode disparar.
     const vistos: SessaoNovaEvent[] = []
@@ -190,7 +202,7 @@ describe('ponto de chamada congelado no PREP 5: sessao_nova', () => {
       'dispatch:request',
     )
     const res = new FakeResponse()
-    await handler(pedido({ headers: { authorization: basicHeader(b) } }), res.asServerResponse())
+    await handler(tunel({ headers: { authorization: basicHeader(b) } }), res.asServerResponse())
     assert.equal(originais, 1, 'a credencial estatica passa')
     assert.equal(vistos.length, 0, 'credencial estatica nao e sessao')
 

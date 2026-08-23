@@ -30,6 +30,8 @@ import { FakeSocket } from '../support/ctx-double.ts'
 import { VALID_CREDENTIAL } from '../support/fixtures.ts'
 import { bancada, pedido, FAKE_TUNNEL_ORIGIN, type Bancada } from '../unit/http/bancada.ts'
 
+const HOST_TUNEL = 'marks-organization-moved-coupons.trycloudflare.com'
+
 let aberta: Bancada | undefined
 function abrir(...args: Parameters<typeof bancada>): Bancada {
   aberta = bancada(...args)
@@ -143,19 +145,25 @@ describe('ALLOWLIST EXATA, nunca "contem"', () => {
 })
 
 describe('o handshake e guardado POR INTEIRO', () => {
-  it('recusa o upgrade SEM credencial, independentemente de guardedPrefixes', async () => {
+  it('recusa o upgrade do TUNEL SEM credencial, independentemente de guardedPrefixes', async () => {
+    // Onda 1: o acesso LOCAL a WebSockets abre direto; a barreira de credencial
+    // desta suite e a do TUNEL (Host nao-loopback). Por isso os pedidos usam o
+    // host do tunel.
     for (const guardedPrefixes of [['/api'], [], ['/nada-que-ver']]) {
-      const b = abrir({ config: { guardedPrefixes } })
+      const b = abrir({ config: { guardedPrefixes }, tunnelReady: true })
 
       for (const url of ['/api/events.mux', '/', '/ws', '/plugins/x/socket']) {
         const socket = await handshake(
           b,
-          pedido({ url, headers: { origin: 'http://127.0.0.1:3080' } }),
+          pedido({
+            url,
+            headers: { host: HOST_TUNEL, origin: FAKE_TUNNEL_ORIGIN },
+          }),
         )
         assert.equal(
           status(socket),
           401,
-          `upgrade sem credencial aceite em ${url} com guardedPrefixes=${JSON.stringify(guardedPrefixes)}`,
+          `upgrade do tunel sem sessao aceite em ${url} com guardedPrefixes=${JSON.stringify(guardedPrefixes)}`,
         )
       }
 
@@ -177,11 +185,14 @@ describe('o handshake e guardado POR INTEIRO', () => {
     )
     assert.equal(status(foraDoPerimetro), 403)
 
+    // O TUNEL sem sessao e 401; o LOCAL abre.
+    const comTunel = abrir({ tunnelReady: true })
     const semCredencial = await handshake(
-      b,
-      pedido({ url: '/api/events.mux', headers: { origin: 'http://127.0.0.1:3080' } }),
+      comTunel,
+      pedido({ url: '/api/events.mux', headers: { host: HOST_TUNEL, origin: FAKE_TUNNEL_ORIGIN } }),
     )
     assert.equal(status(semCredencial), 401)
+    comTunel.cleanup()
   })
 
   it('`Origin` AUSENTE cai para a credencial -- e a sonda `websocket-upgrade` exige-o', async () => {
@@ -191,15 +202,16 @@ describe('o handshake e guardado POR INTEIRO', () => {
     // ainda a sonda fail-closed de `src/contracts/tunnel.ts`, cujo caso feliz e
     // "socket destruido OU 401": um 403 fa-la-ia concluir que o gate nao esta
     // armado, e o tunel nunca subiria.
-    const b = abrir()
+    // (Onda 1: isto e o comportamento do TUNEL; o acesso local abre.)
+    const b = abrir({ tunnelReady: true })
 
-    const semCredencial = await handshake(b, pedido({ url: '/' }))
-    assert.equal(status(semCredencial), 401, 'sem Origin e sem credencial: 401, nunca 403')
+    const semCredencial = await handshake(b, pedido({ url: '/', headers: { host: HOST_TUNEL } }))
+    assert.equal(status(semCredencial), 401, 'sem Origin e sem sessao: 401, nunca 403')
     assert.equal(semCredencial.destroyed, true)
 
     const comCredencial = await handshake(
       b,
-      pedido({ url: '/', headers: { authorization: `Basic ${VALID_CREDENTIAL}` } }),
+      pedido({ url: '/', headers: { host: HOST_TUNEL, authorization: `Basic ${VALID_CREDENTIAL}` } }),
     )
     assert.equal(status(comCredencial), 'upgrade')
   })
@@ -304,9 +316,11 @@ describe('`Origin` REPETIDO nao pode saltar a verificacao', () => {
 
 describe('ADV-047..049 -- o handshake nao pode nem morrer a meio nem vazar detalhe (T6.3)', () => {
   it('ADV-047: excecao dentro do avaliador de upgrade -> socket DESTRUIDO, nunca handshake aprovado', async () => {
-    const b = abrir({ comSegredo: true })
+    const b = abrir({ comSegredo: true, tunnelReady: true })
     const socket = new FakeSocket()
-    // Injeta um erro no caminho de decisao: a thunk `auth` lanca.
+    // Injeta um erro no caminho de decisao: a thunk `auth` lanca. Usa-se o
+    // host do TUNEL para o avaliador de autenticacao ser alcançado (o acesso
+    // local abre direto e nunca toca `auth`).
     const quebrado = { ...b.gate, auth: (): never => { throw new Error('evaluador partido') } }
     const handlerQuebrado = createGuardedUpgradeHandler(
       quebrado,
@@ -314,7 +328,7 @@ describe('ADV-047..049 -- o handshake nao pode nem morrer a meio nem vazar detal
       'adv:047',
     )
     await handlerQuebrado(
-      pedido({ url: '/api/events.mux', headers: { origin: 'http://127.0.0.1:3080' } }),
+      pedido({ url: '/api/events.mux', headers: { host: HOST_TUNEL, origin: FAKE_TUNNEL_ORIGIN } }),
       socket.asDuplex() as never,
       Buffer.alloc(0),
     )
@@ -340,10 +354,10 @@ describe('ADV-047..049 -- o handshake nao pode nem morrer a meio nem vazar detal
   })
 
   it('ADV-049: meia-conexao -- apos a negacao o socket e destruido e o cliente nao fica pendurado', async () => {
-    const b = abrir({ comSegredo: true })
+    const b = abrir({ comSegredo: true, tunnelReady: true })
     const semCredencial = await handshake(
       b,
-      pedido({ url: '/api/events.mux', headers: { origin: 'http://127.0.0.1:3080' } }),
+      pedido({ url: '/api/events.mux', headers: { host: HOST_TUNEL, origin: FAKE_TUNNEL_ORIGIN } }),
     )
     assert.equal(status(semCredencial), 401)
     assert.equal(semCredencial.destroyed, true, 'destruido = o par nao fica a espera do 101 que nunca vem')
@@ -357,6 +371,19 @@ describe('ADV-047..049 -- o handshake nao pode nem morrer a meio nem vazar detal
     )
     assert.equal(status(origemForjada), 403)
     assert.equal(origemForjada.destroyed, true)
+
+    // MODELO EXPOSE-PORT: a superficie do tunel NAO abre por Host de loopback.
+    const bLocal = abrir({ comSegredo: true, tunnelReady: true })
+    const loopbackForjado = await handshake(
+      bLocal,
+      pedido({
+        url: '/api/events.mux',
+        headers: { host: '127.0.0.1:3080', origin: FAKE_TUNNEL_ORIGIN },
+      }),
+    )
+    assert.equal(status(loopbackForjado), 401, 'o WebSocket do tunel NAO abre por Host de loopback (BLOCK)')
+    assert.equal(loopbackForjado.destroyed, true)
+    bLocal.cleanup()
   })
 })
 describe('L2.6 tambem corre no handshake', () => {

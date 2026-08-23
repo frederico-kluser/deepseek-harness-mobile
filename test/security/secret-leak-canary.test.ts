@@ -97,8 +97,9 @@ after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()))
 })
 
-/** Pedido CRU: a resposta inteira, do fio. */
-function pedidoCru(linha: string, host = '127.0.0.1'): Promise<string> {
+/** Pedido CRU: a resposta inteira, do fio. Default: pelo TUNEL (a superficie
+ * que exercita o caminho de credencial na Onda 1). */
+function pedidoCru(linha: string, host = 'marks-organization-moved-coupons.trycloudflare.com'): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write(`${linha}\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
@@ -344,7 +345,9 @@ describe('ADV-056/057 -- erro e IPC nao carregam o canario', () => {
       try {
         const resposta = await new Promise<string>((resolve, reject) => {
           const socket = connect(p, '127.0.0.1', () => {
-            socket.write('GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
+            // Superficie do TUNEL para o caminho de credencial correr (o
+            // acesso local abre direto na Onda 1). O host e o do tunel READY.
+            socket.write(`GET /api/state HTTP/1.1\r\nHost: marks-organization-moved-coupons.trycloudflare.com\r\nConnection: close\r\n\r\n`)
           })
           const pedacos: Buffer[] = []
           socket.on('data', (d: Buffer) => void pedacos.push(d))

@@ -151,30 +151,35 @@ describe('FASE B -- barreira instalada DEPOIS de todos os registos', () => {
     assert.equal(ctx.effects.length, 5)
   })
 
-  it('barra o assento de FALLBACK (a Web UI inteira)', async () => {
-    const res = await pedir('/')
-    assert.equal(res.status, 401)
-    assert.equal(res.challenge?.startsWith('Basic realm='), true)
+  // ONDA 1 (remocao do login): a barreira de credencial vive na superficie do
+  // TUNEL, nao no loopback. Estes pedidos usam `Host: 127.0.0.1` (o bind
+  // local) e por isso a Onda 1 abre-os DIRETO, sem desafio. A barreira do
+  // TUNEL (401 sem `WWW-Authenticate`) e provada em test/integration/http/
+  // tunel.test.ts e test/security/*. Aqui o que se prende e que o ACESSO LOCAL
+  // abre e NUNCA emite `WWW-Authenticate`.
+
+  it('o ACESSO LOCAL abre e NAO emite WWW-Authenticate', async () => {
+    const assento = await pedir('/')
+    assert.equal(assento.status, 200, 'o acesso local abre direto (onda 1)')
+    assert.equal(assento.challenge, undefined, 'nenhum desafio no acesso local')
+    assert.equal((await pedir('/api/state')).status, 200)
+    assert.equal((await pedir('/plugins/x')).status, 200)
+    assert.equal((await pedir('/__dsh_invariant_probe__')).status, 200)
   })
 
-  it('barra as ROTAS NOMEADAS -- que nunca passam pelo fallback (#853)', async () => {
-    assert.equal((await pedir('/api/state')).status, 401, '/api e a sub-estacao da #853')
-    assert.equal((await pedir('/plugins/x')).status, 401)
-    assert.equal((await pedir('/__dsh_invariant_probe__')).status, 401, 'rota exact tambem')
+  it('o HANDSHAKE DE UPGRADE local abre', async () => {
+    assert.deepEqual(await pedirUpgrade('/api/events.mux'), { resultado: 'upgrade', status: 101 })
   })
 
-  it('barra o HANDSHAKE DE UPGRADE (nao ha same-origin policy em WebSocket)', async () => {
-    assert.deepEqual(await pedirUpgrade('/api/events.mux'), { resultado: 'resposta', status: 401 })
+  it('as grafias evasivas do caminho abrem localmente (sem oraculo de rota)', async () => {
+    assert.equal((await pedir('//api/state')).status, 200)
+    assert.equal((await pedir('/API/state')).status, 200)
+    assert.equal((await pedir('/%61pi/state')).status, 200)
   })
 
-  it('barra as grafias evasivas do caminho', async () => {
-    assert.equal((await pedir('//api/state')).status, 401)
-    assert.equal((await pedir('/API/state')).status, 401)
-    assert.equal((await pedir('/%61pi/state')).status, 401)
-  })
-
-  it('recusa uma credencial errada', async () => {
-    assert.equal((await pedir('/api/state', `Basic ${WRONG_CREDENTIAL}`)).status, 401)
+  it('o acesso local abre mesmo com uma CREDENCIAL errada (a barreira e do tunel)', async () => {
+    assert.equal((await pedir('/api/state', `Basic ${WRONG_CREDENTIAL}`)).status, 200)
+    assert.equal((await pedir('/api/state', `Basic ${WRONG_CREDENTIAL}`)).challenge, undefined)
   })
 })
 

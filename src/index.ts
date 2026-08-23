@@ -58,15 +58,15 @@ import { criarCoalescedor, criarObservadorSessaoNova, criarRelatorioPeriodico } 
 import { assertValidConfig } from './config/assert.ts'
 import { assertSecureBind } from './config/bind.ts'
 import { resolveControl, resolveExposure, shouldAutoStartTunnel, type Config } from './config/schema.ts'
+import type { IncomingMessage, Server } from 'node:http'
 import type { StateStore } from './contracts/state.ts'
 import { IPC_PROTOCOL_VERSION, type IpcIntentMessage } from './contracts/ipc.ts'
 import { createConfirmService } from './control/confirm.ts'
 import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelController } from './control/controller.ts'
 import { criarRespondedorDeNonce, criarRespondedorIpc } from './control/surface-ipc.ts'
-import { resolveWebServerHttpServer, type Context, type Disposable } from './dsh/adapter.ts'
+import type { Context, Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
-import { createGuardedHandler, createGuardedUpgradeHandler, type GateDeps } from './http/gate.ts'
-import { installAuthBarrier } from './http/intercept.ts'
+import { createTunnelProxy } from './tunnel/proxy.ts'
 import {
   createGateAuthStack,
   createRequestOriginResolver,
@@ -113,7 +113,9 @@ import {
  * a montagem, quando vier, so pode usar este.
  */
 export { createRequestOriginResolver } from './http/session-auth.ts'
-import { readSessionCookie } from './session/cookie.ts'
+import { readSessionCookie, assertTrustworthyOrigin, serializeSessionCookie } from './session/cookie.ts'
+import { createLinkTokenStore } from './session/link-token.ts'
+import type { LinkTokenSurface } from './contracts/link-token.ts'
 import { createGuardLogger, type GuardLogger } from './logging/logger.ts'
 import { requestsDeniedPermission } from './permissions/deny.ts'
 import {
@@ -703,63 +705,61 @@ export function apply(ctx: Context, config: Config): void {
   )
 
   /* --- 4. A barreira, sobre o despacho do node:http.Server ------------- */
-  const gate: GateDeps = {
-    ctx,
-    log,
-    config,
-    auth,
-    tunnelOrigin,
-    // L2.5: o endereco por que este servidor responde de facto. NAO e
-    // `config.allowedHosts` (allowlist do BIND) nem `config.trustedRemotes`
-    // (allowlist da PONTA REMOTA) -- ver o cabecalho de `src/http/host-header.ts`.
-    bindHost: ctx.webServer.host,
-    loopbackAuthority: `${ctx.webServer.host}:${String(ctx.webServer.port)}`,
-    loopbackOnlyPrefixes: LOOPBACK_ONLY_PREFIXES,
-    unauthenticatedPrefixes: UNAUTHENTICATED_PANEL_PREFIXES,
+  /**
+   * A SESSAO emitida pelo fluxo `?key=` do portao (onda 1).
+   *
+   * Resolve a ORIGEM efetiva do pedido (esquema+hospedeiro), recusa emitir
+   * sobre uma origem que o navegador ia descartar (`assertTrustworthyOrigin`,
+   * spike S10), e faz `regenerate(presentedId)` -- anti-fixation: o id que o
+   * cliente apresentou morre antes de nascer o novo, exatamente como a rota de
+   * login do painel faz. Devolve a linha `Set-Cookie`; `null` se falhar.
+   */
+  const issueSessionDoPortao = (
+    req: IncomingMessage,
+    presentedId: string | undefined,
+  ): string | null => {
+    // O PROXY e a entrada do TUNEL, que e HTTPS (a borda termina o TLS). O
+    // socket do proxy e loopback em texto claro, logo o resolver derivaria
+    // `http`; forca-se `https` para o cookie `__Host-` ser aceite.
+    const origem = createRequestOriginResolver({ config, tunnelOrigin })(req)
+    const host = origem.host
+    try {
+      assertTrustworthyOrigin({ scheme: 'https', host })
+    } catch {
+      log.warn(
+        'nao emite sessao pelo link: origem nao entrega cookie Secure: ' +
+          `${origem.scheme}://${host}`,
+      )
+      return null
+    }
+    const id = authStack().sessions.regenerate(presentedId)
+    return serializeSessionCookie(id, { scheme: 'https', host })
   }
 
+  /* --- 4. MODELO EXPOSE-PORT: o servidor do DSH fica ABERTO ------------- */
   /**
-   * A superficie e guardada INTEIRA, e a razao e estrutural: no ponto de
-   * despacho existe o `req` (metodo, pathname, cabecalhos) mas NAO a identidade
-   * do plugin dono da rota. Uma politica diferenciada por rota teria de
-   * reconstruir as tabelas do `WebServer`, o que acopla a tres ou quatro campos
-   * `private` em vez de um.
+   * O NUCLEO DA CORRECCAO DO BLOCK (onda 1 -> expose-port).
    *
-   * ISTO E UM ENDURECIMENTO, e esta declarado: o assento de fallback ja era
-   * guardado incondicionalmente e apanha tudo o que nenhuma rota nomeada
-   * reclama, pelo que a diferenca observavel e apenas nas rotas NOMEADAS fora do
-   * inventario -- na composicao Web medida, `prefix /plugins` e a sonda de
-   * invariante `exact`, que passam de abertas a 401.
+   * O servidor do DSH (upstream) NAO e mais guardado por este plugin: o acesso
+   * local a `127.0.0.1:<porta-do-DSH>` abre direto, sem barreira e sem
+   * `WWW-Authenticate` -- e o que o dono quer ("nunca pedir login").
    *
-   * O PARAMETRO `alwaysGuarded` DESAPARECEU. Ele era passado como `true`
-   * literal e nenhuma chave de configuracao o podia mudar -- um controlo com
-   * aparencia de configuravel que nao existia. O que existe no lugar e
-   * {@link UNAUTHENTICATED_PANEL_PREFIXES}, que tem valor real e chamador real.
+   * O guarda agora vive no PROXY do tunel (`src/tunnel/proxy.ts`), um listener
+   * proprio que o `cloudflared` aponta. Decidir "abrir" por `Host` de loopback
+   * era FORJAVEL (um pedido pelo cloudflared com `Host: 127.0.0.1:3080`
+   * passava L2/L2.5 e delegava); por isso NENHUM servidor do DSH decide abrir
+   * por Host -- o upstream fica aberto por NAO SER guardado, e a superficie do
+   * tunel e o proxy, que exige sessao-ou-chave para tudo.
+   *
+   * Este efeito (mantido para a contabilidade LIFO e os 5 efeitos de contrato)
+   * garante que a pilha de autenticacao, criada lazy pelo proxy, e disposta na
+   * desmontagem.
    */
   ctx.effect((): Disposable => {
-    const server = resolveWebServerHttpServer(ctx.webServer)
-
-    const revert = installAuthBarrier(
-      server,
-      {
-        wrapRequest: (delegate) => createGuardedHandler(gate, delegate, 'dispatch:request'),
-        wrapUpgrade: (delegate) => createGuardedUpgradeHandler(gate, delegate, 'dispatch:upgrade'),
-      },
-      log,
-    )
-
     return (): void => {
-      // ORDEM FAIL-CLOSED, e ela e o inverso do que a intuicao sugere: fecha-se
-      // PRIMEIRO a pilha de autenticacao e so DEPOIS se devolve o despacho. Um
-      // pedido que esteja a decidir neste instante encontra um `SessionStore`
-      // disposto (que devolve `null`) e um limitador disposto (que LANCA) --
-      // ambos desaguam no mesmo 401. Pela ordem inversa, haveria uma janela em
-      // que o despacho original ja responde e a pilha ainda decide.
-      try {
-        stack?.dispose()
-      } finally {
-        revert()
-      }
+      // A pilha morre por ultimo: o proxy (controlador) ja parou no efeito LIFO
+      // anterior. Um pedido em voo encontra o `SessionStore` disposto (`null`).
+      stack?.dispose()
     }
   }, 'dsh-guard.barreira')
 
@@ -778,6 +778,8 @@ export function apply(ctx: Context, config: Config): void {
   /** O dono persistido lido no boot (8c) e o MagicStore partilhado (item 5). */
   let pareamentoDoBoot: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
   let magicStoreAtual: ReturnType<typeof createMagicStore> | undefined
+  /** A chave no link do portao (onda 1), criada com o controlador (item 5). */
+  let linkStoreAtual: ReturnType<typeof createLinkTokenStore> | undefined
 
   /**
    * A difusao de estado host -> worker, com `seq` monotonico (CTL-010). A URL e
@@ -905,11 +907,25 @@ export function apply(ctx: Context, config: Config): void {
 
     /* 2. O supervisor do tunel (T3.1) e o controlador (T5.1). */
     const alocador = criarAlocadorDeMetricas(log)
+
+    // MODELO EXPOSE-PORT: o guarda do tunel e o PROXY, e o `cloudflared` aponta
+    // para ELE (porta dedicada), nao para o servidor do DSH (que fica aberto).
+    const tunnelProxy = createTunnelProxy({
+      ctx,
+      log,
+      config,
+      auth,
+      tunnelOrigin,
+      linkToken: { verificar: (c) => (linkStoreAtual?.verificar(c) ?? false) },
+      issueSession: issueSessionDoPortao,
+      upstreamPort: ctx.webServer.port,
+    })
+
     const supervisor = createTunnelSupervisor({
       ctx,
       config: config.tunnel,
-      // A ORIGEM e o servidor do DSH, provado no instante do uso (T3.1).
-      resolveOrigin: () => resolveWebServerHttpServer(ctx.webServer),
+      // A ORIGEM e o PROXY (porta dedicada), provado no instante do uso (T3.1).
+      resolveOrigin: (): Server => tunnelProxy.server,
       allocateMetricsPort: alocador.alocar,
       probe: {
         transport: createHttpProbeTransport({
@@ -992,6 +1008,10 @@ export function apply(ctx: Context, config: Config): void {
     const agora = defaultSupervisorDeps.now
     const magicStore = createMagicStore({ clock: { now: agora } })
     magicStoreAtual = magicStore
+    // A chave no link (onda 1): nao impoe TTL (fecha com a rotacao/queda do
+    // tunel), da pelo relogio apenas por coerencia com o MagicStore.
+    const linkStore = createLinkTokenStore({ clock: { now: agora } })
+    linkStoreAtual = linkStore
     const ott = createOneTimeTokenStore({ clock: { now: agora } })
     const csrf = createCsrfGuard({ clock: { now: agora } })
     const desregistrarPainel = ctx.webServer.register({
@@ -1117,6 +1137,7 @@ export function apply(ctx: Context, config: Config): void {
       desmontarUi()
       desregistrarPainel()
       controlador.dispose()
+      tunnelProxy.dispose()
       alocador.dispose()
     }
   }, 'dsh-guard.controlador')
@@ -1167,7 +1188,19 @@ export function apply(ctx: Context, config: Config): void {
       log.info('telegram: não configurado — rode /parear <código> no bot')
       return (): void => undefined
     }
-    const responder = criarRespondedorIpc({
+    // Item 5 (costura): /acessar (link magico) e /rotacionar (segredo novo,
+    // sessoes invalidadas, nunca a senha pelo chat). Opcionais por forma —
+    // ausentes, o responder volta ao INTERNAL fail-closed de antes.
+    //
+    // `linkToken` e a CHAVE NO LINK (onda 1): a Onda 2 (dona de
+    // `src/control/surface-ipc.ts`) vai compor a URL `?key=<token>` do bot a
+    // partir de `emitir()`. O deps object e construido numa VARIABLE alargada
+    // (`RespondedorIpcDeps & { linkToken }`) para o campo chegar ao responder
+    // sem estar ainda declarado no contrato dos deps — a adicao formal ao
+    // contrato de `surface-ipc.ts` e da Onda 2.
+    const depsRespondedor: Parameters<typeof criarRespondedorIpc>[0] & {
+      linkToken?: LinkTokenSurface | undefined
+    } = {
       controller: controladorAtual,
       modoTunel: config.tunnel !== undefined,
       pareado,
@@ -1176,14 +1209,23 @@ export function apply(ctx: Context, config: Config): void {
       agora: defaultSupervisorDeps.now,
       reemitirEstado,
       aposEmergencia,
-      // Item 5 (costura): /acessar (link magico) e /rotacionar (segredo novo,
-      // sessoes invalidadas, nunca a senha pelo chat). Opcionais por forma —
-      // ausentes, o responder volta ao INTERNAL fail-closed de antes.
       confirm: confirmService,
       magic: magicStoreAtual,
-      secretos: { rotate: () => authStack().secrets.rotate() },
+      // A ROTACAO do segredo revoga a chave no link alem de invalidar as
+      // sessoes: `SecretStore.rotate` ja faz `revokeAll()` das sessoes; aqui
+      // fecha tambem a porta do link. A ORDEM e contrato — sessoes e chave
+      // caem ANTES de o novo digest ser publicado (o mesmo do rotate).
+      secretos: {
+        rotate: () => {
+          const resultado = authStack().secrets.rotate()
+          linkStoreAtual?.revogar()
+          return resultado
+        },
+      },
       notificarDono: difundirNotificacao,
-    })
+      linkToken: linkStoreAtual,
+    }
+    const responder = criarRespondedorIpc(depsRespondedor)
     // EMENDA-COSTURA-5: o transporte do nonce (T5.2 fecha o /ligar ponta a
     // ponta). O worker pede `nonce.request` e o HOST responde `nonce.issued`
     // com o `ConfirmService` de T5.1; o nonce NUNCA e logado (S3) e viaja so

@@ -61,7 +61,7 @@ import {
 } from './host-header.ts'
 import { isTrustedRemote } from './origin.ts'
 import { isGuardedPath } from './path.ts'
-import { challengeBasicAuth, denyNotFound, denyUntrustedOrigin, denyUpgrade } from './responses.ts'
+import { denyNotFound, denyUnauthorized, denyUntrustedOrigin, denyUpgrade } from './responses.ts'
 import {
   authenticateRequest,
   recordAudit,
@@ -70,6 +70,8 @@ import {
   type TunnelOriginRegistry,
 } from './session-auth.ts'
 import { emitSessaoNova, type SessaoNovaEvent } from '../audit/events.ts'
+import { readSessionCookie } from '../session/cookie.ts'
+import type { LinkTokenStore } from '../session/link-token.ts'
 
 /** Tudo o que o portao precisa de saber, injetado -- nada resolvido por dentro. */
 export interface GateDeps {
@@ -171,6 +173,28 @@ export interface GateDeps {
    * {@link GateDeps.loopbackOnlyPrefixes}, e nao a esta lista.
    */
   readonly unauthenticatedPrefixes: readonly string[]
+  /**
+   * A CHAVE NO LINK (`?key=<token>`), validada por este store.
+   *
+   * Onda 1 (remocao do login): o acesso pelo TUNEL entra por SESSAO ou por
+   * esta chave; a chave em si NAO da acesso -- validar aqui e trocar por uma
+   * sessao (`issueSession`, mais abaixo), que e como o navegador passa a
+   * estar autenticado. `emitir()` e dono da Onda 2 (o bot compoe a URL).
+   */
+  readonly linkToken: Pick<LinkTokenStore, 'verificar'>
+  /**
+   * Emite uma sessao para um request e devolve a linha `Set-Cookie`, ou
+   * `null` se a origem NAO entregar cookie `Secure` (ex.: LAN em `http`).
+   *
+   * E o caminho obrigatorio do fluxo `?key=` do portao: uma chave VALIDA e a
+   * antecessora de uma sessao emitida com `regenerate` (anti-fixation) e o
+   * cookie correspondente. Fiado em `src/index.ts`, onde a pilha de sessoes e
+   * a `Config` existem.
+   */
+  readonly issueSession: (
+    req: IncomingMessage,
+    presentedSessionId: string | undefined,
+  ) => string | null
 }
 
 /**
@@ -298,6 +322,40 @@ function refusedAtPerimeter(deps: GateDeps, req: IncomingMessage, surface: strin
 }
 
 /**
+ * Tira a `key` do query e devolve o caminho+resto para o 302 do fluxo `?key=`.
+ *
+ * O redirect tem de levar o navegador para a URL LIMPA (sem `key`), para que a
+ * chave que viajou no link saia do endereco assim que a sessao existir. Todos
+ * os OUTROS parâmetros sao preservados. `undefined` se o query for ilegivel.
+ */
+function stripKeyParam(raw: string | undefined): string | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined
+  const q = raw.indexOf('?')
+  if (q === -1) return raw
+  const before = raw.slice(0, q)
+  const params = new URLSearchParams(raw.slice(q + 1))
+  params.delete('key')
+  const resto = params.toString()
+  return resto.length === 0 ? before : `${before}?${resto}`
+}
+
+/**
+ * Lê o valor de `key` no query do pedido, ou `undefined` quando ausente.
+ *
+ * `key` repetido (`?key=a&key=b`) -- como qualquer parâmetro repetido -- resolve
+ * para o PRIMEIRO valor, por semantica de `URLSearchParams.get`. Isso e a
+ * leitura mais conservadora (nunca escolher uma segunda ocorrencia apos uma
+ * primeira). O resultado segue para `LinkTokenStore.verificar`, que devolve
+ * `false` para qualquer candidato fora do alfabeto.
+ */
+function extrairChaveDoQuery(raw: string | undefined): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const q = raw.indexOf('?')
+  if (q === -1) return undefined
+  return new URLSearchParams(raw.slice(q + 1)).get('key') ?? undefined
+}
+
+/**
  * Teto da memoria de "sessoes ja vistas" do ponto de chamada PREP 5.
  *
  * PORQUE EXISTE: sem teto, um host com meses de uptime acumularia um hash por
@@ -330,6 +388,7 @@ export function createGuardedHandler(
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let authorized: boolean
     let viaTunnel = false
+    let auth: GateAuth
 
     try {
       /* ---- L2 + L2.5 ---------------------------------------------------- */
@@ -358,8 +417,13 @@ export function createGuardedHandler(
         return
       }
 
-      /* ---- L3: sessao ou credencial ------------------------------------- */
-      const auth = deps.auth()
+      /* ---- L3: sessao ou chave no link (superficie do TUNEL) ------------- */
+      // MODELO EXPOSE-PORT: esta politica corre no PROXY dedicado do tunel,
+      // nao no servidor do DSH (que fica ABERTO). Por isso NUNCA ha "acesso
+      // local abre": todo pedido que chega ao proxy veio do tunel (o cloudflared
+      // abre o socket em 127.0.0.1) e tem de autenticar -- mesmo com um
+      // `Host: 127.0.0.1:3080` FORJADO, que passa L2/L2.5 e morre AQUI em L3.
+      auth = deps.auth()
       const outcome = await authenticateRequest({
         req,
         auth,
@@ -428,7 +492,7 @@ export function createGuardedHandler(
               `[${surface}] sessao nova NAO registada (auditoria indisponivel); ` +
                 `pedido NEGADO (fail-closed): ${String(req.method)} ${String(req.url)}`,
             )
-            challengeBasicAuth(res, config.realm)
+            denyUnauthorized(res)
             return
           }
           emitSessaoNova(evento, log)
@@ -447,16 +511,54 @@ export function createGuardedHandler(
         `[${surface}] falha no caminho de decisao; pedido NEGADO (fail-closed): ` +
           `${error instanceof Error ? error.message : String(error)}`,
       )
-      if (!res.headersSent) challengeBasicAuth(res, config.realm)
+      if (!res.headersSent) denyUnauthorized(res)
       return
     }
 
     if (!authorized) {
+      // ----------------------------------------------------------------------
+      // O fluxo da CHAVE NO LINK (`GET /?key=<token>`), superficie do TUNEL.
+      // ----------------------------------------------------------------------
+      // Sem sessao e sem `?key=` valida, o teto e o 401 TEXTO PURO sem desafio:
+      // NUNCA `WWW-Authenticate` (o popup de login do navegador foi removido).
+      // Se houver uma chave valida, troca-se por uma SESSAO e o navegador segue
+      // pelo 302 para a URL limpa (a chave sai do endereco).
+      if (req.method === 'GET') {
+        const chave = extrairChaveDoQuery(req.url)
+        if (
+          chave !== undefined &&
+          deps.linkToken.verificar(chave) &&
+          // Em MODO RESTRITO o tunel nao autentica: a chave nao e excecao.
+          !(auth.restricted.isActive() && viaTunnel)
+        ) {
+          const apresentada = readSessionCookie(singleHeader(req, 'cookie')) ?? undefined
+          const setCookie = deps.issueSession(req, apresentada)
+          if (setCookie !== null) {
+            const destino = stripKeyParam(req.url) ?? '/'
+            // HIGH #2: loga a URL LIMPA (sem `?key=`). O `req.url` bruto
+            // carrega o token de 256 bits; loga-lo seria publicar a chave.
+            log.info(
+              `[${surface}] chave no link VALIDA: 302 de ${destino} para a URL limpa com sessao`,
+            )
+            res.writeHead(302, {
+              Location: destino,
+              'Set-Cookie': setCookie,
+              'Cache-Control': 'no-store',
+              // Ver a REGRA DE FICHEIRO nas recusas; um redirect pode ser servido
+              // sob a URL do tunel e nao deve vazar essa URL no Referer.
+              'Referrer-Policy': 'no-referrer',
+            })
+            res.end()
+            return
+          }
+        }
+      }
+
       log.warn(
         `[${surface}] 401 em ${String(req.method)} ${String(req.url)} ` +
-          '(sem sessao valida e sem credencial aceite).',
+          '(superficie do tunel sem sessao valida e sem chave no link aceite).',
       )
-      challengeBasicAuth(res, config.realm)
+      denyUnauthorized(res)
       return
     }
     // A LANDMINE DO TUNEL. Ver `rewriteAuthenticatedTunnelRequest`: isto desarma
@@ -529,7 +631,7 @@ export function createGuardedUpgradeHandler(
 
     try {
       if (refusedAtPerimeter(deps, req, surface)) {
-        denyUpgrade(socket, 403, config.realm)
+        denyUpgrade(socket, 403)
         return
       }
 
@@ -556,7 +658,7 @@ export function createGuardedUpgradeHandler(
           `[${surface}] Upgrade recusado em ${String(req.url)}: rota de CANAL LOCAL APENAS ` +
             `alcancada por '${String(req.headers.host)}'.`,
         )
-        denyUpgrade(socket, 401, config.realm)
+        denyUpgrade(socket, 401)
         return
       }
 
@@ -579,11 +681,17 @@ export function createGuardedUpgradeHandler(
           // NAO se audita: ver "O QUE NAO E AUDITADO" em `session-auth.ts`. A
           // recusa e alcancavel sem credencial e sem limite, e a auditoria e
           // fail-closed -- uma linha por tentativa era um botao de negar tudo.
-          denyUpgrade(socket, 403, config.realm)
+          denyUpgrade(socket, 403)
           return
         }
       }
 
+      /* ---- L3: sessao obrigatoria (superficie do TUNEL) -------------------- */
+      // MODELO EXPOSE-PORT: este handshake corre no PROXY do tunel. NUNCA ha
+      // "WebSocket local abre": todo pedido que chega ao proxy veio do tunel e
+      // exige SESSao -- mesmo com `Host: 127.0.0.1` forjado. A validacao de
+      // `Origin` acima vale para todos (a camada de origem mantem-se). Sem
+      // sessao: recusa 401 sem `WWW-Authenticate`.
       const auth = deps.auth()
       const outcome = await authenticateRequest({
         req,
@@ -610,10 +718,10 @@ export function createGuardedUpgradeHandler(
 
     if (!authorized) {
       log.warn(
-        `[${surface}] Upgrade recusado (sem sessao valida e sem credencial aceite) em ` +
+        `[${surface}] Upgrade recusado (superficie do tunel sem sessao valida) em ` +
           `${String(req.url)}.`,
       )
-      denyUpgrade(socket, 401, config.realm)
+      denyUpgrade(socket, 401)
       return
     }
 

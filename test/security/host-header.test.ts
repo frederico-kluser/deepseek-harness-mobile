@@ -167,9 +167,14 @@ describe('as grafias equivalentes de loopback sao aceites', () => {
     }
   })
 
-  it('sem credencial continua a ser 401 -- L2.5 nao substitui L3', async () => {
+  it('a superficie do TUNEL NAO abre por Host de loopback (BLOCK) -- 401 sem desafio', async () => {
+    // MODELO EXPOSE-PORT: a politica deste ficheiro e a do PROXY/tunel, que
+    // NAO tem "acesso local abre". Um `Host: 127.0.0.1` forjado sem credencial
+    // e 401 (o furo do revisor). O servidor do DSH (upstream) abre por NAO SER
+    // guardado -- coberto em test/unit/tunnel/proxy.test.ts.
     const res = await pedirComHost(`127.0.0.1:${String(port)}`)
-    assert.equal(res.status, 401)
+    assert.equal(res.status, 401, 'o Host de loopback forjado NAO abre a superficie do tunel')
+    assert.equal(res.challenge, undefined, '401 sem desafio')
   })
 })
 

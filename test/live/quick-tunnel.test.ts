@@ -580,10 +580,8 @@ describe(
     it('401 sem credencial / 200 com sessao, PELA URL PUBLICA', { timeout: 120_000 }, async () => {
       const semCredencial = await pedirPublico('/api/state')
       assert.equal(semCredencial.status, 401, 'sem credencial, o portao responde 401 pela internet')
-      assert.ok(
-        semCredencial.challenge !== undefined && semCredencial.challenge.includes('Basic'),
-        'o 401 vem com WWW-Authenticate',
-      )
+      // Onda 1: o 401 do tunel NAO emite `WWW-Authenticate` (nunca mais o popup).
+      assert.equal(semCredencial.challenge, undefined, 'o 401 pela internet NAO traz desafio')
 
       const comSessao = await pedirPublico('/api/state', { headers: { cookie: b.emitirSessao() } })
       assert.equal(comSessao.status, 200, 'com sessao, o pedido atravessa o tunel ate a origem')

@@ -230,7 +230,7 @@ describe('a pergunta falsificavel: 401 de fora, pela URL do tunel', () => {
     })
 
     assert.equal(res.status, 401, `URL publica: ${TUNNEL_URL}/api/commands/execute`)
-    assert.equal(res.challenge?.startsWith('Basic realm='), true)
+    assert.equal(res.challenge, undefined, 'o 401 do tunel NAO emite WWW-Authenticate (nao ha popup)')
     assert.equal(pedidoVisto(), undefined, 'nada chegou a sub-estacao /api')
   })
 
