@@ -1,0 +1,488 @@
+/* ===========================================================================
+ * guard-panel.css — o look-and-feel do painel Telegram (dsh.client).
+ *
+ * Todas as classes têm o prefixo `guard-` e são LOWER-HYPHEN (`guard-section`,
+ * `guard-card`, …) para NUNCA colidir com o host (as classes dos ui-settings-*
+ * são CSS Modules hasheadas pelo Vite; as nossas são cruas por escolha do
+ * build — ver build-client.mjs) e para coincidir 1:1 com os `className` do
+ * `client/index.ts`.
+ *
+ * Vocabulário de DESIGN herdado dos ui-settings (SettingsRoot.module.css,
+ * ModelsSection.module.css e os primitives Button/Input): body 14/22,
+ * caption 12/18, títulos 16/500 lh24, controlo cápsula r18 (h36) e campo de
+ * 32px com focus brand, separadores border-l2, e TODA a cor através de token
+ * `--dsw-alias-*`. Nenhum literal de cor/estado — é isso que mantém o painel
+ * a ler o tema light E dark do shell em runtime.
+ *
+ * O CSS é embebido no bundle pelo loader `text` do esbuild e injetado num
+ * `<style id="dsh-guard-panel-css">` pelo apply (ver asegurarCss). Sem
+ * literais hardcoded de tema: só tokens. =================================== */
+
+/* Cápsula da própria section — estende o .options do panel sem tocá-lo.
+   Largura limitada (640px) como as sections stub dos ui-settings. */
+.guard-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 640px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Título do painel (mesmo peso/ritmo do .title dos ui-settings). */
+.guard-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Parágrafo de apoio / quebra-linhas. */
+.guard-intro {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.guard-muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Chips / badges de estado — o "badge do DSH": cápsula pequena com contorno
+ * l3 e tom de label secundário (regra .rowTag dos ModelsSection), tingida
+ * pelo estado de cor quando aplicável.
+ * ---------------------------------------------------------------- */
+
+.guard-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+/* O pontinho de estado (mesma regra do credentialDot dos ModelsSection). */
+.guard-chip-dot {
+  box-sizing: border-box;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.9;
+}
+
+.guard-chip-success {
+  border-color: var(--dsw-alias-state-success-primary);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.guard-chip-warning {
+  border-color: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+/* O @handle que estampa o detalhe do chip. */
+.guard-chip-handle {
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+ * Cartão — a superfície "outlined on panel fill" dos ModelsSection (.rowCard):
+ * r12, hairline border-l2. Usado para a Chave do bot, Instruções e Acesso.
+ * ---------------------------------------------------------------- */
+
+.guard-card {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: transparent;
+}
+
+.guard-card-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* A lista de passos das instruções (/parear, /ligar, …). */
+.guard-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guard-step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Linha de comando copiável com botão ("copiar"). */
+.guard-cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+/* O comando copiável — monospace agarrado ao texto do passo. */
+.guard-code {
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-all;
+}
+
+/* A grade de KPIs (Total conexões / Sessões vivas). */
+.guard-kpis {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.guard-kpi {
+  flex: 1 1 130px;
+  min-width: 130px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guard-kpi-value {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.guard-kpi-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Formulário de token.
+ * ---------------------------------------------------------------- */
+
+.guard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.guard-field-label {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* O campo 32px do harness (.wrap do Input) com o toggle dentro. */
+.guard-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.guard-input-wrap:focus-within {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.guard-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+}
+
+.guard-input::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+  font-family: inherit;
+}
+
+/* O botão de mostrar/ocultar dentro do campo. */
+.guard-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.guard-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* A barra do botão principal — cápsula r18 h36 (.button .primary/ghost). */
+.guard-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.guard-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: 18px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  padding: 0 16px;
+  height: 36px;
+}
+
+.guard-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.guard-btn-primary {
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.guard-btn-primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.guard-btn-ghost:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.guard-btn-ghost:active:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.guard-btn-outline {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+}
+
+.guard-btn-outline:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Botão pequeno (cápsula r14 h28; Button .sm). */
+.guard-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  padding: 0 10px;
+  height: 28px;
+}
+
+.guard-btn-sm:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.guard-btn-sm:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* ---------------------------------------------------------------------------
+ * Feedback de formulário — estados renderizados DENTRO da aba (regra .notice
+ * do ModelsSection: 12/18) no tom do estado correspondente.
+ * ---------------------------------------------------------------- */
+
+.guard-notice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.guard-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.guard-success-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-success-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Avisos discretos (IP não confiável) — caixa r12 com hairline ligeiramente
+ * tingida, lendo como o WelcomeNotice dos ui-settings-models.
+ * ---------------------------------------------------------------- */
+
+.guard-warn-box {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-state-warn-primary);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.guard-warn-box p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.guard-warn-box strong {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Lista de sessões vivas — cada linha um cartão delgado.
+ * ---------------------------------------------------------------- */
+
+.guard-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guard-session {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.guard-session-id {
+  flex: none;
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 4px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.guard-session-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.guard-session-device {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guard-session-meta {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guard-session-ip {
+  flex: none;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+/* A tag "IP não confiável". */
+.guard-tag {
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* Rodapé ligeiro do refresh automático. */
+.guard-report-footer {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}

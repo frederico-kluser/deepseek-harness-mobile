@@ -130,6 +130,14 @@ export default defineConfig([
     'worker/**/*.d.ts.map',
     /* Evidencia congelada dos spikes da Onda 0 (tem package.json proprio). */
     'scripts/spike/**',
+    /* `client/**` — o half de UI (dsh.client) é um BUNDLE de browser com
+       `react` como external (palavra seed do module table do harness), fora
+       do `include` do tsconfig da raiz e sem `@types/react` instalado (zero
+       deps). O ESLint type-aware (`projectService` = tsconfig) não o consegue
+       encontrar e reportaria "not found by the project service". O gate real
+       do bundle é `pnpm run build:client` (esbuild + smoke headless), NÃO o
+       lint do servidor. */
+    'client/**',
   ]),
 
   /* ------------------------------------------------------------------ */

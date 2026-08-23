@@ -47,6 +47,17 @@ const result = await build({
   format: 'cjs',
   platform: 'browser',
   target: ['es2022'],
+  // O CSS do painel (`client/guard-panel.css`) é importado por `index.ts` e
+  // tem de ser EMBUTIDO no próprio client.js — o harness monta só esse ficheiro
+  // (`/plugins/<id>/client.js`), não side-cars de CSS. O loader `text` (built-in
+  // do esbuild, zero deps novas) verte o ficheiro para uma STRING no bundle, e
+  // o `apply` injeta-o num `<style id="dsh-guard-panel-css">`. As classes já
+  // são prefixadas `guard-` para nunca colidir com o host; é propositadamente
+  // CSS PLAIN com os tokens `--dsw-*` do tema (não CSS Modules hashado — o Vite
+  // do harness faz isso, mas aqui o bundle é standalone; a prefixação manual
+  // dá o mesmo isolamento com menos risco de o esbuild despachar o CSS para um
+  // output de side-car que ninguém serviria).
+  loader: { '.css': 'text' },
   external: EXTERNAL,
   minify: false,
   sourcemap: true,
@@ -82,6 +93,16 @@ if (outMap) writeFileSync(`${jsPath}.map`, outMap.text)
 // Sanidade: o bundle deve registrar o factory com o id do pacote.
 if (!code.includes(`id: ${JSON.stringify(id)}`)) {
   throw new Error(`bundle não declara o id ${JSON.stringify(id)}`)
+}
+
+// Sanidade (CSS): o guard-panel.css tem de vir EMBUTIDO no client.js (loader
+// `text`), senão o painel renderiza sem estilo. Procura a primeira classe real
+// do ficheiro no bundle — se o loader falhasse e despachasse o CSS para fora,
+// o `guard-` estaria ausente e o build abortaria com erro claro.
+if (!code.includes('.guard-section')) {
+  throw new Error(
+    'CSS do painel (guard-panel.css) não embebido no bundle — o loader `.css: "text"` não funcionou ou o import caiu fora. Verifique client/index.ts.',
+  )
 }
 
 console.log(`[build-client] ${jsPath} (${code.length} bytes)`)
