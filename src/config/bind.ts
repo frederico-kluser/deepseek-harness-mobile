@@ -31,8 +31,8 @@ export const KNOWN_BIND_HOSTS = ['127.0.0.1', '0.0.0.0'] as const satisfies read
 
 /** `never` (e portanto erro de compilacao) se algum `BindHost` ficar de fora. */
 type UncoveredBindHost = Exclude<BindHost, (typeof KNOWN_BIND_HOSTS)[number]>
-const _everyBindHostIsCovered: UncoveredBindHost extends never ? true : never = true
-void _everyBindHostIsCovered
+const everyBindHostIsCovered: UncoveredBindHost extends never ? true : never = true
+void everyBindHostIsCovered
 
 /**
  * Decide se um endereco de bind e o curinga "todas as interfaces".

@@ -323,6 +323,7 @@ function assertExistingDirectory(value: string, path: string): void {
     throw new Error(
       `[${PLUGIN_NAME}] config.${path} ('${value}') nao existe ou nao e acessivel: ${reason}. ` +
         'O spawn do worker falharia com ENOENT a cada tentativa.',
+      { cause: error },
     )
   }
 

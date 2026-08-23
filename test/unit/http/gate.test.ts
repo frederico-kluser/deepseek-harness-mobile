@@ -61,7 +61,7 @@ function abrirTunelComBorda(...args: Parameters<typeof bancada>): Bancada {
     tunnelReady: true,
     config: {
       exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false },
-      ...(base.config ?? {}),
+      ...base.config,
     },
   })
 }

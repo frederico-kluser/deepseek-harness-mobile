@@ -211,6 +211,7 @@ function superficieUi(b: Bancada): Superficie {
     requestId: () => 'ui-' + b.clock.now().toString(36) + Math.floor(Math.random() * 1000).toString(36),
     issueNonce: (action: 'start' | 'stop' | 'reset') => b.controlador.emitirNonce(action),
     emit: (intent: Parameters<TunnelController['despachar']>[0]) => b.controlador.despachar(intent),
+    telegramState: () => ({ online: false, motivo: 'sem-chave' } as const),
   }
   const startHandler = createStartHandler(core)
   const confirmHandler = createConfirmHandler(core)

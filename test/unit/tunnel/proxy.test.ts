@@ -71,7 +71,7 @@ function pedirAoProxy(port: number, path: string, host: string, headers: Record<
   })
 }
 
-async function setUpProxy(opcoes: { sessionEmitida?: boolean } = {}): Promise<{ proxyPort: number; upstreamPort: number }> {
+async function setUpProxy(_opcoes: { sessionEmitida?: boolean } = {}): Promise<{ proxyPort: number; upstreamPort: number }> {
   aberta = bancada({ comSegredo: true, tunnelReady: true })
   aberta.tunnelOrigin.publish(FAKE_TUNNEL_ORIGIN)
 
