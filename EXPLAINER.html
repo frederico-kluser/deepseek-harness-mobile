@@ -153,7 +153,7 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Remoção total de login/senha: local abre direto; túnel só com a chave do link ?key= enviado pelo bot do Telegram (modelo expose-port); 401 texto puro sem desafio; /rotacionar revoga chave e sessões</p>
+    <p class="lead text-white-50 mb-3">/rotacionar fecha ativamente TODAS as conexões abertas sob o acesso antigo (WebSocket 101 e streams em voo), além de revogar a chave e as sessões; o listener do proxy permanece — feature implementada do início ao fim pelo deep-orchestrator</p>
     <div class="d-flex flex-wrap gap-2">
       <span class="badge badge-accent">vdsh-guarded-bot-orchestrator 0.1.x</span>
       <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-23</span>
@@ -213,7 +213,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Remoção total de login/senha: local abre direto; túnel só com a chave do link ?key= enviado pelo bot do Telegram (modelo expose-port); 401 texto puro sem desafio; /rotacionar revoga chave e sessões</p>
+      <p class="text-body-secondary">/rotacionar fecha ativamente TODAS as conexões abertas sob o acesso antigo (WebSocket 101 e streams em voo), além de revogar a chave e as sessões; o listener do proxy permanece — feature implementada do início ao fim pelo deep-orchestrator</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -225,7 +225,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">2</div>
+              <div class="display-6 fw-bold stat-value">1</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -234,7 +234,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">4</div>
+              <div class="display-6 fw-bold stat-value">5</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -243,7 +243,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">5</div>
+              <div class="display-6 fw-bold stat-value">3</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -294,10 +294,7 @@
 
 <table>
 <tr><th>Onda</th><th>Worktree</th><th>Escopo</th><th>Squash</th><th>Status</th></tr>
-<tr><td>1</td><td>onda1-gate-sem-login</td><td>Gate sem login: local aberto; túnel só com ?key= (proxy dedicado, 401 texto puro sem desafio); link-token store; /rotacionar revoga</td><td>4b6e45b + a12c42d</td><td>MERGED ✅</td></tr>
-<tr><td>2</td><td>onda2-fix-lint</td><td>Lint 0 erros (src/config) + typecheck telegramState nos testes</td><td>13bb1f3</td><td>MERGED ✅</td></tr>
-<tr><td>2</td><td>onda2-link-no-bot</td><td>Bot entrega link ?key=; painel sem desafio; /rotacionar revoga chave+sessões</td><td>d6e8750</td><td>MERGED ✅</td></tr>
-<tr><td>2</td><td>onda2-docs-sem-login</td><td>Docs do modelo: THREAT-MODEL, INSTALL, ONBOARDING-TELEGRAM, manual-runs/M5</td><td>82203ea</td><td>MERGED ✅</td></tr>
+<tr><td>1</td><td>onda1-encerrar-conexoes</td><td>/rotacionar encerra ativamente TODAS as conexões abertas sob o acesso antigo (WebSocket 101 + streams em voo), além de revogar chave e sessões; listener do proxy permanece</td><td>16a89a4</td><td>MERGED ✅ (gate snapshot verde)</td></tr>
 </table>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
@@ -316,29 +313,18 @@
 
 <table>
 <tr><th>Arquivo</th><th>Tipo</th><th>O que muda</th></tr>
-<tr><td>src/tunnel/proxy.ts</td><td>novo</td><td>Proxy dedicado do túnel: SEMPRE exige sessão/?key=, 401 texto puro sem WWW-Authenticate</td></tr>
-<tr><td>src/session/link-token.ts</td><td>novo</td><td>Store do token de link (256 bits, reutilizável até /rotacionar)</td></tr>
-<tr><td>src/contracts/link-token.ts</td><td>novo</td><td>LinkTokenSurface — contrato da superfície para o bot e UI</td></tr>
-<tr><td>src/http/gate.ts</td><td>editado</td><td>Acesso local fica aberto; o proxy é o guarda do túnel</td></tr>
-<tr><td>src/http/responses.ts</td><td>editado</td><td>denyUnauthorized — 401 texto puro, NUNCA desafia (sem WWW-Authenticate)</td></tr>
-<tr><td>src/index.ts</td><td>editado</td><td>Costura: resolveOrigin → proxy do túnel; rotate revoga token+sessões</td></tr>
-<tr><td>src/control/surface-ipc.ts</td><td>editado</td><td>/ligar emite link ?key= (sessão) para o bot enviar</td></tr>
-<tr><td>src/audit/notify.ts</td><td>editado</td><td>Texto do link mágico ?key= (sem #mk, sem senha)</td></tr>
-<tr><td>src/panel/routes.ts</td><td>editado</td><td>Painel alinhado: denyUnauthorized, nunca pede senha</td></tr>
-<tr><td>worker/commands/{access,onoff,router}.ts</td><td>editado</td><td>Textos /ligar /desligar /acessar com URL autenticada ?key=</td></tr>
-<tr><td>src/config/{bind,assert}.ts</td><td>editado</td><td>Fix lint (prefixo _everyBindHostIsCovered, {cause:error})</td></tr>
-<tr><td>docs/*, README.md, examples/minimal</td><td>editado</td><td>Modelo documentado: sem login; local abre; túnel ?key=; 401 sem desafio</td></tr>
+<tr><td>src/tunnel/proxy.ts</td><td>modificado</td><td>Rastreia conexões do lado cliente no `server.on('connection')` (Set de sockets); novo método `encerrarConexoesAtivas()`: destroy() nos sockets + closeAllConnections como rede de segurança; idempotente, NÃO derruba o listener</td></tr>
+<tr><td>src/index.ts</td><td>modificado</td><td>Holder `tunnelProxyAtual` (padrão magicStoreAtual/linkStoreAtual); `secretos.rotate` agora: revoga sessões → revoga chave → encerra conexões ativas (ordem fail-closed)</td></tr>
+<tr><td>test/unit/tunnel/proxy.test.ts</td><td>modificado</td><td>Casos (h) WebSocket 101 morre no rotate + listener continua; (h2) keep-alive em voo morre; idempotência; + casos complementares da testing subwave</td></tr>
+<tr><td>docs/THREAT-MODEL.md</td><td>modificado</td><td>Linha: /rotacionar encerra também as conexões ativas além de revogar chave e sessões</td></tr>
+<tr><td>docs/ONBOARDING-TELEGRAM.md</td><td>modificado</td><td>Linha da tabela /rotacionar: encerra conexões ativas (WebSocket)</td></tr>
 </table>
 
       <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
 <ul>
-<li><code>4b6e45b</code> — onda1-gate-sem-login: sem login (gate, proxy dedicado, rotate revoga)</li>
-<li><code>13bb1f3</code> — onda2-fix-lint: lint 0 erros + typecheck telegramState</li>
-<li><code>d6e8750</code> — onda2-link-no-bot: link ?key= no bot; painel sem desafio</li>
-<li><code>82203ea</code> — onda2-docs-sem-login: docs do modelo sem-login</li>
-<li><code>a12c42d</code> — onda1 final: reposição de conflito resolvida na filha (JSDoc + void listeners)</li>
+<li><code>16a89a4</code> — onda1-encerrar-conexoes: /rotacionar encerra ativamente TODAS as conexões abertas sob o acesso antigo</li>
 </ul>
     </div>
 
@@ -350,32 +336,30 @@
 
 <div class="grid2">
 <div><h4>Antes</h4><ul>
-<li>Gate exigia login/senha com desafio WWW-Authenticate (popup do navegador)</li>
-<li>Link do bot usava #mk sem chave embutida; painel ainda desafiava auth básica</li>
-<li>Túnel abria por Host header — 403/401 por heurística</li>
+<li>/rotacionar revogava a chave do link e as sessões no servidor</li>
+<li>MAS conexões JÁ ABERTAS (WebSocket 101, streams HTTP em voo) continuavam vivas</li>
+<li>closeAllConnections só rodava no dispose (queda do túnel) — e não fecha sockets upgraded</li>
 </ul></div>
 <div><h4>Depois</h4><ul>
-<li>LOCAL (loopback): abre direto, sem nunca pedir credencial</li>
-<li>TÚNEL: só abre com a chave NO LINK — bot envia URL ?key=&lt;token&gt; (modelo expose-port)</li>
-<li>Sem chave/sessão → 401 texto puro, SEM desafio; /rotacionar revoga token e sessões</li>
+<li>Proxy rastreia toda conexão do cliente no evento `connection`</li>
+<li>rotate: revoga sessões → revoga chave → ENCERRA TODAS as conexões ativas (destroy)</li>
+<li>Listener permanece: com a chave nova, o túnel continua funcionando</li>
 </ul></div>
 </div>
 
       <h2 class="h4 pane-title">Impacto</h2>
       <p>O que cada mudança significa para quem usa o deep-orchestrator-agent-skill:</p>
 <ul>
-<li>Acesso local sem atrito: nenhuma credencial em lugar nenhum</li>
-<li>Túnel autenticado por posse do link (expose-port) — mesma UX já conhecida</li>
-<li>401 uniforme (gate, túnel e painel partilham denyUnauthorized) — sem vetor de popup/login</li>
-<li>Chave de link rotacionável sem senha permanente em claro</li>
+<li>Quem pegou o link antigo e JÁ estava conectado (WebSocket/stream) cai NA HORA da rotação</li>
+<li>Fail-closed: credenciais caem antes do encerramento — nada em voo re-autentica</li>
+<li>Nenhuma conexão de terceiros (upstream DSH, outras sessões) é afetada além do necessário</li>
 </ul>
 
       <h2 class="h4 pane-title">Novas capacidades</h2>
 <ul>
-<li>Botão Telegram offline/online na UI do DSH com estado fiel ao runtime</li>
-<li>Ações /ligar /desligar /acessar no bot do Telegram</li>
-<li>/ligar entrega URL autenticada ?key= no Telegram — um toque abre</li>
-<li>401 texto puro sem desafio em TODAS as superfícies</li>
+<li>`encerrarConexoesAtivas()` — método novo no contrato TunnelProxy, idempotente e síncrono</li>
+<li>Rastreio real de sockets via `server.on('connection')` (cobre keep-alive reutilizados e upgrades)</li>
+<li>Rede de segurança `closeAllConnections` para escapados do Set</li>
 </ul>
     </div>
 
@@ -386,10 +370,9 @@
       <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
 <ul>
-<li>Decisão do dono (fixa): NUNCA pedir login/senha — nem prompt, formulário ou WWW-Authenticate</li>
-<li>Modelo expose-port: a chave viaja no link que o bot envia; sem chave → 401</li>
-<li>Token de link 256 bits reutilizável até /rotacionar (nunca a senha permanente em claro)</li>
-<li>challengeBasicAuth permanece VIVO (src/panel/routes.ts ainda o usa) — documentado, não removido</li>
+<li>Ordem é contrato: sessões + chave caem ANTES do encerramento (fail-closed)</li>
+<li>Holder `tunnelProxyAtual` porque proxy (efeito controlador) e rotate (efeito worker) vivem em ctx.effect distintos — mesmo padrão de magicStoreAtual/linkStoreAtual</li>
+<li>Rastreio manual obrigatório: closeAllConnections do Node não fecha sockets upgraded</li>
 </ul>
     </div>
 
@@ -400,12 +383,12 @@
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
 <ol>
-<li>FASE 0: contexto resolvido (BASE_DIR, BRANCH_NS, SKILL_HOME) — run-20260823-014145</li>
-<li>Onda 1: gate sem login via squash 4b6e45b integrado; revisão adversarial detectou 401-texto-único</li>
-<li>Onda 2 (paralela): fix-lint, link-no-bot, docs — 3 squashes sequenciais</li>
-<li>Conflito no re-merge da onda 1 (add/add do proxy + JSDoc): resolvido NA filha em b9152b8, re-merged → a12c42d</li>
-<li>Gate final em main: build ✅ lint 0 erros ✅ testes 1837/0 ✅</li>
-<li>Sweep: 5 worktrees removidas, 0 branches restantes</li>
+<li>FASE 0: contexto resolvido — run-20260823-090030</li>
+<li>Análise: lacuna medida (conexões ativas sobreviviam ao rotate)</li>
+<li>Onda 1: implementação + testes (h)/(h2) própria</li>
+<li>Revisão adversarial pré-merge: APPROVE</li>
+<li>Gate snapshot: build ✅ lint 0 ✅ testes 1836/1836 ✅</li>
+<li>Subwaves: validação PASS, revisor integrado encontrou HIGH (teste (h) vacuous) → testes complementares corrigem</li>
 </ol>
     </div>
 
