@@ -42,12 +42,18 @@ FONTES DE PESQUISA citadas aqui:
 | PAIR-007/010 | Teto de tentativas + atraso exponencial; código nunca ecoado | Respostas de erro uniformes; o código NÃO sai do worker/painel. |
 | — | Nenhum texto carrega token/código real/endereço/instrução que revele estado a estranho | Auditado em cada string do contrato. |
 
-**O que MUDOU (não de segurança, mas de UX) — para a Onda 3 registrar:**
-- A lista publicada (`COMANDOS_PUBLICADOS`) cai de **7 → 5** comandos.
+**O que MUDOU (não de segurança, mas de UX) — registrado aqui:**
+- A lista publicada (`COMANDOS_PUBLICADOS`) cai de **7 → 3** comandos (Onda 1 —
+  nome e botões): so ficam `/menu`, `/parear`, `/ajuda`. `/status` e
+  `/emergencia` SAEM do menu e viram SÓ botões do cartão de controle (`/menu`),
+  sem deixarem de existir como comandos digitados (routing intacto).
 - `answerCallbackQuery` passa a carregar **toast de ação** nas ações do dono
-  ("Ligando…", "Desligando…") — a um estranho o answer continua **vazio**.
+  ("Ligando…", "Desligando…", "Verificando…") — a um estranho o answer continua
+  **vazio**.
 - O fluxo ganha um **novo comando `/menu`** (cartão de controle, owner-only) e o
   `/start` ganha **botões** (mas só o de /menu resolve para o dono).
+- O botão **`🏠 Início` é REMOVIDO** do cartão e o cartão passa a UMA ação por
+  linha (coluna única). Rebrand: o cartão de controle chama-se **`🎛 Remote Access`**.
 
 ---
 
@@ -72,20 +78,22 @@ FONTES DE PESQUISA citadas aqui:
 ## 2. MENU publicados (setMyCommands)
 
 ### Decisão
-Reduzir a lista publicada de 7 para **5 comandos**, na ordem
-`/menu` → `/status` → `/parear` → `/emergencia` → `/ajuda`. Ações de manutenção
-(`/ligar`, `/desligar`, `/acessar`, `/rotacionar`) saem do menu e viram botões
-do cartão de controle, mas continuam funcionando como comandos digitados.
+Reduzir a lista publicada de 7 para **3 comandos**, na ordem
+`/menu` → `/parear` → `/ajuda`. Ações de manutenção (`/ligar`, `/desligar`,
+`/acessar`, `/rotacionar`) saem do menu e viram botões do cartão de controle.
+Na Onda 1 — nome e botões, **`/status` e `/emergencia` também saem** da lista
+publicada: o dono encontra-os no cartão (`/menu`). Todos os comandos digitados
+(`/status`, `/emergencia`, `/ligar`, …) **continuam válidos** (routing intacto) —
+só deixam de aparecer na lista do BotFather, para encurtar o menu.
 
 ### Porquê (fonte)
 Menu curto (≤5-8 comandos); ordem **principal → status → ações → ajuda**; menu
 com muita coisa faz o usuário se perder ("muitos botões"). Comandos são para
 **descoberta**; botões são para **ação frequente** — as ações de manter o túnel
-são ações, logo botões. `/emergencia` permanece para o dono encontrar o pânico
-sem pensar (a lista publicada não vaza estado: qualquer um a vê, mas só o dono
-executa — o guard barra o resto).
+são ações, logo botões. `/emergencia` e `/status` continuam acessíveis da forma
+mais rápida (botões do cartão), mas a lista publicada fica mínima.
 
-### Texto EXATO final — `COMANDOS_PUBLICADOS` (Onda 3)
+### Texto EXATO final — `COMANDOS_PUBLICADOS` (Onda 1 — nome e botões)
 
 **OLD (7):**
 ```
@@ -98,37 +106,32 @@ executa — o guard barra o resto).
 /emergencia — Emergência: desliga o túnel e este bot
 ```
 
-**NEW (5):** descrições imperativas, 1-4 palavras, sem ponto nem parênteses.
+**NEW (3):** descrições imperativas, 1-4 palavras, sem ponto nem parênteses.
 ```
 /menu       — Abrir o painel de controlo
-/status     — Ver estado do túnel
 /parear     — Parear com um código
-/emergencia — Derrubar tudo de imediato
 /ajuda      — Ver como usar
 ```
 
-> **Nota de implementação para a Onda 3:** o teste em
-> `test/unit/worker/surface/commands.test.ts:41` assere `length === 7` e a ordem
-> `['ligar','desligar','status','acessar','rotacionar','parear','emergencia']`.
-> Ele **precisa ser atualizado** para 5 e a nova ordem/`/menu`/`/ajuda`, e o caso
-> de `não publicar /start` permanece.
+> **Nota de implementação:** o teste em
+> `test/unit/worker/surface/commands.test.ts:41` assere `length === 3` e a ordem
+> `['menu','parear','ajuda']`; o caso de `não publicar /start` permanece.
 
 ### Escopo do menu (private × default) — documentação
 
-- **`/start`, `/ajuda`** → publicados no escopo `default` (grupos e privado):
-  são a única descoberta segura para toda a gente e não vazam estado.
-- **`/menu`, `/status`, `/parear`, `/emergencia`** → publicados no escopo
-  `private` (só DM com o bot): são acções/estado; em grupos qualquer comando é
-  barrado pelo guard, então restringir a descoberta ao privado reduz o "porquê
-  não funciona" em grupo.
+- **`/ajuda`** → publicado no escopo `default` (grupos e privado): é a
+  descoberta segura para toda a gente e não vaza estado.
+- **`/menu`, `/parear`** → publicados no escopo `private` (só DM com o bot): são
+  as acções/pareamento; em grupos qualquer comando é barrado pelo guard, então
+  restringir a descoberta ao privado reduz o "porquê não funciona" em grupo.
+  `/ajuda` também vai ao private (o dono em DM encontra-a), mas a desses no
+  default garante a descoberta em grupo.
 - **Viável hoje?** `setMyCommands` do grammY aceita `scope` e `language_code`
-  (Bot API `BotCommandScope`). O `publishCommands` atual do adaptador chama
-  `setMyCommands(lista)` **sem escopo** (default = tudo). Para aplicar scopes, a
-  Onda 3 publica `setMyCommands` DUAS vezes: uma `default` (start/ajuda) e uma
-  `private` (menu/status/parear/emergencia). **Se o gancho host não expuser
-  escopos, prioridade:** enviar a lista de private num `setMyCommands` único e
-  documentar a limitação — NUNCA mais de 6 comandos por escopo (caso real: 78
-  quebram em silêncio).
+  (Bot API `BotCommandScope`). O `publishCommands` do adaptador publica
+  `setMyCommands` DUAS vezes: uma `default` (ajuda) e uma `private`
+  (menu/parear/ajuda). **Se o gancho host não expuser escopos, prioridade:**
+  enviar a lista de private num `setMyCommands` único e documentar a limitação —
+  NUNCA mais de 6 comandos por escopo (caso real: 78 quebram em silêncio).
 
 ---
 
@@ -189,16 +192,22 @@ primeira parelha, vem já na resposta de sucesso (pós-pareamento).
 ### Estrutura da mensagem do cartão
 
 ```
-🎛️ Controlo do Harness
+🎛 Remote Access
 
 Túnel: ✅ Ligado · link no ar há 3 h
         (ou: ⬜ Desligado — nada exposto)
 
-[🟢 Ligar]        [🔴 Desligar]
-[📶 Status]      [🔗 Link de acesso]   [⇄ Nova chave]
+[🟢 Ligar]
+[🔴 Desligar]
+[📶 Status]
+[🔗 Link de acesso]
+[⇄ Nova chave]
 [🚨 Emergência]
-[🏠 Início]
 ```
+
+> **Onda 1 — nome e botões:** o título passou de `🎛️ Controlo do Harness` para
+> **`🎛 Remote Access`** (a marca). O teclado é **UMA ação por linha** (coluna
+> única) e o botão **`🏠 Início` foi REMOVIDO** — o cartão já é o "início".
 
 ### Decisões do teclado do cartão — Porquê & Texto
 
@@ -206,23 +215,31 @@ Túnel: ✅ Ligado · link no ar há 3 h
 |---|---|---|---|
 | Ligar | `🟢 Ligar` | `tunnel.up` (2 etapas: tela de confirmação) | toast "Ligando…" |
 | Desligar | `🔴 Desligar` | `tunnel.down` (2 etapas: tela de confirmação destrutiva) | toast "Desligando…" |
-| Estado | `📶 Status` | `tunnel.status` (edita o cartão com o estado) | toast vazio (a edição mostra) |
+| Estado | `📶 Status` | `tunnel.status` (edita o cartão com o estado) | toast "Verificando…" (a edição mostra) |
 | Link de acesso | `🔗 Link de acesso` | `session.issue` (vem por notify) | toast "A enviar o link…" |
 | Nova chave | `⇄ Nova chave` | `secret.rotate` (2 etapas: confirmação) | toast "Gerando chave nova…" |
 | Emergência | `🚨 Emergência` | `emergency` (2 etapas: confirmação destrutiva) | toast "A derrubar tudo…" |
-| Início | `🏠 Início` | re-abre o cartão / mensagem inicial | — |
+
+> **O botão `🏠 Início` foi REMOVIDO** (Onda 1).
 
 - **Regra 1 (feedback na 1ª linha, TG-027):** todo clique de botão no cartão
   chama `answerCallbackQuery` na **primeira instrução** de tratamento, com o
   toast da coluna Nota (a um estranho, **vazio**). Sem isso o girador fica ~30 s
-  e o botão parece "morto" — a reclamação nº2 do usuário. Fonte: bot UX /
-  teclados.
+  e o botão parece "morto". `/status` também acusa ("Verificando…") para o dono
+  ter feedback imediato mesmo quando o estado não mudou.
 - **Regra 2 (anti duplo-toque):** o teclado é destruído no 1º clique
   (`editMessageReplyMarkup([])` vazio) para um duplo-toque não disparar duas
   acções. Fonte: teclados — "destrua o teclado no 1º clique".
 - **Regra 3 (estado visível):** o cartão mostra `✅ Ligado` / `⬜ Desligado` como
   primeira linha, editada pela difusão de estado (o mecanismo `mostrarEstado`
   existente).
+- **Regra 3.1 (CONFIRMAÇÃO NO CARTAO — fix do bug do Ligar, Onda 1):** quando um
+  botão de MENU inicia um fluxo de 2 etapas (Ligar/Desligar/Nova chave), a tela
+  de confirmação é **EDITADA no próprio cartão** — reutiliza o MESMO
+  messageTarget — em vez de mandar uma mensagem nova destacada. O botão `[✅ …]`
+  da confirmação envia o intent com o mesmo messageTarget e o **ack re-renderiza
+  o cartão** com o estado novo. (Sem isto, a confirmação destacada ficava órfã e
+  o ack nunca actualizava o cartão — o botão Ligar parecia "não ligar".)
 - **Regra 4 (ações destrutivas — tela de confirmação):** ações que derrubam/%
   rotacionam pedem confirmação explícita:
 
@@ -242,11 +259,11 @@ Túnel: ✅ Ligado · link no ar há 3 h
   [✅ Sim, gerar]  [✕ Não]
   ```
   - O botão `[✕ Não]` faz `answerCallbackQuery('Ok, cancelado.')` e **edita a
-    mensagem no lugar** para `Cancelado. Nada foi alterado.` com o **teclado
-    destruído** (voltar sem efeito — anti duplo-toque, Regra 2; **sem** executar a
-    acção nem enviar intent/de armazenar nonce — Onda 5); o botão `[✅ …]` executa.
-    Fonte: teclados + microcopy (confirmação destrutiva específica "isto vai…",
-    "não dá para desfazer").
+    mensagem no lugar**. Numa confirmação NO CARTAO, restaura o MENU no mesmo
+    cartão (reutiliza o messageTarget); numa confirmação destacada, edita para
+    `Cancelado. Nada foi alterado.` com o **teclado destruído** (voltar sem
+    efeito — anti duplo-toque, Regra 2; **sem** executar a acção nem enviar
+    intent/de armazenar nonce — Onda 5); o botão `[✅ …]` executa.
 
 - **Regra 5 (pós-ação destrói e resume):** após qualquer acção, a mensagem vira
   um **resultado claro em 1-2 linhas sem botões** (teclado removido). Ex.

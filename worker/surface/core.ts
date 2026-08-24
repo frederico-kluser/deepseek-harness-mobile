@@ -328,10 +328,19 @@ export interface SurfaceAuth {
   semearDono(dono: SurfaceDono): void
 }
 
-/** O despacho neutro dos comandos — implementado por `worker/surface/commands.ts`. */
+/**
+ * O despacho neutro dos comandos — implementado por `worker/surface/commands.ts`.
+ *
+ * `ligar`/`desligar`/`rotacionar` aceitam um `alvoDeEdicao` OPCIONAL: quando
+ * fornecido (o id do CARTAO de controlo do dono), a confirmacao e EDITADA
+ * in-place nessa mesma mensagem (reutiliza o MESMO messageTarget) em vez de
+ * enviar uma mensagem NOVA — o fix do bug do cartao (Tarefa 1). Sem ele (o
+ * comando digitado `/ligar`, `/desligar`, `/rotacionar`), envia-se a mensagem
+ * de confirmacao destacada como antes.
+ */
 export interface SurfaceComandos {
-  ligar(identidade: SurfaceIdentity): Promise<void>
-  desligar(identidade: SurfaceIdentity): Promise<void>
+  ligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
+  desligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   /** O clique no botao de confirmacao. Responde SEMPRE ao clique (TG-027). */
   confirmarDesligar(
     identidade: SurfaceIdentity,
@@ -341,7 +350,7 @@ export interface SurfaceComandos {
   ): Promise<void>
   status(identidade: SurfaceIdentity): Promise<void>
   acessar(identidade: SurfaceIdentity): Promise<void>
-  rotacionar(identidade: SurfaceIdentity): Promise<void>
+  rotacionar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   emergencia(identidade: SurfaceIdentity): Promise<void>
 }
 
@@ -621,6 +630,21 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
   // estado muda (Regra 3). So o dono chega aqui (o /menu passa pelo guard).
   const cartoesDoControle = new Map<string, string>()
 
+  /**
+   * O ESTADO DE CONFIRMACAO DO CARTAO (fix do bug do Ligar — Tarefa 1). Quando
+   * um botao MENU do cartao INICIA um fluxo de 2 etapas (Ligar/Desligar/Nova
+   * chave), a confirmacao e EDITADA no proprio cartao (reutiliza o MESMO
+   * messageTarget) em vez de mandar uma mensagem nova destacada. Este mapa
+   * guarda, por chat, a ACCAO cuja confirmacao o cartao mostra AGORA:
+   * `undefined`/ausente = o cartao esta no MODO MENU.
+   *
+   * Permite distinguir um clique de MENU (inicia) de um clique de
+   * CONFIRMACAO (confirma) sobre a MESMA mensagem, e impede a re-renderizacao
+   * do cartao (difusao de estado) de estragar os botoes com o nonce real
+   * enquanto o dono ainda nao confirmou.
+   */
+  const confirmacaoNoCartao = new Map<string, SurfaceAction>()
+
   /** O texto do cartao na linha de estado (Regra 3). So para o DONO. */
   function linhaDeEstadoDoCartao(agora: number): string {
     const projecaoAtual = projecao.ler()
@@ -637,17 +661,12 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
   /** O teclado do cartao (CONTRATO §4, rotulos EXATOS). Os botoes INICIAM. */
   function tecladoDoCartao(): readonly (readonly ActionRow[])[] {
     return [
-      [
-        linhaDeBotao('🟢 Ligar', 'tunnel.up', 'confirm'),
-        linhaDeBotao('🔴 Desligar', 'tunnel.down', 'emergency'),
-      ],
-      [
-        linhaDeBotao('📶 Status', 'tunnel.status'),
-        linhaDeBotao('🔗 Link de acesso', 'session.issue', 'confirm'),
-        linhaDeBotao('⇄ Nova chave', 'secret.rotate', 'confirm'),
-      ],
+      [linhaDeBotao('🟢 Ligar', 'tunnel.up', 'confirm')],
+      [linhaDeBotao('🔴 Desligar', 'tunnel.down', 'emergency')],
+      [linhaDeBotao('📶 Status', 'tunnel.status')],
+      [linhaDeBotao('🔗 Link de acesso', 'session.issue', 'confirm')],
+      [linhaDeBotao('⇄ Nova chave', 'secret.rotate', 'confirm')],
       [linhaDeBotao('🚨 Emergência', 'emergency', 'emergency')],
-      [linhaDeBotao('🏠 Início', 'inicio')],
     ]
   }
 
@@ -657,7 +676,15 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
 
   /** Monta o texto do cartao (titulo + linha de estado). */
   function textoDoCartao(agora: number): string {
-    return `🎛️ Controlo do Harness\n\n${linhaDeEstadoDoCartao(agora)}`
+    return `🎛 Remote Access\n\n${linhaDeEstadoDoCartao(agora)}`
+  }
+
+  function marcarCartaoConfirmando(chat: string, action: SurfaceAction): void {
+    confirmacaoNoCartao.set(chat, action)
+  }
+
+  function limparConfirmacaoDoCartao(chat: string): void {
+    confirmacaoNoCartao.delete(chat)
   }
 
   /**
@@ -665,18 +692,21 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
    * primeira chamada cria a mensagem; as seguintes editam-na no lugar.
    */
   async function exibirCartao(chat: string, agora: number): Promise<string> {
-    const texto = textoDoCartao(agora)
-    const opcoes: Parameters<SurfaceSender['send']>[2] = { actionRows: tecladoDoCartao() }
     const registado = cartoesDoControle.get(chat)
     if (registado === undefined) {
-      const id = await enviarPara(chat, texto, opcoes)
+      const id = await enviarPara(chat, textoDoCartao(agora), { actionRows: tecladoDoCartao() })
       cartoesDoControle.set(chat, id)
       // O cartao tambem passa a ser a "ultima mensagem de estado" edit-in-place:
       // a difusao de estado re-renderiza-o (Regra 3).
       ultimaMensagemDeEstado.set(chat, id)
       return id
     }
-    await editarPara(chat, registado, texto, opcoes)
+    // Se o cartao estiver em MODOS DE CONFIRMACAO, NAO o re-renderiza por cima:
+    // a tela de confirmacao (com o NONCE real nos botoes, editada por
+    // `commands.ligar/...`) e DONA da mensagem ate confirmar/cancelar — uma
+    // re-renderizacao estragaria os botoes e o Ligar falharia (fix, Tarefa 1).
+    if (confirmacaoNoCartao.has(chat)) return registado
+    await editarPara(chat, registado, textoDoCartao(agora), { actionRows: tecladoDoCartao() })
     return registado
   }
 
@@ -820,6 +850,11 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
     // §4) de um clique num botao de CONFIRMACAO/tela (que CONFIRMA). Os botoes
     // do cartao vivem na mensagem que `cartoesDoControle` guarda.
     const vindaDoCartao = event.messageTarget !== undefined && event.messageTarget === cartoesDoControle.get(chat)
+    // A confirmacao que o CARTAO mostra AGORA (fix do Ligar — Tarefa 1): quando
+    // o cartao foi editado para uma tela de confirmacao, o proximo clique de
+    // `tunnel.up`/`tunnel.down`/`secret.rotate` NESSA MESMA mensagem e uma
+    // CONFIRMACAO (e nao um botao de menu).
+    const confirmacaoAtiva = confirmacaoNoCartao.get(chat)
 
     // --- NAVEGACAO LOCAL (nao vai ao host; so o dono a alcanca — guard-gated).
     if (event.action === 'menu' || event.action === 'inicio' || event.action === 'ajuda') {
@@ -843,7 +878,16 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       // EDITA a mensagem da confirmacao — in-place, SEM actionRows, o que no
       // adaptador DESTROI o teclado (anti duplo-toque, Regra 2). NAO envia
       // intent, NAO desarma/rotaciona nonce e NAO altera estado do host.
+      //
+      // FIX do Ligar (Tarefa 1): quando o cancelamento e de uma confirmacao NO
+      // CARTAO, restaura o MENU no mesmo cartao (reutiliza o messageTarget) em
+      // vez de gravar o "Cancelado" por cima da tela de controlo.
       await deps.sender.answer(event.answerTarget, { text: 'Ok, cancelado.' })
+      if (vindaDoCartao && confirmacaoAtiva !== undefined) {
+        limparConfirmacaoDoCartao(chat)
+        await exibirCartao(chat, time.now())
+        return
+      }
       if (event.messageTarget !== undefined) {
         await editarPara(chat, event.messageTarget, 'Cancelado. Nada foi alterado.')
       }
@@ -853,17 +897,47 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
     switch (event.action) {
       case 'tunnel.up':
       case 'secret.rotate': {
-        // Botao do CARTAO que INICIA (pede nonce e mostra a tela de confirmacao).
+        // CONFIRMACAO sobre o CARTAO (o press do `[✅ …]` na mesma mensagem):
+        // envia o intent com o nonce opaco e o MESMO messageTarget (o cartao)
+        // — o ack re-renderiza o cartao com o estado novo.
+        if (vindaDoCartao && confirmacaoAtiva === event.action) {
+          await deps.sender.answer(event.answerTarget)
+          limparConfirmacaoDoCartao(chat)
+          const requestIdConfirm = gerarRequestId(time.now())
+          if (event.action === 'tunnel.up' && autolink === null) {
+            autolink = {
+              requestId: requestIdConfirm,
+              from: event.identity.userKey,
+              chat: event.identity.chatKey,
+            }
+          }
+          enviarIntent(
+            {
+              intent: event.action,
+              requestId: requestIdConfirm,
+              nonce: event.token,
+            },
+            event.identity,
+            cartoesDoControle.get(chat),
+          )
+          return
+        }
+        // Botao do CARTAO (modo MENU) que INICIA: pede nonce e EDITA o proprio
+        // cartao com a tela de confirmacao (reutiliza o MESMO messageTarget).
         if (vindaDoCartao) {
           await deps.sender.answer(event.answerTarget, {
             text: event.action === 'tunnel.up' ? 'Ligando…' : 'Gerando chave nova…',
           })
-          if (event.action === 'tunnel.up') await comandos.ligar(event.identity)
-          else await comandos.rotacionar(event.identity)
+          const cartao = cartoesDoControle.get(chat)
+          if (event.action === 'tunnel.up') await comandos.ligar(event.identity, cartao)
+          else await comandos.rotacionar(event.identity, cartao)
+          // Marca o cartao em modo confirmacao para este action: o proximo
+          // clique de `action` na mesma mensagem e uma CONFIRMACAO.
+          marcarCartaoConfirmando(chat, event.action)
           return
         }
-        // A CONFIRMACAO ([✅ ...] da tela 2 etapas). O token viaja OPACO (S5).
-        // O answer vem SEM texto: o feedback e a edicao in-place (a do botao).
+        // A CONFIRMACAO destacada (fluxo por comando digitado /legado). O token
+        // viaja OPACO (S5). O answer vem SEM texto: o feedback e a edicao.
         await deps.sender.answer(event.answerTarget)
         const requestIdUp = gerarRequestId(time.now())
         if (event.action === 'tunnel.up' && autolink === null) {
@@ -885,10 +959,20 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         return
       }
       case 'tunnel.down': {
-        // Botao do CARTAO que INICIA o fluxo de /desligar (tela de confirmacao).
+        // CONFIRMACAO sobre o CARTAO (o press de `[✅ Sim, desligar]`): confirma
+        // via `confirmarDesligar` com o MESMO messageTarget (o cartao).
+        if (vindaDoCartao && confirmacaoAtiva === 'tunnel.down') {
+          limparConfirmacaoDoCartao(chat)
+          await comandos.confirmarDesligar(event.identity, event.token, event.answerTarget, cartoesDoControle.get(chat))
+          return
+        }
+        // Botao do CARTAO (modo MENU) que INICIA o fluxo de /desligar: EDITA o
+        // proprio cartao com a tela de confirmacao destrutiva.
         if (vindaDoCartao) {
           await deps.sender.answer(event.answerTarget, { text: 'Desligando…' })
-          await comandos.desligar(event.identity)
+          const cartao = cartoesDoControle.get(chat)
+          await comandos.desligar(event.identity, cartao)
+          marcarCartaoConfirmando(chat, 'tunnel.down')
           return
         }
         await comandos.confirmarDesligar(
@@ -912,9 +996,9 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         return
       }
       case 'tunnel.status':
-        // So o dono a pressiona (card / fallback): estado. O answer vazio; a
-        // edicao (ou o cartao re-renderizado) mostra o estado real.
-        await deps.sender.answer(event.answerTarget)
+        // So o dono a pressiona (card / fallback): estado. O answer fecha o
+        // girador do clique; o ack re-renderiza o CARTÃO com o estado real.
+        await deps.sender.answer(event.answerTarget, { text: 'Verificando…' })
         await comandos.status(event.identity)
         return
       case 'emergency':

@@ -24,7 +24,7 @@ nova.** A evidência final (browser headless, `:3082`):
   `slots.inject('settings.section', …)`.
 - No DOM: o botão **"✈️ Telegram"** renderiza no rodapé da sidebar (ao lado do
   trigger de settings) via `sidebar.footer.action`.
-- No rail do modal de settings, a aba **"Telegram Guard"** aparece; clicar no botão
+- No rail do modal de settings, a aba **"Remote Access"** aparece; clicar no botão
   via o affordance abre o modal com `aria-current="true"` nessa aba e renderiza o
   conteúdo da section (`«Aba contribuída por um plugin externo…»`).
 - NENHUM erro/exception de console do bundle.
@@ -111,7 +111,7 @@ export function apply(ctx) {
       GuardBotSidebarAction))                    // componente recebe { wide }
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register({ name: 'settings.section', id: 'telegram-guard', order: 99,
-                         label: 'Telegram Guard' },
+                         label: 'Remote Access' },
       TelegramGuardSection))                     // componente recebe { close }
 }
 ```
@@ -138,7 +138,7 @@ recebe `openSection(id)`. Um `sidebar.footer.action` NÃO recebe `openSection`.
    `aria-haspopup` da página (frágil) — só o de settings.
 2. Poll (requestAnimationFrame, ~12 frames) por um botão **dentro de
    `[role="dialog"]`** cujo `textContent` inclua a string do label EXATA da nossa
-   section (`'Telegram Guard'` — NÃO só `'telegram'`, que colide com o nosso próprio
+   section (`'Remote Access'` — NÃO só `'telegram'`, que colide com o nosso próprio
    botão do rodapé "✈️ Telegram"), e `.click()` nele. Isso chama
    `onSelect('telegram-guard')` no `SettingsRoot` → `activeId` + render do conteúdo.
 

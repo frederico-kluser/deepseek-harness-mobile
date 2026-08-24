@@ -462,24 +462,34 @@ export class FakeComandos implements SurfaceComandos {
     return this
   }
 
-  async ligar(identidade: SurfaceIdentity): Promise<void> {
+  async ligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void> {
     this.estado.chamadas.push({ nome: 'ligar', identidade })
     const nonce = await this.ctx?.emitirNonce('tunnel.up')
     if (nonce === undefined) {
-      await this.ctx?.enviar(identidade.chatKey, 'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.')
+      if (alvoDeEdicao !== undefined) {
+        await this.ctx?.editar(identidade.chatKey, alvoDeEdicao, 'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.')
+      } else {
+        await this.ctx?.enviar(identidade.chatKey, 'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.')
+      }
       return
     }
-    await this.ctx?.enviar(identidade.chatKey, '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.', {
-      actionRows: [[{ label: '✅ Sim, ligar', action: 'tunnel.up', token: nonce }]],
-    })
+    const corpo: SurfaceSendOptions = { actionRows: [[{ label: '✅ Sim, ligar', action: 'tunnel.up', token: nonce }]] }
+    if (alvoDeEdicao !== undefined) {
+      await this.ctx?.editar(identidade.chatKey, alvoDeEdicao, '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.', corpo)
+    } else {
+      await this.ctx?.enviar(identidade.chatKey, '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.', corpo)
+    }
   }
 
-  async desligar(identidade: SurfaceIdentity): Promise<void> {
+  async desligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void> {
     this.estado.chamadas.push({ nome: 'desligar', identidade })
     const token = gerarTokenOpaque()
-    await this.ctx?.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', {
-      actionRows: [[{ label: '✅ Sim, desligar', action: 'tunnel.down', token }]],
-    })
+    const corpo: SurfaceSendOptions = { actionRows: [[{ label: '✅ Sim, desligar', action: 'tunnel.down', token }]] }
+    if (alvoDeEdicao !== undefined) {
+      await this.ctx?.editar(identidade.chatKey, alvoDeEdicao, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', corpo)
+    } else {
+      await this.ctx?.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', corpo)
+    }
   }
 
   async confirmarDesligar(
@@ -533,13 +543,16 @@ export class FakeComandos implements SurfaceComandos {
     }
   }
 
-  async rotacionar(identidade: SurfaceIdentity): Promise<void> {
+  async rotacionar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void> {
     this.estado.chamadas.push({ nome: 'rotacionar', identidade })
     const nonce = await this.ctx?.emitirNonce('secret.rotate')
     if (nonce !== undefined) {
-      await this.ctx?.enviar(identidade.chatKey, '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?', {
-        actionRows: [[{ label: '✅ Sim, gerar', action: 'secret.rotate', token: nonce }]],
-      })
+      const corpo: SurfaceSendOptions = { actionRows: [[{ label: '✅ Sim, gerar', action: 'secret.rotate', token: nonce }]] }
+      if (alvoDeEdicao !== undefined) {
+        await this.ctx?.editar(identidade.chatKey, alvoDeEdicao, '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?', corpo)
+      } else {
+        await this.ctx?.enviar(identidade.chatKey, '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?', corpo)
+      }
     }
   }
 

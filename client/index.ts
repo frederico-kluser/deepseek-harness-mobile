@@ -753,7 +753,7 @@ function espacarCodigo(codigo: string): string {
 /* ========================================================================== */
 
 /**
- * Conteúdo da aba "Telegram Guard". Dados vêm do backend via fetch; o painel
+ * Conteúdo da aba "Remote Access". Dados vêm do backend via fetch; o painel
  * re-busca ao montar e a cada ~15s (mais em `focus`/`visibilitychange`).
  */
 function TelegramGuardSection(): React.ReactNode {
@@ -1229,7 +1229,7 @@ function TelegramGuardSection(): React.ReactNode {
     ),
     // --- Título + chip de estado ----------------------------------------
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
-      h('h2', { className: 'guard-title', style: { margin: 0 } }, 'Telegram Guard'),
+      h('h2', { className: 'guard-title', style: { margin: 0 } }, 'Remote Access'),
       h(Chip, { chip }),
     ),
     paragrafo('guard-intro', 'Acesso remoto ao Harness pelo Telegram — sem login no túnel.'),
@@ -1332,7 +1332,7 @@ function CartaoConfirmacao({
 
 /**
  * Corpo do plugin client. Injeta o CSS do painel e regista a ÚNICA entrada de
- * slot: a aba `settings.section` "Telegram Guard" (acessível pelo rail do modal
+ * slot: a aba `settings.section` "Remote Access" (acessível pelo rail do modal
  * de settings padrão do shell).
  * @param ctx - contexto raiz Cordis do browser (injeta `slots`).
  */
@@ -1355,7 +1355,7 @@ export function apply(ctx: {
         name: 'settings.section',
         id: 'telegram-guard',
         order: 99,
-        label: 'Telegram Guard',
+        label: 'Remote Access',
         registrant: 'dsh-guard-messenger',
       },
       TelegramGuardSection,

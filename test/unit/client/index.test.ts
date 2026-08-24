@@ -5,7 +5,7 @@
  * O QUE ESTA SUITE PROVA (as perguntas falsificaveis):
  *  1. O bundle compilado registra-se no `window.__ModuleLoader__` do harness e
  *     o `apply(ctx)` com um `ctx.slots` stub regista SEM excecao o slot
- *     `settings.section` (a aba "Telegram Guard") — o botao da sidebar
+ *     `settings.section` (a aba "Remote Access") — o botao da sidebar
  *     `sidebar.footer.action` foi REMOVIDO e NAO deve mais ser registado. O
  *     smoke do docs/PANEL-TELEGRAM.md ("COMO TESTAR var-smoke headless"), agora
  *     num teste `test/unit/**` em vez do executavel ad-hoc.
@@ -226,7 +226,7 @@ test('bundle: o cartão Privacidade existe nos TRÊS estados (ao vivo, não por 
 })
 
 /**
- * A logo do plugin entra no topo da aba "Telegram Guard" (Onda 3). Verificado
+ * A logo do plugin entra no topo da aba "Remote Access" (Onda 3). Verificado
  * como conteúdo compilado do bundle — o smoke não renderiza React (mesma nota
  * do docs/PANEL-TELEGRAM.md). O esbuild foge não-ASCII, por isso as assertions
  * usam SUBSTRINGS ASCII-ONLY: o alt `dsh-guard-messenger` e o prefixo da data
@@ -246,6 +246,12 @@ test('bundle: a logo aparece embutida (data URL PNG) com o alt ASCII', { skip: B
   // O alt ASCII da logo está no render do bloco de marca.
   assert.ok(codigo.includes('guard-brand'), 'o bundle deve conter o bloco de marca guard-brand')
   assert.ok(codigo.includes('dsh-guard-messenger'), 'o bundle deve conter o alt ASCII dsh-guard-messenger')
+
+  // Rebrand "Remote Access" (Onda 1 — nome e botões): o nome VISÍVEL do painel
+  // mudou para "Remote Access"; o id/registrant ASCCI `telegram-guard` segue.
+  assert.ok(codigo.includes('Remote Access'), 'o bundle deve conter o nome visível "Remote Access"')
+  assert.ok(codigo.includes('telegram-guard'), 'o bundle deve manter o id/registrant ASCII telegram-guard')
+  assert.ok(!codigo.includes('Telegram Guard'), 'o antigo nome visível "Telegram Guard" deve ter saído do bundle')
 
   // O bundle NÃO referencia o ficheiro como caminho externo (side-car).
   assert.ok(!/src=["']logo\.png["']/u.test(codigo), 'a logo não pode ser referenciada por caminho externo no bundle')

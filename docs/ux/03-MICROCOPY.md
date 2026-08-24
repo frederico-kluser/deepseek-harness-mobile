@@ -65,7 +65,7 @@
 
 ## C. Diferenças BOT × PAINEL
 
-| Eixo | Bot (Telegram) | Painel (aba "Telegram Guard") |
+| Eixo | Bot (Telegram) | Painel (aba "Remote Access") |
 |---|---|---|
 | Comprimento | ≤ 5 linhas/mensagem; ≤ 2 linhas/parágrafo; emoji leve | Escaneável por cabeçalhos; frases podem ser levemente maiores |
 | Língua | Imperativo direto + 1 ação | Hierarquia título→contexto→ação; rótulos de CTA verb-first |

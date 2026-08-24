@@ -1,9 +1,13 @@
-# PANEL-TELEGRAM — o painel "Telegram Guard" do DSH
+# PANEL-TELEGRAM — o painel "Remote Access" do DSH
 
-Status: **IMPLANTADO**. O painel fica na aba **"Telegram Guard"** (slot
+Status: **IMPLANTADO**. O painel fica na aba **"Remote Access"** (slot
 `settings.section`) do modal de settings do harness, com `look-and-feel` herdado
 do shell (tokens `--dsw-*`). É o caminho "tudo pela interface" para criar o bot,
 parear e comandar o acesso ao teu Harness pelo Telegram.
+
+> **Onda 1 — nome e botões:** o nome VISÍVEL do painel passou de "Telegram Guard"
+> para **"Remote Access"**. O `id` da secção `telegram-guard`, o `registrant` e o
+> pacote `dsh-guard-messenger` **NÃO mudaram** — só o rótulo exibido.
 
 > **Este é o MANUAL de uso.** Os textos EXATOS (rótulos, CTAs, erros) e a lógica
 > de decisão por estado estão em **`docs/ux/02-CONTRATO-PAINEL.md`** (e o texto

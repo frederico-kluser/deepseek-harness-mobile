@@ -4,7 +4,7 @@ Guia para conectar o Telegram ao DSH guardado por este plugin e parear o teu
 chat como dono. Todo o comando de controlo (ligar/desligar o túnel, estado) só é
 aceite de um chat pareado.
 
-> **Dois caminhos para configurar:** (a) o **painel "Telegram Guard"** (aba do
+> **Dois caminhos para configurar:** (a) o **painel "Remote Access"** (aba do
 > settings) faz tudo pela interface — ver [`docs/PANEL-TELEGRAM.md`](PANEL-TELEGRAM.md);
 > (b) a CLI `dsh-guard-setup` também guia o fluxo. O pareamento do chat é o mesmo
 > nos dois. Os **textos EXATOS** do bot (boas-vindas, menu, telas de confirmação
@@ -34,7 +34,7 @@ No Telegram, conversa com **@BotFather** e corre `/newbot`. Dá um nome e um
 `@username` **que termine em `bot`**. O BotFather devolve um **token** no formato
 `<número>:<segredo>`. Guarda-o.
 
-Se estiveres no **painel Telegram Guard**, o Passo 1 da trilha explica o mesmo
+Se estiveres no **painel Remote Access**, o Passo 1 da trilha explica o mesmo
 passo a passo (`<details>` "Como criar o bot do zero") e aceita o token com o
 CTA `Salvar bot` (loading: `A conectar ao Telegram…`). O token fica guardado de
 forma segura nesta máquina e **nunca** sai do backend para o painel.
@@ -78,38 +78,42 @@ liberta a allowlist no ato — sem reiniciar.
 
 ## Passo 3 — Usar (por onde começar)
 
-Pós-pareamento, o controlo fica no **cartão de controle do bot** (`/menu`):
-uma mensagem edit-in-place com o estado do túnel (`✅ Ligado` / `⬜ Desligado`) e
-os botões `🟢 Ligar`, `🔴 Desligar`, `📶 Status`, `🔗 Link de acesso`,
-`⇄ Nova chave`, `🚨 Emergência`, `🏠 Início`.
+Pós-pareamento, o controlo fica no **cartão de controle do bot** (`/menu`, título
+**`🎛 Remote Access`**): uma mensagem edit-in-place com o estado do túnel
+(`✅ Ligado` / `⬜ Desligado`) e os botões — **uma ação por linha** (coluna única):
+`🟢 Ligar`, `🔴 Desligar`, `📶 Status`, `🔗 Link de acesso`, `⇄ Nova chave`,
+`🚨 Emergência` (sem `🏠 Início`).
 
 Ações que **aumentam a exposição** (ligar, rotacionar) e as **destrutivas**
 (desligar, emergência) pedem **confirmação em duas etapas**, com um botão
 positivo `[✅ …]` e agora **um botão de cancelamento `[✕ Não]`** — ao tocar
-`✕ Não`, o bot responde `Ok, cancelado.` e edita a mensagem para
-`Cancelado. Nada foi alterado.` (teclado destruído), **sem executar nada**.
+`✕ Não`, o bot responde `Ok, cancelado.` e restaura o cartão (numa confirmação
+no cartão) ou edita a mensagem para `Cancelado. Nada foi alterado.`, **sem
+executar nada**. A confirmação do cartão é **editada no próprio cartão** (o ack
+re-renderiza com o estado novo).
 
-O menu publicado do bot é **curto (5 comandos)** e escopado (v.
+O menu publicado do bot é **curto (3 comandos)** e escopado (v.
 `docs/ux/01-CONTRATO-BOT.md §2`):
 
 | Comando | Escopo | O que faz |
 | --- | --- | --- |
 | `/menu` | privado (só DM) | abrir o painel de controlo do bot |
-| `/status` | privado | ver o estado do túnel |
 | `/parear` | privado | parear com um código |
-| `/emergencia` | privado | derrubar tudo de imediato |
 | `/ajuda` | default (grupos e privado) | ver como usar |
 
-> `/start` não aparece no menu (são boas-vindas inócuas, PAIR-006), mas a sua
-> descoberta segura (junto com `/ajuda`) vai ao escopo `default`. As ações/estado
-> ficam no escopo **privado** (só DM) — em grupos qualquer comando é barrado pelo
-> guard, então restringir a descoberta reduz o "porquê não funciona" em grupo.
+> `/start` e os comandos `/status` e `/emergencia` **não** estão no menu publicado:
+> o primeiro são boas-vindas inócuas (PAIR-006) e os dois últimos vivem SÓ como
+> botões do cartão (`/menu`) — embora continuem a funcionar como comandos
+> digitados (routing intacto). A descoberta segura (`/ajuda`) vai ao escopo
+> `default`; as acções/parear ficam no escopo **privado** (só DM) — em grupos
+> qualquer comando é barrado pelo guard, então restringir a descoberta reduz o
+> "porquê não funciona" em grupo.
 
 ---
 
 ## Se usas o painel / outra superfície
 
-O painel Telegram Guard (Passo 3 · Usar) mostra os comandos essenciais e `Uso
+O painel Remote Access (Passo 3 · Usar) mostra os comandos essenciais e `Uso
 recente` (métricas). Ligar/desligar também está em superfícies de UI próprias;
 todas mostram o mesmo estado e o mesmo `seq` (paridade por contrato, CTL-040). O
 worker de long-polling **conflita com uma segunda instância** do bot no mesmo

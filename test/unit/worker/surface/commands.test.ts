@@ -37,13 +37,16 @@ import { gerarRequestId } from '../../../../worker/surface/tokens.ts'
 const DM: SurfaceIdentity = OWNER
 
 describe('TG-080: a lista canonica neutra, publicada pelo adaptador', () => {
-  it('tem EXATAMENTE cinco comandos, na ordem de D5, e /start NAO esta la (PAIR-006)', () => {
-    assert.equal(COMANDOS_PUBLICADOS.length, 5)
+  it('tem EXATAMENTE tres comandos, na ordem de D5, e /start /status /emergencia NAO estao (PAIR-006; Tarefa 3)', () => {
+    assert.equal(COMANDOS_PUBLICADOS.length, 3)
     assert.deepEqual(
       COMANDOS_PUBLICADOS.map((c) => c.command),
-      ['menu', 'status', 'parear', 'emergencia', 'ajuda'],
+      ['menu', 'parear', 'ajuda'],
     )
     assert.equal(COMANDOS_PUBLICADOS.some((c) => c.command === 'start'), false)
+    // Tarefa 3: status/emergencia saem do menu (ficam SO como botoes do cartao).
+    assert.equal(COMANDOS_PUBLICADOS.some((c) => c.command === 'status'), false)
+    assert.equal(COMANDOS_PUBLICADOS.some((c) => c.command === 'emergencia'), false)
   })
 
   it('descricoes imperativas, 1-4 palavras, sem ponto (CONTRATO §2)', () => {
@@ -51,9 +54,7 @@ describe('TG-080: a lista canonica neutra, publicada pelo adaptador', () => {
       COMANDOS_PUBLICADOS.map((c) => c.description),
       [
         'Abrir o painel de controlo',
-        'Ver estado do túnel',
         'Parear com um código',
-        'Derrubar tudo de imediato',
         'Ver como usar',
       ],
     )

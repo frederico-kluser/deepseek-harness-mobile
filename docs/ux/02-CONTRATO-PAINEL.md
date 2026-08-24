@@ -1,4 +1,8 @@
-# 02 — CONTRATO DO PAINEL (aba "Telegram Guard")
+# 02 — CONTRATO DO PAINEL (aba "Remote Access")
+
+> **Onda 1 — nome e botões:** o nome VISÍVEL do painel passou de "Telegram Guard"
+> para **"Remote Access"** (o `id` da secção `telegram-guard`, o `registrant` e o
+> pacote `dsh-guard-messenger` NÃO mudaram — só o rótulo exibido).
 
 > **Implementação de referência (Onda 4):** `client/index.ts`, `client/guard-panel.css`,
 > `src/ui-contrib/routes.ts` (textos `TEXTO_ERRO_PAIR` e demais respostas),

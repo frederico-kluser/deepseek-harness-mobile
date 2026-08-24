@@ -245,11 +245,12 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
         return undefined
       }
       // CONTRATO §2: scopes de `setMyCommands`. A descoberta segura para toda a
-      // gente (default = grupos e privado) e so `start`/`ajuda`; as acoes/estado
-      // (`menu`/`status`/`parear`/`emergencia`) vao ao PRIVATE (so DM). O `start`
-      // nao sai no menu (PAIR-006), mas respeita-se o escopo default se surgir.
-      const scopeDefault = ['start', 'ajuda']
-      const scopePrivate = ['menu', 'status', 'parear', 'emergencia']
+      // gente (default = grupos e privado) e so `/ajuda` (e `/start`, que nao sai
+      // no menu — PAIR-006); as acoes de mantenimento do tunel vivem SO como
+      // botões do cartao (`/menu`). ONDA-1-NOME-E-BOTOES (Tarefa 3): `status` e
+      // `emergencia` saem do menu; `/menu` e `/parear` vao ao PRIVATE (so DM).
+      const scopeDefault = ['ajuda']
+      const scopePrivate = ['menu', 'parear', 'ajuda']
       const conhecidas = new Set([...scopeDefault, ...scopePrivate])
       const total = comandos.map((c) => ({ command: c.command, description: c.description }))
 

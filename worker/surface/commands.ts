@@ -38,10 +38,12 @@
 
 import type {
   ActionRow,
+  ActionRowLayout,
   IntencaoNeutra,
   SurfaceCommandContext,
   SurfaceIdentity,
   SurfacePublishedCommand,
+  SurfaceSendOptions,
 } from './contract.ts'
 import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
 
@@ -53,14 +55,18 @@ import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
  * A lista FECHADA, na ordem de D5. TG-080 compara o ARRAY INTEIRO, na ordem.
  * `/start` fica de fora (PAIR-006: boa-vindas inocuas, nunca publicado).
  *
+ * ONDA-1-NOME-E-BOTOES (Tarefa 3): `status` e `emergencia` saem do menu
+ * publicado — ficam SO como botões do cartão de controlo (`/menu`). Os comandos
+ * digitados `/status` e `/emergencia` CONTINUAM validos (routing intacto); so
+ * desaparecem da lista do BotFather para encurtar o menu. Menu privado final:
+ * `/menu`, `/parear`, `/ajuda`.
+ *
  * Exporta-se AQUI (o setMyCommands continua no adaptador da Onda 3, mas
  * `ProviderAdapter.publishCommands` recebe esta lista).
  */
 export const COMANDOS_PUBLICADOS: readonly SurfacePublishedCommand[] = Object.freeze([
   { command: 'menu', description: 'Abrir o painel de controlo' },
-  { command: 'status', description: 'Ver estado do túnel' },
   { command: 'parear', description: 'Parear com um código' },
-  { command: 'emergencia', description: 'Derrubar tudo de imediato' },
   { command: 'ajuda', description: 'Ver como usar' },
 ])
 
@@ -153,8 +159,8 @@ interface TokenDeDesligar {
 }
 
 export interface ComandosOnOff {
-  ligar(identidade: SurfaceIdentity): Promise<void>
-  desligar(identidade: SurfaceIdentity): Promise<void>
+  ligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
+  desligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   /** O clique no botao de confirmacao. Responde SEMPRE ao alvo de resposta. */
   confirmarDesligar(
     identidade: SurfaceIdentity,
@@ -162,6 +168,28 @@ export interface ComandosOnOff {
     answerTarget: string,
     messageTarget: string | undefined,
   ): Promise<void>
+}
+
+/**
+ * Mostra a confirmacao de UM fluxo com 2 etapas reutilizando o `messageTarget`
+ * quando vem do CARTAO (`alvoDeEdicao`), ou numa mensagem NOVA destacada quando
+ * o comando foi DIGITADO. Devolve o `messageTarget` efectivo (para o operador
+ * registrar o pendente). Uma falha de edicao in-place `chained`/`failed` (ex.
+ * isNotModified) nunca derruba o fluxo (S4): registra e segue, devolvendo o alvo.
+ */
+async function mostrarConfirmacao(
+  ctx: SurfaceCommandContext,
+  chat: string,
+  alvoDeEdicao: string | undefined,
+  texto: string,
+  actionRows: ActionRowLayout,
+): Promise<string | undefined> {
+  const opcoes: SurfaceSendOptions = { actionRows }
+  if (alvoDeEdicao !== undefined) {
+    await ctx.editar(chat, alvoDeEdicao, texto, opcoes)
+    return alvoDeEdicao
+  }
+  return ctx.enviar(chat, texto, opcoes)
 }
 
 export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
@@ -178,12 +206,17 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
   }
 
   return {
-    async ligar(identidade): Promise<void> {
+    async ligar(identidade, alvoDeEdicao): Promise<void> {
       // 1a etapa: pedir o nonce ao HOST (S5). Opaco — o worker nao o le.
       const nonce = await ctx.emitirNonce('tunnel.up')
       if (nonce === undefined) {
-        // Fail-closed (CTL-023): sem nonce nao ha confirmacao possivel.
-        await ctx.enviar(identidade.chatKey, SEM_NONCE)
+        // Fail-closed (CTL-023): sem nonce nao ha confirmacao possivel. Quando
+        // o fluxo veio DO CARTAO, edita-o in-place com o aviso (a mensagem de
+        // confirmacao reutiliza o MESMO messageTarget); digitar `/ligar` envia
+        // uma mensagem propria destacada.
+        await (alvoDeEdicao !== undefined
+          ? ctx.editar(identidade.chatKey, alvoDeEdicao, SEM_NONCE)
+          : ctx.enviar(identidade.chatKey, SEM_NONCE))
         return
       }
       // 2a etapa: o teclado com o nonce opaco no botao + o cancelamento (§4 Regra 4).
@@ -193,14 +226,16 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
         token: nonce,
         kind: 'confirm',
       }
-      await ctx.enviar(
+      await mostrarConfirmacao(
+        ctx,
         identidade.chatKey,
+        alvoDeEdicao,
         '🟢 Ligar o túnel agora? Quando abrir, o link de acesso chega aqui por si só.',
-        { actionRows: [[acao, linhaDeCancelar()]] },
+        [[acao, linhaDeCancelar()]],
       )
     },
 
-    async desligar(identidade): Promise<void> {
+    async desligar(identidade, alvoDeEdicao): Promise<void> {
       // Confirmacao em 2 etapas com token LOCAL — sem nonce (CTL-024): o intent
       // de confirmacao nao carrega campo `nonce`. O cancelamento (§4 Regra 4) e
       // UMA actionRow ao lado do botao positivo — voltar sem efeito.
@@ -211,9 +246,13 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
         token,
         kind: 'emergency',
       }
-      await ctx.enviar(identidade.chatKey, '🔴 Desligar o túnel derruba o acesso remoto. Continuar?', {
-        actionRows: [[acao, linhaDeCancelar()]],
-      })
+      await mostrarConfirmacao(
+        ctx,
+        identidade.chatKey,
+        alvoDeEdicao,
+        '🔴 Desligar o túnel derruba o acesso remoto. Continuar?',
+        [[acao, linhaDeCancelar()]],
+      )
     },
 
     async confirmarDesligar(identidade, token, answerTarget, messageTarget): Promise<void> {
@@ -253,7 +292,7 @@ export function criarOnOff(ctx: SurfaceCommandContext): ComandosOnOff {
 
 export interface ComandosAccess {
   acessar(identidade: SurfaceIdentity): Promise<void>
-  rotacionar(identidade: SurfaceIdentity): Promise<void>
+  rotacionar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
 }
 
 export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
@@ -269,11 +308,13 @@ export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
       await ctx.enviar(identidade.chatKey, '🔗 A enviar-te o link de acesso por aqui…')
     },
 
-    async rotacionar(identidade): Promise<void> {
+    async rotacionar(identidade, alvoDeEdicao): Promise<void> {
       // 1a etapa: o nonce do host, opaco (S5) — 2 etapas porque AUMENTA exposicao.
       const nonce = await ctx.emitirNonce('secret.rotate')
       if (nonce === undefined) {
-        await ctx.enviar(identidade.chatKey, SEM_NONCE)
+        await (alvoDeEdicao !== undefined
+          ? ctx.editar(identidade.chatKey, alvoDeEdicao, SEM_NONCE)
+          : ctx.enviar(identidade.chatKey, SEM_NONCE))
         return
       }
       // 2a etapa: o teclado. O clique envia secret.rotate com o nonce opaco. O
@@ -284,10 +325,12 @@ export function criarAccess(ctx: SurfaceCommandContext): ComandosAccess {
         token: nonce,
         kind: 'confirm',
       }
-      await ctx.enviar(
+      await mostrarConfirmacao(
+        ctx,
         identidade.chatKey,
+        alvoDeEdicao,
         '⇄ Gerar chave nova invalida a atual e as sessões abertas. Continuar?',
-        { actionRows: [[acao, linhaDeCancelar()]] },
+        [[acao, linhaDeCancelar()]],
       )
     },
   }
@@ -358,8 +401,8 @@ export function criarComandosDaSuperficie(ctx: SurfaceCommandContext): ComandosD
  * escolhe UMA como canonica (ver handoff).
  */
 export interface SurfaceComandosPlano {
-  ligar(identidade: SurfaceIdentity): Promise<void>
-  desligar(identidade: SurfaceIdentity): Promise<void>
+  ligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
+  desligar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   confirmarDesligar(
     identidade: SurfaceIdentity,
     token: string,
@@ -368,7 +411,7 @@ export interface SurfaceComandosPlano {
   ): Promise<void>
   status(identidade: SurfaceIdentity): Promise<void>
   acessar(identidade: SurfaceIdentity): Promise<void>
-  rotacionar(identidade: SurfaceIdentity): Promise<void>
+  rotacionar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   emergencia(identidade: SurfaceIdentity): Promise<void>
 }
 
@@ -377,13 +420,13 @@ export function criarComandosDeSuperficie(ctx: SurfaceCommandContext): SurfaceCo
   const access = criarAccess(ctx)
   const status = criarStatus(ctx)
   return {
-    ligar: (identidade) => onoff.ligar(identidade),
-    desligar: (identidade) => onoff.desligar(identidade),
+    ligar: (identidade, alvoDeEdicao) => onoff.ligar(identidade, alvoDeEdicao),
+    desligar: (identidade, alvoDeEdicao) => onoff.desligar(identidade, alvoDeEdicao),
     confirmarDesligar: (identidade, token, answerTarget, messageTarget) =>
       onoff.confirmarDesligar(identidade, token, answerTarget, messageTarget),
     status: (identidade) => status.status(identidade),
     acessar: (identidade) => access.acessar(identidade),
-    rotacionar: (identidade) => access.rotacionar(identidade),
+    rotacionar: (identidade, alvoDeEdicao) => access.rotacionar(identidade, alvoDeEdicao),
     emergencia: (identidade) => status.emergencia(identidade),
   }
 }

@@ -38,7 +38,8 @@ tentativas e atraso exponencial **preservados**; o código só existe no painel 
 no worker. Detalhes em `01` §7.
 
 ### 4. Painel — trilha por ESTADO (3 checkpoints)
-A aba "Telegram Guard" passa a mostrar **só o passo atual**: (1) Criar o bot,
+A aba "Remote Access" ("Telegram Guard" antes da Onda 1 — nome e botões) passa
+a mostrar **só o passo atual**: (1) Criar o bot,
 (2) Parear, (3) Usar. Progresso indicado por checkpoints ✓; detalhes/avançado
 dobrados em `<details>`. Um **CTA primário por estado**. Detalhes em `02`.
 
@@ -88,7 +89,7 @@ feedback mudam.
 
 - `01-CONTRATO-BOT.md` — menu, `/start`, cartão de controle, respostas a todos os
   comandos, respostas de pareamento, BotFather; invariantes de segurança do bot.
-- `02-CONTRATO-PAINEL.md` — a trilha de 3 checkpoints da aba "Telegram Guard",
+- `02-CONTRATO-PAINEL.md` — a trilha de 3 checkpoints da aba "Remote Access",
   cada estado com CTA, rótulos e textos EXATOS; invariantes de segurança do painel.
 - `03-MICROCOPY.md` — guia de estilo consolidado (13 regras), banco de frases e o
   glossário para as Ondas 3-4 não criarem texto inconsistente.

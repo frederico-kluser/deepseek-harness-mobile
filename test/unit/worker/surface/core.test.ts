@@ -76,9 +76,7 @@ describe('TG-080: os comandos publicados chegam inteiros, na ordem de D5', () =>
     assert.equal(registos.length, 1)
     assert.deepEqual(registos[0], [
       { command: 'menu', description: 'Abrir o painel de controlo' },
-      { command: 'status', description: 'Ver estado do túnel' },
       { command: 'parear', description: 'Parear com um código' },
-      { command: 'emergencia', description: 'Derrubar tudo de imediato' },
       { command: 'ajuda', description: 'Ver como usar' },
     ])
   })
@@ -745,18 +743,18 @@ describe('CONTRATO §4/: cartao de controlo (/menu), ajudas e navegacao local', 
 
     const cartao = bancada.sender.mensagens.at(-1)
     assert.ok(cartao !== undefined)
-    assert.match(cartao.texto, /🎛️ Controlo do Harness/u)
+    assert.match(cartao.texto, /🎛 Remote Access/u)
     const linhas = cartao.opcoes?.actionRows
     assert.ok(linhas !== undefined)
-    const rotulos = linhas.flat().map((b) => b.label)
+    // Teclado do cartao: UMA acao por linha (coluna unica), sem o botao Inicio.
+    const rotulos = linhas.map((linha) => linha.map((b) => b.label))
     assert.deepEqual(rotulos, [
-      '🟢 Ligar',
-      '🔴 Desligar',
-      '📶 Status',
-      '🔗 Link de acesso',
-      '⇄ Nova chave',
-      '🚨 Emergência',
-      '🏠 Início',
+      ['🟢 Ligar'],
+      ['🔴 Desligar'],
+      ['📶 Status'],
+      ['🔗 Link de acesso'],
+      ['⇄ Nova chave'],
+      ['🚨 Emergência'],
     ])
   })
 
@@ -773,24 +771,31 @@ describe('CONTRATO §4/: cartao de controlo (/menu), ajudas e navegacao local', 
     assert.match(bancada.log.all(), /deny:not-allowlisted/u)
   })
 
-  it('o botao `🟢 Ligar` DO CARTAO INICIA o fluxo de ligar (tela de confirmacao) e toast `Ligando…`', async () => {
+  it('o botao `🟢 Ligar` DO CARTAO INICIA o fluxo de ligar: toast `Ligando…` + EDITA o mesmo cartao (confirmacao)', async () => {
     const bancada = montarBancada()
     await paired(bancada)
     const cartaoId = await abrirCartao(bancada)
-    const antes = bancada.ipc.intents.length
+    const antesIntents = bancada.ipc.intents.length
+    const antesMensagens = bancada.sender.mensagens.length
     const botao = bancada.sender.mensagens.at(-1)?.opcoes?.actionRows?.flat().find((b) => b.label === '🟢 Ligar')
     assert.ok(botao !== undefined)
 
     await bancada.tratar(accaoDoDono('tunnel.up', botao.token, cartaoId))
 
-    // Iniciou: pediu o nonce e mandou a tela de confirmacao NO CARD nao no intent.
-    assert.equal(bancada.ipc.intents.length, antes, 'a iniciacao ainda nao envia o intent (2a etapa)')
+    // Iniciou: ainda NAO envia o intent (2a etapa) e responde ao clique.
+    assert.equal(bancada.ipc.intents.length, antesIntents, 'a iniciacao ainda nao envia o intent (2a etapa)')
     const resp = bancada.sender.respostas.at(-1)
     assert.equal(resp?.outras?.text, 'Ligando…', 'toast do §4 no clique do cartao')
-    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Ligar o túnel agora\?/u)
+    // FIX do Ligar (Tarefa 1): o confirm reutiliza o MESMO messageTarget — o
+    // cartao foi EDITADO in-place com a tela de confirmacao, sem mensagem nova.
+    assert.equal(bancada.sender.mensagens.length, antesMensagens, 'o confirm edita o cartao, NAO envia mensagem nova')
+    const edicao = bancada.sender.edicoes.at(-1)
+    assert.ok(edicao !== undefined, 'o cartao foi editado para a confirmacao')
+    assert.equal(edicao.messageId, cartaoId, 'o confirm reutiliza o MESMO messageTarget (cartao)')
+    assert.match(edicao.texto, /Ligar o túnel agora\?/u)
   })
 
-  it('o botao `🔴 Desligar` DO CARTAO INICIA /desligar (confirmacao destrutiva) e toast `Desligando…`', async () => {
+  it('o botao `🔴 Desligar` DO CARTAO INICIA /desligar: toast `Desligando…` + EDITA o mesmo cartao', async () => {
     const bancada = montarBancada()
     await paired(bancada)
     const cartaoId = await abrirCartao(bancada)
@@ -802,19 +807,10 @@ describe('CONTRATO §4/: cartao de controlo (/menu), ajudas e navegacao local', 
     assert.equal(bancada.ipc.intents.length, 0, 'a iniciacao ainda nao confirma')
     const resp = bancada.sender.respostas.at(-1)
     assert.equal(resp?.outras?.text, 'Desligando…', 'toast do §4 no clique do cartao')
-    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Desligar o túnel derruba o acesso remoto/u)
-  })
-
-  it('o botao `🏠 Início` re-exibe o cartao (nav local, sem intent)', async () => {
-    const bancada = montarBancada()
-    await paired(bancada)
-    const cartaoId = await abrirCartao(bancada)
-    const botao = bancada.sender.mensagens.at(-1)?.opcoes?.actionRows?.flat().find((b) => b.label === '🏠 Início')
-    assert.ok(botao !== undefined)
-
-    await bancada.tratar(accaoDoDono('inicio', botao.token, cartaoId))
-
-    assert.equal(bancada.ipc.intents.length, 0, 'nav nunca vai ao host')
+    const edicao = bancada.sender.edicoes.at(-1)
+    assert.ok(edicao !== undefined)
+    assert.equal(edicao.messageId, cartaoId, 'o desligar tambem edita o mesmo cartao')
+    assert.match(edicao.texto, /Desligar o túnel derruba o acesso remoto/u)
   })
 
   it('/ajuda mostra a ajuda curta ao dono (sem intent)', async () => {
