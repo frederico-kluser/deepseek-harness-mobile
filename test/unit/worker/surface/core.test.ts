@@ -22,6 +22,12 @@ import {
   textoDeRecusa,
   type ComandoPublicado,
 } from '../../../../worker/surface/core.ts'
+import {
+  RESPOSTA_AGUARDANDO_CANCELADO,
+  RESPOSTA_AGUARDANDO_EXPIROU,
+  RESPOSTA_PEDIR_VALOR,
+  RESPOSTA_PEDIR_VALOR_MALFORMADO,
+} from '../../../../worker/surface/auth.ts'
 import type { IpcErrorCode } from '../../../../src/contracts/ipc.ts'
 import { comandoDoDono, DONO, ESTRANHO, IDENTIDADE_DONO, montarBancada, tick, type Bancada } from './apoio.ts'
 
@@ -909,5 +915,290 @@ describe('CONTRATO §4 Regra 4 / Onda 5: cancelamento local das confirmacoes', (
     const resp = bancada.sender.respostas.at(-1)
     assert.equal(resp?.outras, undefined, 'answer VAZIO para o estranho — sem oraculo')
     assert.match(bancada.log.all(), /deny:not-allowlisted/u)
+  })
+})
+
+/* ========================================================================== */
+/* CONVERSA INTELIGENTE ("skills pedem valores") — docs/ux/04-CONVERSA-       */
+/* INTELIGENTE.md. O `/parear` vazio (clique no menu) pergunta o codigo e a   */
+/* PROXIMA mensagem de texto puro do mesmo chat+user e a resposta.            */
+/* ========================================================================== */
+
+describe('CONVERSA INTELIGENTE: skills pedem valores', () => {
+  const CODIGO = '123456' // o codigo fixo do FakeAuth da bancada
+
+  it('`/parear` vazio (sem valor) PERGUNTA, e o estado armado captura a proxima mensagem no MESMO chat+user', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+
+    // 1a pergunta (inocua e uniforme) + "aguardando" armado no MESMO tick.
+    assert.equal(bancada.sender.mensagens.length, 1, 'so a pergunta, nada mais')
+    assert.equal(bancada.sender.mensagens[0]?.texto, RESPOSTA_PEDIR_VALOR)
+
+    // A proxima mensagem de TEXTO PURO do mesmo chat+user valida e pareia.
+    await bancada.tratar(comandoDoDono(CODIGO))
+    const textos = bancada.sender.mensagens.map((m) => m.texto)
+    assert.equal(textos.filter((t) => /Pareado/u.test(t)).length, 1, 'o codigo certo pareia')
+    // Dali em diante o dono comanda.
+    await bancada.tratar(comandoDoDono('/status'))
+    assert.equal(bancada.ipc.intents.at(-1)?.intent, 'tunnel.status')
+  })
+
+  it('o inline `/parear <codigo>` continua 100% funcional (mesmo fluxo, sem espera)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono(`/parear ${CODIGO}`))
+    assert.equal(bancada.sender.mensagens.length, 1)
+    assert.match(bancada.sender.mensagens[0]?.texto ?? '', /Pareado/u)
+  })
+
+  it('valor BEM-FORMADO errado do mesmo chat valida pelo MESMO budget (resposta uniforme + backoff)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    assert.equal(bancada.sender.mensagens.length, 1)
+    const aguardandoAntes = bancada.time.now()
+
+    // UMA captura: o valor bem-formado errado é debitado e recebe a resposta
+    // uniforme; a espera e consumida (nao fica a repetir na mesma janela).
+    await bancada.tratar(comandoDoDono('000000'))
+
+    const textos = bancada.sender.mensagens.map((m) => m.texto)
+    assert.equal(textos.filter((t) => t.includes('Código errado ou expirado')).length, 1, 'resposta uniforme')
+    assert.ok(bancada.time.now() >= aguardandoAntes, 'o backoff dormiu pelo relogio injetado')
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'nada pareou')
+    assert.equal(bancada.ipc.intents.length, 0)
+
+    // A espera terminou: um segundo valor sem novo `/parear` NAO e capturado.
+    const antes2 = bancada.sender.mensagens.length
+    await bancada.tratar(comandoDoDono('111111'))
+    assert.equal(bancada.sender.mensagens.length, antes2, 'o segundo valor nao re-abre a janela')
+  })
+
+  it('valor MALFORMADO re-pede SEM ecoar o texto e SEM debitar; a espera continua', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    await bancada.tratar(comandoDoDono('abc'))
+
+    const textos = bancada.sender.mensagens.map((m) => m.texto)
+    assert.equal(textos.some((t) => t.includes(RESPOSTA_PEDIR_VALOR_MALFORMADO)), true, 're-pede o formato')
+    assert.equal(textos.some((t) => t.includes('abc')), false, 'NAO ecoa o que foi digitado')
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'malformado nao pareia')
+
+    // A espera CONTINUA: o codigo certo a seguir ainda pareia.
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Pareado/u)
+  })
+
+  it('UM comando NOVO durante a espera CANCELA o aguardando e roda normal (o texto de comando NUNCA e valor)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    assert.equal(bancada.sender.mensagens.length, 1, 'a pergunta')
+
+    // `/menu` (um comando qualquer) durante a espera cancela e roda normal.
+    await bancada.tratar(comandoDoDono('/menu'))
+    // A espera acabou: o valor digita depois NAO e capturado (vai ao guard normal
+    // — o user ainda nao pareou, logo nem chega a intent nem a resposta).
+    const antes = bancada.sender.mensagens.length
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.equal(bancada.sender.mensagens.length, antes, 'o valor pos-comando nao e capturado')
+    assert.equal(bancada.ipc.intents.length, 0, 'sem intent para o texto "solto"')
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'nada pareou')
+  })
+
+  it('`/parear <codigo>` durante a espera cancela e valida inline (roda normal)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    assert.equal(bancada.sender.mensagens.length, 1, 'a pergunta')
+
+    await bancada.tratar(comandoDoDono(`/parear ${CODIGO}`))
+    assert.ok(
+      bancada.sender.mensagens.some((m) => /Pareado/u.test(m.texto)),
+      'o inline durante a espera pareia (cancela e roda normal)',
+    )
+  })
+
+  it('`/cancelar` durante a espera cancela com `Ok, cancelado.` e o estado sai', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    await bancada.tratar(comandoDoDono('/cancelar'))
+
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, RESPOSTA_AGUARDANDO_CANCELADO)
+    // Estado removido: um valor a seguir NAO e capturado.
+    const antes = bancada.sender.mensagens.length
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.equal(bancada.sender.mensagens.length, antes, 'nada apos cancelar')
+    assert.equal(bancada.ipc.pareamentos.length, 0)
+  })
+
+  it('texto puro `cancelar` / `não` durante a espera tambe cancela com `Ok, cancelado.`', async () => {
+    for (const adeus of ['cancelar', 'não']) {
+      const bancada = montarBancada()
+      await bancada.tratar(comandoDoDono('/parear'))
+      await bancada.tratar(comandoDoDono(adeus))
+      assert.equal(bancada.sender.mensagens.at(-1)?.texto, RESPOSTA_AGUARDANDO_CANCELADO, `via <<${adeus}>>`)
+    }
+  })
+
+  it('TIMEOUT da espera (relogio injetado): `O código expirou. Use /parear de novo.` e o valor tardio NAO valida', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    assert.equal(bancada.sender.mensagens.length, 1, 'a pergunta')
+
+    bancada.time.advance(5 * 60_000 + 1) // ESPERA_TTL = 5 min (<= TTL do codigo)
+
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, RESPOSTA_AGUARDANDO_EXPIROU)
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'o valor tardio NAO valida')
+    assert.equal(bancada.ipc.intents.length, 0)
+  })
+
+  it('TIMEOUT: um COMANDO tardio (depois do TTL) cancela em silencio e NAO manda o aviso de valor', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    bancada.time.advance(5 * 60_000 + 1)
+    const antes = bancada.sender.mensagens.length
+
+    await bancada.tratar(comandoDoDono('/menu'))
+    assert.equal(bancada.sender.mensagens.length, antes, 'comando tardio e descartado/silencioso, sem aviso de valor')
+  })
+
+  it('valor de OUTRO chat (mesmo fluxo noutra conversa) NAO cruza para o fluxo daqui', async () => {
+    const bancada = montarBancada()
+    // ESTRANHO (222/222) arma a espera no chat 222.
+    await bancada.tratar({ kind: 'comando', identity: { userKey: ESTRANHO, chatKey: ESTRANHO }, text: '/parear' })
+    assert.equal(bancada.sender.mensagens.length, 1, 'a pergunta do estranho')
+    // DONO (111/111) manda o codigo NO CHAT DELE — outra conversa, sem espera.
+    await bancada.tratar(comandoDoDono(CODIGO))
+    // A espera do chat 222 continua intacta, mas o valor do chat 111 nao pareia(aqui).
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'o codigo do chat do dono nao rouba a espera do estranho')
+  })
+
+  it('valor do MESMO chat mas de OUTRO user NAO e capturado (fica a esperar)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar({ kind: 'comando', identity: { userKey: DONO, chatKey: DONO }, text: '/parear' })
+    assert.equal(bancada.sender.mensagens.length, 1, 'a pergunta')
+
+    // Um terceiro no MESMO chat (chatKey=DONO) manda um valor de 6 digitos.
+    await bancada.tratar({ kind: 'comando', identity: { userKey: '999', chatKey: DONO }, text: '999999' })
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'outro user nao captura o fluxo')
+
+    // A espera CONTINUA para o dono: o codigo certo ainda pareia.
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Pareado/u)
+  })
+
+  it('ESTRANHO: pergunta uniforme; valor bem-formado -> resposta uniforme + budget + backoff; botoes descartados (TG-089)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar({ kind: 'comando', identity: { userKey: ESTRANHO, chatKey: ESTRANHO }, text: '/parear' })
+    assert.equal(bancada.sender.mensagens[0]?.texto, RESPOSTA_PEDIR_VALOR, 'a pergunta e uniforme para o estranho')
+
+    await bancada.tratar({ kind: 'comando', identity: { userKey: ESTRANHO, chatKey: ESTRANHO }, text: '000000' })
+    assert.equal(
+      bancada.sender.mensagens.at(-1)?.texto,
+      'Código errado ou expirado. Confere no painel e tenta de novo.',
+      'valor bem-formado errado de estranho recebe a mesma resposta uniforme',
+    )
+
+    // O clique de estranho (botao/callback): descartado em silencio, answer vazio.
+    const antesMsgs = bancada.sender.mensagens.length
+    await bancada.tratar({
+      kind: 'acao',
+      identity: { userKey: ESTRANHO, chatKey: ESTRANHO },
+      action: 'menu',
+      token: 'AAAAAAAAAAA',
+      answerTarget: 'cq-estranho',
+    })
+    assert.equal(bancada.sender.mensagens.length, antesMsgs, 'o clique de estranho nao gera mensagem')
+    assert.equal(bancada.sender.respostas.at(-1)?.outras, undefined, 'answer vazio (sem oraculo)')
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.match(bancada.log.all(), /deny:not-configured|deny:not-allowlisted/u)
+  })
+
+  it('o sender NUNCA ecoa o valor/codigo do user em nenhum caminho (audit e saida limpos)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    await bancada.tratar(comandoDoDono('12a45')) // malformado (nao 6 digitos)
+    await bancada.tratar(comandoDoDono('777777')) // bem-formado errado
+    await bancada.tratar(comandoDoDono(CODIGO)) // mais um valor (ja sem espera)
+
+    // O valor DIGITADO pelo user nunca ecoa. Distinguimos dos literais fixos:
+    // '123456' circula como EXEMPLO estatico da re-pergunta (ok), o resto nao.
+    for (const msg of bancada.sender.mensagens) {
+      assert.equal(msg.texto.includes('12a45'), false, `sender ecoou o malformado: <<${msg.texto}>>`)
+      assert.equal(msg.texto.includes('777777'), false, `sender ecoou o bem-formado errado: <<${msg.texto}>>`)
+    }
+    assert.equal(bancada.log.all().includes('12a45'), false, 'o malformado nao vai ao log')
+    assert.equal(bancada.log.all().includes('777777'), false, 'o bem-formado errado nao vai ao log')
+  })
+
+  it('N cliques em `/parear` no menu geram UMA pergunta (anti-bomba, nao ecoam N vezes)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    for (let i = 0; i < 5; i += 1) await bancada.tratar(comandoDoDono('/parear'))
+    const perguntas = bancada.sender.mensagens.filter((m) => m.texto === RESPOSTA_PEDIR_VALOR).length
+    assert.equal(perguntas, 1, 'repetido `/parear` vazio nao reinicia nem repete o pedido')
+  })
+
+  it('ANTI-FARM (rev adversarial): estranho manda 6+ lixo na espera — max 5 re-asks e depois SILENCIO no teto', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar({ kind: 'comando', identity: { userKey: ESTRANHO, chatKey: ESTRANHO }, text: '/parear' })
+    assert.equal(bancada.sender.mensagens.length, 1, 'a pergunta')
+
+    // 6 lixo bem separados -> exatamente 5 respostas malformadas e a 6a calada.
+    for (let i = 0; i < 6; i += 1) {
+      await bancada.tratar({ kind: 'comando', identity: { userKey: ESTRANHO, chatKey: ESTRANHO }, text: 'lixo' })
+    }
+    const respostasMalformadas = bancada.sender.mensagens.filter((m) =>
+      m.texto.includes(RESPOSTA_PEDIR_VALOR_MALFORMADO),
+    ).length
+    assert.equal(respostasMalformadas, 5, 'no maximo 5 re-asks "Nao entendi o codigo"')
+    assert.equal(bancada.sender.mensagens.length, 1 + 5, 'a 6a onda NAO responde (teto -> silencio)')
+
+    // A espera foi removida: um valor certo depois nao e capturado (silence).
+    const antes = bancada.sender.mensagens.length
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.equal(bancada.sender.mensagens.length, antes, 'apos o teto, nem o codigo certo valida (espera removida)')
+    assert.equal(bancada.ipc.pareamentos.length, 0)
+  })
+
+  it('ANTI-FARM: um legitimo continua a re-pedir normalmente ate o teto (sem debitar tentativa)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+    // 4 lixo: todas re-ask (nenhum palpite nem sonda debitada no receptor).
+    for (let i = 0; i < 4; i += 1) await bancada.tratar(comandoDoDono('ab4'))
+    assert.equal(
+      bancada.sender.mensagens.filter((m) => m.texto.includes(RESPOSTA_PEDIR_VALOR_MALFORMADO)).length,
+      4,
+      '4 lixo -> 4 re-asks',
+    )
+    // Sem debitar tentativa (nem sondas, nem palpites) — so o fluxo de espera.
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.equal(bancada.ipc.pareamentos.length, 0)
+    // A quinta re-ask esgota o teto; a seguir um lixo fica calado, mas o fluxo
+    // legitimo ainda pode recomecar com um novo `/parear`.
+    await bancada.tratar(comandoDoDono('ab4')) // 5 -> teto
+    const antes = bancada.sender.mensagens.length
+    await bancada.tratar(comandoDoDono('ab4')) // 6 -> silencio
+    assert.equal(bancada.sender.mensagens.length, antes, '6o lixo após o teto fica calado')
+
+    // Novo `/parear` rearma e o codigo certo pareia (contador zerado ao armar).
+    await bancada.tratar(comandoDoDono('/parear'))
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Pareado/u)
+  })
+
+  it('ANTI-FARM: o TTL da espera continua a expirar mesmo com malformados (relogio injetado)', async () => {
+    const bancada = montarBancada()
+    await bancada.tratar(comandoDoDono('/parear'))
+
+    // Dois malformados (re-asks) dentro da janela.
+    await bancada.tratar(comandoDoDono('xyz'))
+    await bancada.tratar(comandoDoDono('xyz'))
+    // Avanca Alem do TTL da espera (5 min), mesmo com re-asks a decorrer.
+    bancada.time.advance(5 * 60_000 + 1)
+
+    // O valor certo agora e tardio: aviso de timeout, NAO valida.
+    await bancada.tratar(comandoDoDono(CODIGO))
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, RESPOSTA_AGUARDANDO_EXPIROU)
+    assert.equal(bancada.ipc.pareamentos.length, 0, 'o valor tardio nao valida mesmo apos malformados')
   })
 })

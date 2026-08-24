@@ -30,6 +30,7 @@ import {
   RESPOSTA_BOAS_VINDAS,
   RESPOSTA_JA_PAREADO,
   RESPOSTA_PAREAMENTO_RECUSADO,
+  RESPOSTA_PEDIR_VALOR_MALFORMADO,
   SurfaceAuthError,
   type PairedOwner,
   type SurfacePairingLimits,
@@ -454,6 +455,105 @@ describe('PAIR-007 — forca bruta: limitada e atrasada', () => {
         (e: unknown) => e instanceof SurfaceAuthError && e.code === 'PAIRING_LIMITS_INVALID',
       )
     }
+  })
+})
+
+/* ========================================================================== */
+/* verificarCandidato — o caminho REUTILIZAVEL da conversa "pedir valor"       */
+/* (docs/ux/04-CONVERSA-INTELIGENTE.md §3): o MESMO budget/backoff/resposta    */
+/* do fluxo inline, agora exposto para o core validar a resposta capturada.   */
+/* ========================================================================== */
+
+describe('verificarCandidato — o mesmo receptor p/ a conversa "pedir valor"', () => {
+  it('o codigo certo (6 digitos) pareia, com os DOIS eixos e sem ecoar o codigo', () => {
+    const { receiver } = bancada()
+    const out = receiver.verificarCandidato(OWNER, CODE)
+    assert.equal(out.kind, 'paired')
+    if (out.kind !== 'paired') return
+    assert.deepEqual(out.owner, { userKey: OWNER.userKey, chatKey: OWNER.chatKey, pairedAt: T0 })
+    assert.equal(out.reply.includes(CODE), false)
+    assert.equal(JSON.stringify(out.audit).includes(CODE), false)
+  })
+
+  it('valor bem-formado errado: resposta uniforme + debita palpite + backoff (MESMO orcamento)', () => {
+    const { receiver } = bancada()
+    const a = receiver.verificarCandidato(STRANGER, '000000')
+    const b = receiver.verificarCandidato(STRANGER, '482910')
+    assertRecusou(a, 'refuse:wrong-code')
+    assertRecusou(b, 'refuse:wrong-code')
+    assert.equal(a.reply, RESPOSTA_PAREAMENTO_RECUSADO)
+    assert.equal(b.reply, RESPOSTA_PAREAMENTO_RECUSADO)
+    // Debita no MESMO orcamento do inline `/parear <codigo>` (attempts, nao sonda).
+    assert.equal(receiver.stats().attempts, 2)
+    assert.equal(receiver.stats().probes, 0)
+    assert.equal(a.delayMs, 250)
+    assert.equal(b.delayMs, 500, 'backoff cresce pelas falhas do mesmo chat')
+  })
+
+  it('valor MALFORMADO (≠6 digitos / nao-numerico): NAO debita, NAO conta sonda e re-pede SEM ecoar', () => {
+    const { receiver } = bancada()
+    for (const ruim of ['abc', '98765', '12 456', '', '1234567', '1e5']) {
+      const out = receiver.verificarCandidato(STRANGER, ruim)
+      assertRecusou(out, 'refuse:malformed')
+      assert.equal(out.reply, RESPOSTA_PEDIR_VALOR_MALFORMADO)
+      // Nunca ecoa o valor digitado (a resposta e a forma fixa, nao o conteudo).
+      if (ruim.length > 0) assert.equal(out.reply.includes(ruim), false, `ecoou <<${ruim}>>`)
+      assert.equal(out.delayMs, 0, 'malformado nao gera backoff')
+    }
+    assert.equal(receiver.stats().attempts, 0, 'ZERO palpites debitados')
+    assert.equal(receiver.stats().probes, 0, 'ZERO sondas novas (so a comparacao de um bem-formado debita)')
+  })
+
+  it('o teto de tentativas e o MESMO do inline: esgotar por verificarCandidato fecha o inline e vice-versa', () => {
+    const limits: SurfacePairingLimits = { ...LIMITES_PAREAMENTO_PADRAO, maxAttemptsPerChat: 2 }
+    const { receiver } = bancada(limits)
+    // Duas tentativas malformadas-bem-formadas erradas via conversa...
+    assertRecusou(receiver.verificarCandidato(STRANGER, '000000'), 'refuse:wrong-code')
+    assertRecusou(receiver.verificarCandidato(STRANGER, '111111'), 'refuse:wrong-code')
+    // ...um inline correto e negado pelo teto do MESMO chat (PAIR-007).
+    const excedente = receiver.receive(comando(STRANGER, `/parear ${CODE}`))
+    assertRecusou(excedente, 'refuse:rate-limited')
+    assert.equal(excedente.reply, undefined)
+  })
+
+  it('TTL do codigo expirado: resposta uniforme, so a comparacao de um bem-formado debita', () => {
+    const { receiver, clock } = bancada()
+    clock.advance(TTL_MS)
+    const out = receiver.verificarCandidato(STRANGER, '000000')
+    assertRecusou(out, 'refuse:expired')
+    assert.equal(out.reply, RESPOSTA_PAREAMENTO_RECUSADO)
+    assert.equal(receiver.stats().attempts, 1, 'um bem-formado debita mesmo expirado')
+  })
+
+  it('ja-pareado: o dono recebe explicacao; um estranho, silencio', () => {
+    const clock = new FakeClock(T0)
+    const r = criarReceptorDePareamento({
+      challenge: criarDesafioDePareamento(CODE, T0 + TTL_MS),
+      clock,
+      owner: { userKey: OWNER.userKey, chatKey: OWNER.chatKey, pairedAt: T0 - 1 },
+    })
+    const dono = r.verificarCandidato(OWNER, CODE)
+    assertRecusou(dono, 'refuse:already-paired')
+    assert.equal(dono.reply, RESPOSTA_JA_PAREADO)
+    const intruso = r.verificarCandidato(STRANGER, CODE)
+    assertRecusou(intruso, 'refuse:already-paired')
+    assert.equal(intruso.reply, undefined)
+  })
+
+  it('o audit NUNCA carrega o valor; so booleans/contadores', () => {
+    const { receiver } = bancada()
+    const errado = receiver.verificarCandidato(STRANGER, '000000')
+    assertRecusou(errado, 'refuse:wrong-code')
+    assert.equal(JSON.stringify(errado.audit).includes('000000'), false, 'o candidato nao vai ao audit')
+    const ok = receiver.verificarCandidato(OWNER, CODE)
+    if (ok.kind === 'paired') assert.equal(JSON.stringify(ok.audit).includes(CODE), false)
+  })
+
+  it('fixura inline `/parear 123456` continua a debitar no MESMO orcamento (fonte unica)', () => {
+    const { receiver } = bancada()
+    const inline = receiver.receive(comando(OWNER, `/parear ${CODE}`))
+    assert.equal(inline.kind, 'paired')
+    assert.equal(receiver.stats().attempts, 1, 'o inline passa pelo MESMO `verificarCandidato`')
   })
 })
 

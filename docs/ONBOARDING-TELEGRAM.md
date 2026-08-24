@@ -56,12 +56,19 @@ forma segura nesta máquina e **nunca** sai do backend para o painel.
 3. Manda **`/parear <código>`** com o código certo. O bot responde:
    `✓ Pareado com sucesso! Agora: /menu e /status.` (2 primeiras ações + aviso de
    segurança).
+   - **Ou, no menu do bot, toca no comando `/parear`** (que envia `/parear` sem
+     valor): o bot **PEDE o código** na conversa — `Envia-me o código de 6 dígitos
+     que aparece no painel.` — e usa a **próxima mensagem de texto** que enviares
+     como resposta (o código certo pareia; um `cancelar`/`não` cancela).
+   - Um valor sem 6 dígitos re-pede: `Não entendi o código — 6 dígitos, ex.:
+     `123456`.` (sem ecoar o que digitaste).
 4. Se o código estiver **errado/expirado**, o bot responde **sempre a mesma
    frase**: `Código errado ou expirado. Confere no painel e tenta de novo.`
    (sem revelar se o código existe — PAIR-003) e conta a tentativa (tetos).
 5. Já pareado e mandas `/parear` outra vez? Só o dono vê a explicação:
    `Este bate-papo já é o dono deste bot. Para trocar o dono, reset na máquina.`
-   (PAIR-005). Um estranho é **silêncio**.
+   (PAIR-005). Um estranho é **silêncio**. A pergunta de código (Passo 3) expira
+   sozinha em **5 min**: `O código expirou. Use /parear de novo.`
 
 O pareamento é de **um dono só**: quem valida é o digest do código (nunca o
 claro), e o dono é gravado no `state.json` pelo host (`pairing.owner`), que

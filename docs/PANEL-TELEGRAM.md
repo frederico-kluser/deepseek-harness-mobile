@@ -59,8 +59,11 @@ min), que é renderizado **só aqui**:
    botão **`Copiar`**;
 2. um **countdown** visível (`expira em 4:53`) e **`Gerar novo`** (se expirar,
    `Este código expirou. Gera um novo.`);
-3. a **instrução única**: **`No Telegram, envia: /parear 123456 no @handle`**
-   (o código **nunca** é enviado pelo painel — és tu que o ditas ao bot);
+3. a **instrução única** (modo híbrido):
+   **`No Telegram, envia: /parear 123456 no @handle — ou só /parear e o bot pede o código`**
+   (o código **nunca** é enviado pelo painel — és tu que o ditas ao bot; se
+   enviares só o `/parear`, o bot pergunta o código na conversa e usa a tua
+   próxima mensagem de texto como resposta — ver `docs/ux/04-CONVERSA-INTELIGENTE.md`);
 4. um **status ao vivo** que troca de **`Aguardando…`** → **`✓ Pareado`** quando
    o worker conclui o handshake.
 

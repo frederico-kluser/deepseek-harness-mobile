@@ -377,6 +377,30 @@ export const RESPOSTA_BOAS_VINDAS =
   '   /parear 123456\n\n' +
   'Depois, abra o menu para ligar e desligar o túnel.'
 
+/* ========================================================================== */
+/* CONVERSA INTELIGENTE (docs/ux/04-CONVERSA-INTELIGENTE.md) — textos EXATOS  */
+/* ========================================================================== */
+
+/**
+ * A PERGUNTA quando `/parear` vazio (o clique no menu) arma a espera de valor:
+ * o bot usa a PROXIMA mensagem de texto do mesmo chat+user como resposta.
+ * INOCUA e IGUAL para toda a gente (mesmo espirito de PAIR-006) — nunca
+ * revela estado nem ecoa o codigo.
+ */
+export const RESPOSTA_PEDIR_VALOR = 'Envia-me o código de 6 dígitos que aparece no painel.'
+
+/**
+ * Re-pede quando o valor capturado Nao tem a forma de 6 digitos. NUNCA ecoa o
+ * texto digitado (so a forma fixa). NAO debita tentativa nem conta sonda.
+ */
+export const RESPOSTA_PEDIR_VALOR_MALFORMADO = 'Não entendi o código — 6 dígitos, ex.: `123456`.'
+
+/** Timeout da espera de valor: o codigo (TTL 5 min) expirou. Estado removido. */
+export const RESPOSTA_AGUARDANDO_EXPIROU = 'O código expirou. Use /parear de novo.'
+
+/** Cancela a espera de valor (`/cancelar` ou texto puro `cancelar`/`não`). */
+export const RESPOSTA_AGUARDANDO_CANCELADO = 'Ok, cancelado.'
+
 // -- Estado e contadores --
 
 export interface SurfacePairingStats {
@@ -392,6 +416,15 @@ export interface SurfacePairingStats {
 export interface SurfacePairingReceiver {
   /** Processa um evento de comando. **SINCRONO** — isso e o contrato de PAIR-009. */
   receive(evento: SurfaceCommandEvent): SurfacePairingOutcome
+  /**
+   * O caminho REUTILIZAVEL do receptor: valida um CANDIDATO (o codigo) com o
+   * MESMO orcamento/teto/backoff/resposta do fluxo inline — a unica porta de
+   * comparacao de um valor. Usado pelo core, na conversa "pedir valor"
+   * (docs/ux/04-CONVERSA-INTELIGENTE.md), e chamado tambem pelo proprio
+   * `receive` para `/parear <codigo>`. **SINCRONO** (PAIR-009): nao ha `await`
+   * entre ler estado -> verificar cota -> comparar -> marcar consumido.
+   */
+  verificarCandidato(identity: SurfaceIdentity, candidato: string): SurfacePairingOutcome
   state(): SurfacePairingState
   stats(): SurfacePairingStats
   /** Troca o desafio quando o host gera outro codigo (TG-064). Nao zera palpites. */
@@ -478,6 +511,90 @@ export function criarReceptorDePareamento(deps: SurfacePairingDeps): SurfacePair
     return Math.min(limits.maxDelayMs, bruto)
   }
 
+  /**
+   * O caminho REUTILIZAVEL de comparacao de um CANDIDATO (o codigo) — a UNICA
+   * porta de verificacao de um valor (docs/ux/04-CONVERSA-INTELIGENTE.md §3).
+   *
+   * CORRIDO pela conversa "pedir valor" (o core, na proxima mensagem de texto
+   * puro do mesmo chat+user) E pelo fluxo inline (`/parear <codigo>`). Mesmo
+   * orcamento, mesmos tetos, mesmo backoff, mesma resposta uniforme. **SINCRONO**
+   * (PAIR-009): nao ha `await` entre ler estado -> verificar cota -> comparar ->
+   * marcar consumido.
+   *
+   * Presupostos do chamador:
+   *   - `identity` NAO e `undefined` (o receptor trata `missing-identity` antes);
+   *   - para o FLUXO CONVERSACIONAL o estado `fechado` e tratado aqui
+   *     (`refuse:already-paired`); para o INLINE o `receive` ja o tratou, entao
+   *     este check nunca dispara em duplicado.
+   *
+   * VALOR MALFORMADO (≠6 digitos / nao-numerico): NAO debita tentativa nem conta
+   * sonda, e re-pede com `RESPOSTA_PEDIR_VALOR_MALFORMADO` SEM ecoar o candidato.
+   */
+  function verificarCandidatoInterno(identity: SurfaceIdentity, candidato: string): SurfacePairingOutcome {
+    // MALFORMADO — antes de qualquer teto/debita. Re-pede, nunca debita, nunca
+    // ecoa. So a comparacao de um valor bem-formado debita (recomendacao 3.b).
+    if (!eSeisDigitos(candidato)) {
+      return recusar('refuse:malformed', RESPOSTA_PEDIR_VALOR_MALFORMADO, 0, identity, 'nenhum')
+    }
+
+    // JA-PAREADO — defesa defensiva p/ o caminho conversacional (o inline ja o
+    // tratou no `receive`; aqui garantir o mesmo para o valor capturado).
+    if (state.status === 'fechado') {
+      const eDono =
+        identity.userKey === state.owner.userKey && identity.chatKey === state.owner.chatKey
+      return recusar('refuse:already-paired', eDono ? RESPOSTA_JA_PAREADO : undefined, 0, identity, 'nenhum')
+    }
+
+    // TETO ANTES DA VERIFICACAO (PAIR-007): um chat esgotado nao chega a TESTAR.
+    const falhasDoChat = tentativasPorChat.get(identity.chatKey) ?? 0
+    if (falhasDoChat >= limits.maxAttemptsPerChat || tentativasGlobal >= limits.maxAttemptsGlobal) {
+      return recusar('refuse:rate-limited', undefined, limits.maxDelayMs, identity, 'palpite')
+    }
+
+    attempts += 1
+    tentativasGlobal += 1
+    tentativasPorChat.set(identity.chatKey, falhasDoChat + 1)
+
+    // TTL — PAIR-004. Relogio injetado.
+    if (deps.clock.now() >= challenge.expiresAt) {
+      return recusar('refuse:expired', RESPOSTA_PAREAMENTO_RECUSADO, atrasoPara(falhasDoChat), identity, 'palpite')
+    }
+
+    if (!challenge.verify(candidato)) {
+      // >>> UNICO RAMO QUE DEVOLVE SINAL A QUEM NAO E DONO. Responde porque
+      // PAIR-003 exige resposta generica — e POR RESPONDER debita palpite.
+      return recusar('refuse:wrong-code', RESPOSTA_PAREAMENTO_RECUSADO, atrasoPara(falhasDoChat), identity, 'palpite')
+    }
+
+    // ---- PAREADO. Os dois eixos vem DESTE evento (o que carrega o codigo certo).
+    const owner: PairedOwner = {
+      userKey: identity.userKey,
+      chatKey: identity.chatKey,
+      pairedAt: deps.clock.now(),
+    }
+    state = { status: 'fechado', owner }
+    byReason.set('ok', (byReason.get('ok') ?? 0) + 1)
+
+    return {
+      kind: 'paired',
+      owner,
+      // Nao ecoa o codigo.
+      reply:
+        '✓ Pareado com sucesso! Agora:\n' +
+        '  • /menu — painel de controlo\n' +
+        '  • /status — estado do túnel\n\n' +
+        'Segurança: só este chat pode comandar o bot.',
+      audit: {
+        evento: 'surface.pareamento.concluido',
+        resultado: 'permitido',
+        motivo: 'ok',
+        orcamento: 'palpite',
+        userKey: identity.userKey,
+        chatKey: identity.chatKey,
+      },
+    }
+  }
+
   return {
     receive(evento: SurfaceCommandEvent): SurfacePairingOutcome {
       const command = parseComando(evento)
@@ -549,54 +666,15 @@ export function criarReceptorDePareamento(deps: SurfacePairingDeps): SurfacePair
       }
 
       // ---- A PARTIR DAQUI TODA A TENTATIVA CARREGA UM PALPITE.
-      // TETO ANTES DA VERIFICACAO (PAIR-007): um chat esgotado nao chega a TESTAR.
-      const falhasDoChat = tentativasPorChat.get(identity.chatKey) ?? 0
-      if (falhasDoChat >= limits.maxAttemptsPerChat || tentativasGlobal >= limits.maxAttemptsGlobal) {
-        return recusar('refuse:rate-limited', undefined, limits.maxDelayMs, identity, 'palpite')
-      }
+      // O fluxo inline delega no caminho REUTILIZAVEL `verificarCandidato` (o
+      // MESMO que o core usa na conversa "pedir valor"): teto -> debitar ->
+      // TTL -> verificar -> parear. Zero duplicacao de logica de seguranca
+      // (docs/ux/04-CONVERSA-INTELIGENTE.md §3).
+      return verificarCandidatoInterno(identity, command.arg)
+    },
 
-      attempts += 1
-      tentativasGlobal += 1
-      tentativasPorChat.set(identity.chatKey, falhasDoChat + 1)
-
-      // TTL — PAIR-004. Relogio injetado.
-      if (deps.clock.now() >= challenge.expiresAt) {
-        return recusar('refuse:expired', RESPOSTA_PAREAMENTO_RECUSADO, atrasoPara(falhasDoChat), identity, 'palpite')
-      }
-
-      if (!challenge.verify(command.arg)) {
-        // >>> UNICO RAMO QUE DEVOLVE SINAL A QUEM NAO E DONO. Responde porque
-        // PAIR-003 exige resposta generica — e POR RESPONDER debita palpite.
-        return recusar('refuse:wrong-code', RESPOSTA_PAREAMENTO_RECUSADO, atrasoPara(falhasDoChat), identity, 'palpite')
-      }
-
-      // ---- PAREADO. Os dois eixos vem DESTE evento (o que carrega o codigo certo).
-      const owner: PairedOwner = {
-        userKey: identity.userKey,
-        chatKey: identity.chatKey,
-        pairedAt: deps.clock.now(),
-      }
-      state = { status: 'fechado', owner }
-      byReason.set('ok', (byReason.get('ok') ?? 0) + 1)
-
-      return {
-        kind: 'paired',
-        owner,
-        // Nao ecoa o codigo.
-        reply:
-          '✓ Pareado com sucesso! Agora:\n' +
-          '  • /menu — painel de controlo\n' +
-          '  • /status — estado do túnel\n\n' +
-          'Segurança: só este chat pode comandar o bot.',
-        audit: {
-          evento: 'surface.pareamento.concluido',
-          resultado: 'permitido',
-          motivo: 'ok',
-          orcamento: 'palpite',
-          userKey: identity.userKey,
-          chatKey: identity.chatKey,
-        },
-      }
+    verificarCandidato(identity: SurfaceIdentity, candidato: string): SurfacePairingOutcome {
+      return verificarCandidatoInterno(identity, candidato)
     },
 
     state(): SurfacePairingState {
@@ -931,12 +1009,16 @@ export type SurfaceEstadoPareamentoSuperficie =
 /**
  * O resultado de `receber` na forma que o core consome (`SurfacePareamentoResultado`).
  * `chat` deriva do `chatKey` do evento; `reply` ausente = descarte silencioso.
+ * `reason` (o vocabulario de `SurfacePairingRefusal`) e repassado para o core
+ * distinguir o caminho "pedir valor" (`refuse:malformed`) dos restantes recusos
+ * (docs/ux/04-CONVERSA-INTELIGENTE.md §3).
  */
 export type SurfacePareamentoResultadoSuperficie =
   | { readonly kind: 'pareado'; readonly dono: SurfaceDonoDaSuperficie; readonly reply: string }
   | { readonly kind: 'boas-vindas'; readonly reply: string; readonly chat: string | undefined }
   | {
       readonly kind: 'recusado'
+      readonly reason: SurfacePairingRefusal
       readonly reply: string | undefined
       /** O chamador espera este tempo ANTES de responder. */
       readonly delayMs: number
@@ -957,6 +1039,14 @@ export type SurfaceAdmissaoSuperficie =
  */
 export interface SurfaceAuthDaSuperficie {
   receber(evento: SurfaceCommandEvent): SurfacePareamentoResultadoSuperficie
+  /**
+   * O caminho REUTILIZAVEL de validacao de um candidato (docs/ux/04-CONVERSA-
+   * INTELIGENTE.md §3) — a MESMA funcao que o fluxo inline usa. O core consome
+   * para validar a proxima mensagem de texto puro da conversa "pedir valor".
+   * Devolve a forma do core (mesma traducao de `receber`) — `recusado.reason`
+   * distingue `refuse:malformed` dos demais.
+   */
+  verificarCandidato(identidade: SurfaceIdentity, candidato: string): SurfacePareamentoResultadoSuperficie
   admitirComando(identidade: SurfaceIdentity): SurfaceAdmissaoSuperficie
   admitirAcao(identidade: SurfaceIdentity, action: SurfaceAction): SurfaceAdmissaoSuperficie
   estado(): SurfaceEstadoPareamentoSuperficie
@@ -1056,11 +1146,33 @@ export function criarAuthDeSuperficie(deps: SurfaceAuthFacadeDeps): SurfaceAuthD
         case 'refused':
           return {
             kind: 'recusado',
+            reason: resultado.reason,
             reply: resultado.reply,
             delayMs: resultado.delayMs,
             chat: resultado.chat,
           }
         case 'ignored':
+          return { kind: 'ignorado' }
+      }
+    },
+
+    verificarCandidato(identidade: SurfaceIdentity, candidato: string): SurfacePareamentoResultadoSuperficie {
+      const resultado = receiver.verificarCandidato(identidade, candidato)
+      switch (resultado.kind) {
+        case 'paired':
+          return { kind: 'pareado', dono: resultado.owner, reply: resultado.reply }
+        case 'refused':
+          return {
+            kind: 'recusado',
+            reason: resultado.reason,
+            reply: resultado.reply,
+            delayMs: resultado.delayMs,
+            chat: resultado.chat,
+          }
+        case 'welcome':
+        case 'ignored':
+          // `verificarCandidato` nunca produz boas-vindas nem ignorado; cobre o
+          // tipo por exaustao (a traducao nao pode inventar um kind).
           return { kind: 'ignorado' }
       }
     },

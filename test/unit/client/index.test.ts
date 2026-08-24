@@ -271,6 +271,10 @@ test('bundle: a trilha de 3 checkpoints está presente e o pareamento NÃO loga 
   assert.ok(codigo.includes('Copiar'), 'o bundle deve conter o botão "Copiar" do código')
   assert.ok(codigo.includes('Aguardando'), 'o bundle deve conter o status ao vivo "Aguardando…"')
   assert.ok(codigo.includes('No Telegram, envia'), 'o bundle deve conter a instrução UMA final do pareamento')
+  // CONVERSA INTELIGENTE (04): o Passo 2 anuncia o modo hibrido — so `/parear`
+  // e o bot PERGUNTA o codigo. Substring ASCII-only (`pede o c` de "o bot pede
+  // o código"), porque o esbuild foge os acentos.
+  assert.ok(codigo.includes('pede o c'), 'o bundle deve anunciar que o bot pede o código (modo híbrido)')
 
   // Passo 3 — comandos essenciais + Avançado + privacidade + Uso recente.
   assert.ok(codigo.includes('Comandos essenciais'), 'o bundle deve conter os comandos essenciais do Passo 3')

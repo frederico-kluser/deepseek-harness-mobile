@@ -324,14 +324,65 @@ export class FakeAuth implements SurfaceAuth {
         }
       }
       this.audit.push('auditoria evento=pareamento resultado=negado')
+      // `/parear` SEM argumento e uma SONDA malformada (silenciosa) — o core
+      // redireto-o para o fluxo "pedir valor" quando vê `reason==='refuse:malformed'`.
+      const malformada = comando.arg.length === 0
       return {
         kind: 'recusado',
-        reply: 'Código errado ou expirado. Confere no painel e tenta de novo.',
-        delayMs: 250,
+        reason: malformada ? 'refuse:malformed' : 'refuse:wrong-code',
+        reply: malformada ? undefined : 'Código errado ou expirado. Confere no painel e tenta de novo.',
+        delayMs: malformada ? 0 : 250,
         chat: identidade.chatKey,
       }
     }
     return { kind: 'ignorado' }
+  }
+
+  /**
+   * O caminho REUTILIZAVEL de validacao de um candidato (espelho minimo do
+   * receptor real): malformado → `refuse:malformed` (re-ask, sem debitar);
+   * 6 dígitos e == codigo (sem dono) → pareado; caso contraio → recusado.
+   */
+  verificarCandidato(identidade: SurfaceIdentity, candidato: string): SurfacePareamentoResultado {
+    const eSeis = candidato.length === 6 && /^\d{6}$/u.test(candidato)
+    if (!eSeis) {
+      return {
+        kind: 'recusado',
+        reason: 'refuse:malformed',
+        reply: 'Não entendi o código — 6 dígitos, ex.: `123456`.',
+        delayMs: 0,
+        chat: identidade.chatKey,
+      }
+    }
+    if (this.dono !== undefined) {
+      const eDono = this.dono.userKey === identidade.userKey && this.dono.chatKey === identidade.chatKey
+      return {
+        kind: 'recusado',
+        reason: 'refuse:already-paired',
+        reply: eDono ? 'Este bate-papo já é o dono deste bot. Para trocar o dono, reset na máquina.' : undefined,
+        delayMs: 0,
+        chat: identidade.chatKey,
+      }
+    }
+    if (candidato === this.codigo) {
+      this.dono = { userKey: identidade.userKey, chatKey: identidade.chatKey, pairedAt: 1_700_000_000_000 }
+      return {
+        kind: 'pareado',
+        dono: this.dono,
+        reply:
+          '✓ Pareado com sucesso! Agora:\n' +
+          '  • /menu — painel de controlo\n' +
+          '  • /status — estado do túnel\n\n' +
+          'Segurança: só este chat pode comandar o bot.',
+      }
+    }
+    return {
+      kind: 'recusado',
+      reason: 'refuse:wrong-code',
+      reply: 'Código errado ou expirado. Confere no painel e tenta de novo.',
+      delayMs: 250,
+      chat: identidade.chatKey,
+    }
   }
 
   admitirComando(identidade: SurfaceIdentity): SurfaceAdmissao {

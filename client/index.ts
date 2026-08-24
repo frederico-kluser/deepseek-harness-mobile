@@ -689,7 +689,7 @@ function CartaoParear(props: {
             copiado ? 'copiado' : 'Copiar'),
         ),
         paragrafo('guard-code-line',
-          `No Telegram, envia: /parear ${props.estado.codigo} no ${props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot'}`),
+          `No Telegram, envia: /parear ${props.estado.codigo} no ${props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot'} — ou só /parear e o bot pede o código`),
         h('div', { className: 'guard-pair-countdown' },
           h('span', { className: 'guard-muted' }, `expira em ${contagem}`),
           h('button', { type: 'button', className: 'guard-btn-sm', onClick: props.aoNovoCodigo }, 'Gerar novo'),

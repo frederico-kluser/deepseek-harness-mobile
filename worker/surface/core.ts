@@ -103,6 +103,13 @@ import {
 import { criarOutbox } from './outbox.ts'
 import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
 import { COMANDOS_PUBLICADOS } from './commands.ts'
+import {
+  LIMITES_PAREAMENTO_PADRAO,
+  RESPOSTA_AGUARDANDO_CANCELADO,
+  RESPOSTA_AGUARDANDO_EXPIROU,
+  RESPOSTA_PEDIR_VALOR,
+  RESPOSTA_PEDIR_VALOR_MALFORMADO,
+} from './auth.ts'
 
 // Re-export da lista canonica (dono unico em commands.ts, onda 5a): o nucleo
 // publica-a por `setMyCommands` e o ponto de entrada tipado re-expõe-a aqui.
@@ -266,6 +273,7 @@ export type SurfacePareamentoResultado =
   | { readonly kind: 'boas-vindas'; readonly reply: string; readonly chat: string | undefined }
   | {
       readonly kind: 'recusado'
+      readonly reason: string
       /** `undefined` = descarte silencioso (TG-089). */
       readonly reply: string | undefined
       /** O chamador espera este tempo ANTES de responder. Nunca dormimos aqui. */
@@ -300,6 +308,14 @@ export interface SurfaceAuth {
    * o comando nao e `/parear` nem `/start`.
    */
   receber(evento: SurfaceCommandEvent): SurfacePareamentoResultado
+  /**
+   * VALIDA um CANDIDATO (o codigo) com o MESMO receptor — teto/backoff/resposta
+   * uniforme (docs/ux/04-CONVERSA-INTELIGENTE.md §3). Usado na conversa "pedir
+   * valor" para a proxima mensagem de texto puro do mesmo chat+user. SINCRONO
+   * (PAIR-009). Devolve o resultado na forma do core (`recusado.reason` distingue
+   * `refuse:malformed` do resto); o core envia a resposta.
+   */
+  verificarCandidato(identidade: SurfaceIdentity, candidato: string): SurfacePareamentoResultado
   /** Allowlist de dois eixos para uma MENSAGEM/COMANDO (default deny — TG-007). */
   admitirComando(identidade: SurfaceIdentity): SurfaceAdmissao
   /** Revalidacao de identidade para uma ACCAO (botao) — S6. */
@@ -343,6 +359,24 @@ export type SurfaceComandosFactory = (contexto: SurfaceCommandContext) => Surfac
 
 /** Teto do mapa de intents pendentes: defensivo, evita crescimento sem limite. */
 const MAX_PENDENTES = 64
+
+/* ========================================================================== */
+/* CONVERSA INTELIGENTE ("skills pedem valores") — docs/ux/04-CONVERSA-        */
+/* INTELIGENTE.md. O estado "aguardando valor" e o TEXTO de espera.            */
+/* ========================================================================== */
+
+/** TTL da espera de valor: `<= TTL do codigo` (5 min), medido no relogio. */
+const ESPERA_TTL_MS = 5 * 60 * 1000
+
+/** Teto defensivo do mapa "aguardando valor" (estilo MAX_TOKENS_DESLIGAR). */
+const MAX_AGUARDANDO = 64
+
+/**
+ * Teto de re-pedidos MALFORMADOS por espera: um atacante so recebe este numero
+ * de respostas "Não entendi o código…" numa janela — depois disso a espera e
+ * removida e fica SILENCIO (default-deny, TG-089). Anti farm de reflexao.
+ */
+const MAX_MALFORMADO_POR_ESPERA = 5
 
 export interface NucleoDeps {
   readonly log: SurfaceCommandContext['log']
@@ -423,6 +457,40 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
    * respostas a comandos NAO passam por aqui: sao interativas e curtas.
    */
   const porChat = new Map<string, { ultimoEnvio: number; pendente: string | undefined; emEspera: boolean }>()
+
+  /* ---- CONVERSA INTELIGENTE ("skills pedem valores") ---------------------
+   * Um `Map<chatKey, {userKey, expiresAtMs}>` no NUCLEO NEUTRO: marca que o bot
+   * perguntou um valor e espera a PROXIMA mensagem de texto puro do MESMO
+   * chat+user. Sem sessao de libraria, TTL lazy (no proximo evento, nunca
+   * setTimeout), teto FIFO (MAX_AGUARDANDO) — docs/ux/04-CONVERSA-INTELIGENTE.md.
+   * ------------------------------------------------------------------------ */
+  const aguardandoValor = new Map<string, { readonly userKey: string; readonly expiresAtMs: number }>()
+
+  /** Re-pedidos MALFORMADOS por chat, dentro de UMA espera (anti farm, rev adversarial). */
+  const malformadosPorChat = new Map<string, number>()
+
+  /**
+   * Backoff dos re-pedidos malformados — o MESMO padrao do receptor (`atrasoPara`,
+   * LIMITES_PAREAMENTO_PADRAO): dobra a cada falha do mesmo chat, 250ms -> 4s.
+   */
+  function atrasoMalformado(falhasAnteriores: number): number {
+    const bruto = LIMITES_PAREAMENTO_PADRAO.baseDelayMs * 2 ** Math.min(falhasAnteriores, 32)
+    return Math.min(LIMITES_PAREAMENTO_PADRAO.maxDelayMs, bruto)
+  }
+
+  /**
+   * Arma (ou re-arm) a espera de valor para o chat, no MESMO tick da pergunta.
+   * Reinicia o contador de re-pedidos MALFORMADOS do chat (cada fluxo comeca com
+   * orcamento cheio de re-asks).
+   */
+  function armarEsperaDeValor(identity: SurfaceIdentity): void {
+    if (aguardandoValor.size >= MAX_AGUARDANDO && !aguardandoValor.has(identity.chatKey)) {
+      const maisAntigo = aguardandoValor.keys().next().value
+      if (maisAntigo !== undefined) aguardandoValor.delete(maisAntigo)
+    }
+    aguardandoValor.set(identity.chatKey, { userKey: identity.userKey, expiresAtMs: time.now() + ESPERA_TTL_MS })
+    malformadosPorChat.delete(identity.chatKey)
+  }
 
   function enviarPara(chat: string, texto: string, opcoes?: Parameters<SurfaceSender['send']>[2]): Promise<string> {
     return deps.sender.send(chat, cortarTexto(texto, limites.maxTextLength), opcoes)
@@ -889,62 +957,209 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       }
 
       // ---- SurfaceCommandEvent ----
-      // O receptor de pareamento corre PRIMEIRO: /start e /parear sao o unico
-      // caminho legitimo de um estranho ate ao worker (PAIR-006/007).
-      const pareamento = deps.auth.receber(event)
-      if (pareamento.kind !== 'ignorado') {
-        if (pareamento.kind === 'pareado') {
-          await enviarPara(pareamento.dono.chatKey, pareamento.reply)
-          // EMENDA ONDA-1-PAREAR-VIA-PAINEL: avisa o HOST que o pareamento
-          // concluiu — ele responde `pairing.owner` (liberta a allowlist no
-          // ato via auth.semearDono) e persiste o dono no state.json. Best-
-          // effort e fire-and-forget (S4): NAO se derruba nada se a entrega
-          // falhar — quem re-pareia depois re-envia. NUNCA logar ids alem do
-          // minimo; `pairedAt` e o do dono ja autorizado pelo worker.
-          deps.ipc.pairingSuccess({
-            userKey: pareamento.dono.userKey,
-            chatKey: pareamento.dono.chatKey,
-            pairedAt: pareamento.dono.pairedAt,
-          })
-          return
-        }
-        if (pareamento.kind === 'boas-vindas') {
-          // CONTRATO §3: o /start (IGUAL para todos) ganha os 2 botoes —
-          // `[🔘 Abrir menu]` (/menu) e `[ℹ️ Ajuda]` (/ajuda). O botao do menu
-          // so RESOLVE para o dono (guard); a um estranho, o guard descarta em
-          // silencio (TG-089). O texto da boas-vindas nunca diferencia dono.
-          if (pareamento.chat !== undefined) {
-            await enviarPara(pareamento.chat, pareamento.reply, {
-              actionRows: [
-                [
-                  { label: '🔘 Abrir menu', action: 'menu', token: gerarTokenOpaque() },
-                  { label: 'ℹ️ Ajuda', action: 'ajuda', token: gerarTokenOpaque() },
-                ],
-              ],
-            })
-          }
-          return
-        }
-        // recusado
-        if (pareamento.delayMs > 0) await time.sleep(pareamento.delayMs)
-        if (pareamento.reply !== undefined && pareamento.chat !== undefined) {
-          await enviarPara(pareamento.chat, pareamento.reply)
-        }
-        return
-      }
-
-      const admissao = deps.auth.admitirComando(event.identity)
-      if (!admissao.admitido) {
-        auditoria({ outcome: 'descartado', motivo: `deny:${admissao.motivo}` })
-        // TG-089: silencio e contagem. Nao ha answer a um comando de texto.
-        return
-      }
-      auditoria({ outcome: 'permitido' })
-      await tratarComando(extrairNomeDeComando(event.text), event.identity)
+      return continuarComando(event)
     } catch (error) {
       // S4: o que falha aqui e logado e segue — nunca derruba o canal.
       log.error('falha ao tratar evento da superficie', { detail: descrever(error) })
     }
+  }
+
+  /* ---- o funil de um COMANDO (incluindo a conversa inteligente) ---------- */
+
+  /** O comando e um `/parear` SEM argumento (o clique no menu)? */
+  function ehParearSemValor(texto: string): boolean {
+    const aparado = texto.trim()
+    if (!aparado.startsWith('/')) return false
+    const espaco = indiceDeEspacoAscii(aparado)
+    const cabeca = espaco === -1 ? aparado : aparado.slice(0, espaco)
+    const arg = espaco === -1 ? '' : aparado.slice(espaco + 1).trim()
+    const arroba = cabeca.indexOf('@')
+    const nome = (arroba === -1 ? cabeca.slice(1) : cabeca.slice(1, arroba)).toLowerCase()
+    return nome === 'parear' && arg.length === 0
+  }
+
+  /** Texto puro que aceitamos como CANCELAR a espera (`/cancelar` → texto). */
+  function eIntencaoDeCancelar(texto: string): boolean {
+    const normalizado = texto.trim().toLowerCase()
+    return normalizado === 'cancelar' || normalizado === 'não' || normalizado === 'nao'
+  }
+
+  /**
+   * Valida o valor capturado da conversa pelo MESMO receptor (`verificarCandidato`):
+   * mesmos tetos/backoff/resposta uniforme. Malformado → re-pede (sem debitar),
+   * SEM ecoar o texto. Os restantes caminhos consomem a espera e respondem como
+   * o fluxo inline.
+   */
+  async function validarValorAguardado(identity: SurfaceIdentity, candidato: string): Promise<void> {
+    const veredito = deps.auth.verificarCandidato(identity, candidato)
+
+    // MALFORMADO (≠6 dígitos): re-pede com a mensagem neutra, NAO debita tentativa
+    // nem conta sonda, e NAO renova o TTL da espera (a janela total continua a
+    // expirar). Um teto por chat corta o farm de respostas "Não entendi o
+    // código…": apos MAX_MALFORMADO_POR_ESPERA re-asks -> REMOVE a espera e fica
+    // em SILENCIO (default-deny, TG-089) ate o proximo `/parear`.
+    if (veredito.kind === 'recusado' && veredito.reason === 'refuse:malformed') {
+      const anteriores = malformadosPorChat.get(identity.chatKey) ?? 0
+      if (anteriores >= MAX_MALFORMADO_POR_ESPERA) {
+        aguardandoValor.delete(identity.chatKey)
+        malformadosPorChat.delete(identity.chatKey)
+        auditoria({ outcome: 'descartado', motivo: 'refuse:malformed-rate-limited', chatKey: identity.chatKey })
+        return
+      }
+      malformadosPorChat.set(identity.chatKey, anteriores + 1)
+      const atraso = atrasoMalformado(anteriores)
+      if (atraso > 0) await time.sleep(atraso)
+      await enviarPara(identity.chatKey, veredito.reply ?? RESPOSTA_PEDIR_VALOR_MALFORMADO)
+      return
+    }
+
+    // Consumido: o fluxo de valor termina (pareia, recusa uniforme, ou rate-
+    // limited silencioso). A espera sai em TODOS os casos bem-formados/já-debitados.
+    aguardandoValor.delete(identity.chatKey)
+    malformadosPorChat.delete(identity.chatKey) // consumo com sucesso reinicia o orcamento
+
+    if (veredito.kind === 'pareado') {
+      await enviarPara(veredito.dono.chatKey, veredito.reply)
+      // EMENDA ONDA-1-PAREAR-VIA-PAINEL: comunicar ao HOST que pareou (fire-and-forget).
+      deps.ipc.pairingSuccess({
+        userKey: veredito.dono.userKey,
+        chatKey: veredito.dono.chatKey,
+        pairedAt: veredito.dono.pairedAt,
+      })
+      return
+    }
+    // recusado (uniforme / silencioso). O `verificarCandidato` so devolve
+    // malformado/pareado/recusado; destrinche o kind para o TS.
+    if (veredito.kind !== 'recusado') return
+    if (veredito.delayMs > 0) await time.sleep(veredito.delayMs)
+    if (veredito.reply !== undefined && veredito.chat !== undefined) {
+      await enviarPara(veredito.chat, veredito.reply)
+    }
+  }
+
+  /**
+   * Enquanto ha uma espera de valor ATIVA para o chat, decide o destino da
+   * mensagem: um comando cancela (e roda normal), `cancelar`/`não` cancela, e a
+   * proxima mensagem de texto PURO do MESMO user e capturada como valor. A
+   * mensagem de comando NUNCA e capturada como valor (04 §2).
+   */
+  async function tratarDuranteEspera(identity: SurfaceIdentity, registo: { readonly userKey: string }, texto: string): Promise<void> {
+    const nome = extrairNomeDeComando(texto)
+    if (nome !== undefined) {
+      if (nome === 'cancelar') {
+        aguardandoValor.delete(identity.chatKey)
+        await enviarPara(identity.chatKey, RESPOSTA_AGUARDANDO_CANCELADO)
+        return
+      }
+      // `/parear` vazio durante a espera: no-op (fica a esperar; anti-bomba —
+      // N cliques no menu geram UMA pergunta). Outro comando (incl. `/parear
+      // <valor>` inline) CANCELA a espera e roda normal.
+      if (nome === 'parear' && ehParearSemValor(texto)) return
+      aguardandoValor.delete(identity.chatKey)
+      return continuarComando({ kind: 'comando', identity, text: texto })
+    }
+
+    // Texto PURO. Outro user no MESMO chat: NAO e capturado (fica a esperar).
+    if (registo.userKey !== identity.userKey) return
+    // `cancelar`/`não` como texto puro cancela.
+    if (eIntencaoDeCancelar(texto)) {
+      aguardandoValor.delete(identity.chatKey)
+      await enviarPara(identity.chatKey, RESPOSTA_AGUARDANDO_CANCELADO)
+      return
+    }
+    await validarValorAguardado(identity, texto)
+  }
+
+  /**
+   * O funil de um COMANDO: receptor de pareamento PRIMEIRO (PAIR-006/007), o
+   * redireto "pedir valor" quando `/parear` vazio, e o guard+despacho normal.
+   */
+  async function continuarComando(event: SurfaceCommandEvent): Promise<void> {
+    const identity = event.identity
+
+    // (1) Espera ATIVA para este chat? Decide o destino da mensagem. O TTL da
+    // espera expira em lazy (NUNCA setTimeout). Um valor tardio apos o TTL →
+    // SO o aviso `O código expirou. Use /parear de novo.` E O ESTADO REMOVIDO;
+    // um comando tardio cancela e roda normal (04 §5).
+    const registo = aguardandoValor.get(identity.chatKey)
+    if (registo !== undefined) {
+      if (time.now() >= registo.expiresAtMs) {
+        aguardandoValor.delete(identity.chatKey)
+        const nome = extrairNomeDeComando(event.text)
+        if (nome === undefined && registo.userKey === identity.userKey) {
+          await enviarPara(identity.chatKey, RESPOSTA_AGUARDANDO_EXPIROU)
+          return
+        }
+        // comando tardio (ou valor de outro user): cai no funil normal.
+      } else {
+        await tratarDuranteEspera(identity, registo, event.text)
+        return
+      }
+    }
+
+    // (2) Nao ha espera. O receptor de pareamento corre PRIMEIRO: /start e
+    // /parear sao o unico caminho legitimo de um estranho ate ao worker.
+    const pareamento = deps.auth.receber(event)
+    if (pareamento.kind !== 'ignorado') {
+      if (pareamento.kind === 'pareado') {
+        await enviarPara(pareamento.dono.chatKey, pareamento.reply)
+        // EMENDA ONDA-1-PAREAR-VIA-PAINEL: avisa o HOST que o pareamento
+        // concluiu — ele responde `pairing.owner` (liberta a allowlist no ato
+        // via auth.semearDono) e persiste o dono no state.json. Best-effort e
+        // fire-and-forget (S4): NAO se derruba nada se a entrega falhar — quem
+        // re-pareia depois re-envia. NUNCA logar ids alem do minimo; `pairedAt`
+        // e o do dono ja autorizado pelo worker.
+        deps.ipc.pairingSuccess({
+          userKey: pareamento.dono.userKey,
+          chatKey: pareamento.dono.chatKey,
+          pairedAt: pareamento.dono.pairedAt,
+        })
+        return
+      }
+      if (pareamento.kind === 'boas-vindas') {
+        // CONTRATO §3: o /start (IGUAL para todos) ganha os 2 botoes —
+        // `[🔘 Abrir menu]` (/menu) e `[ℹ️ Ajuda]` (/ajuda). O botao do menu
+        // so RESOLVE para o dono (guard); a um estranho, o guard descarta em
+        // silencio (TG-089). O texto da boas-vindas nunca diferencia dono.
+        if (pareamento.chat !== undefined) {
+          await enviarPara(pareamento.chat, pareamento.reply, {
+            actionRows: [
+              [
+                { label: '🔘 Abrir menu', action: 'menu', token: gerarTokenOpaque() },
+                { label: 'ℹ️ Ajuda', action: 'ajuda', token: gerarTokenOpaque() },
+              ],
+            ],
+          })
+        }
+        return
+      }
+      // recusado
+      // 04 §2/§3: un `/parear` SEM argumento (o clique no menu) re-redireto —
+      // em vez do silencio antigo, arma a espera e PERGUNTA o codigo. NUNCA
+      // mais o beco sem saida. (O receptor continua a contabilizar a sonda —
+      // semantica atual preservada; so a comparacao de um valor bem-formado
+      // debita palpite.)
+      if (pareamento.reason === 'refuse:malformed') {
+        armarEsperaDeValor(identity)
+        await enviarPara(identity.chatKey, pareamento.reply ?? RESPOSTA_PEDIR_VALOR)
+        return
+      }
+      if (pareamento.delayMs > 0) await time.sleep(pareamento.delayMs)
+      if (pareamento.reply !== undefined && pareamento.chat !== undefined) {
+        await enviarPara(pareamento.chat, pareamento.reply)
+      }
+      return
+    }
+
+    // (3) Guard + despacho normal.
+    const admissao = deps.auth.admitirComando(event.identity)
+    if (!admissao.admitido) {
+      auditoria({ outcome: 'descartado', motivo: `deny:${admissao.motivo}` })
+      // TG-089: silencio e contagem. Nao ha answer a um comando de texto.
+      return
+    }
+    auditoria({ outcome: 'permitido' })
+    await tratarComando(extrairNomeDeComando(event.text), event.identity)
   }
 
   /* ---- os tratadores do canal (S4: nunca lancam) -------------------------- */
