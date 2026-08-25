@@ -7,7 +7,9 @@ aceite de um chat pareado.
 > **Dois caminhos para configurar:** (a) o **painel "Remote Access"** (aba do
 > settings) faz tudo pela interface — ver [`docs/PANEL-TELEGRAM.md`](PANEL-TELEGRAM.md);
 > (b) a CLI `dsh-guard-setup` também guia o fluxo. O pareamento do chat é o mesmo
-> nos dois. Os **textos EXATOS** do bot (boas-vindas, menu, telas de confirmação
+> nos dois. **Se gravares o token via CLI (`--pedir-token`) com o DSH já a correr,
+> reinicia o DSH** para o worker do bot arrancar (ou usa o painel, que faz reload
+> automático) — ver [`docs/INSTALL.md` §2.5](INSTALL.md#passo-25--ligar-o-bot-e-receber-o-link-sem-digitar-senha-nenhuma). Os **textos EXATOS** do bot (boas-vindas, menu, telas de confirmação
 > com botão `✕ Não`, respostas de pareamento) estão em
 > [`docs/ux/01-CONTRATO-BOT.md`](ux/01-CONTRATO-BOT.md) e o padrão de microcopy em
 > [`docs/ux/03-MICROCOPY.md`](ux/03-MICROCOPY.md) — aqui resume-se o uso.

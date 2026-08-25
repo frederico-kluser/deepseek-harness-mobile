@@ -58,6 +58,15 @@ O acesso pelo túnel **não usa senha**. Depois de o bot estar pareado
    navegador é redirecionado para a URL limpa (sem `?key=`), que continua
    autenticada via cookie.
 
+> **Depois de gravar o token, reinicia o DSH** se já estiver a correr. O bot
+> arranca o worker só no **boot** do DSH: se gravares o token via
+> `dsh-guard-setup --pedir-token` com o DSH já a correr, ele **não reinicia
+> sozinho** — o painel continua a mostrar "Passo 2 · O bot não está a correr
+> agora" mesmo com o token configurado. Nesse caso, faz **Ctrl+C** e corre
+> `dsh web` de novo para o worker arrancar. **Sem reiniciar, alternativa:**
+> põe o token pelo **próprio painel** (Passo 1 da aba do plugin), que faz
+> reload automático do worker — não precisa de reiniciar.
+
 > **Abrir a URL raiz do túnel sem a chave dá `401`** (sem pedir login, sem
 > popup). A chave é **reutilizável** até `/rotacionar` (gera chave nova e
 > invalida as sessões) ou derrubar o túnel (`/desligar`, `/emergencia`). Nunca
