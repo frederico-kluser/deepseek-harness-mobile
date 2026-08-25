@@ -115,6 +115,15 @@ export default defineConfig([
   /* ------------------------------------------------------------------ */
   globalIgnores([
     'dist/**',
+    /* `lib/**` — artefacto de build do dsh.client: `lib/client.js` (bundle
+       closure-factory gerado por `scripts/build-client.mjs`) e o tipo irmão
+       `lib/client.d.ts` (cópia de `client/client.d.ts`). Nenhum dos dois entra
+       no `include` do tsconfig da raiz — como `dist/**`, o lint do servidor
+       não tem de os ver; o gate real deles é `pnpm run build:client` (esbuild
+       + smoke headless + `package:check`). Antes de `lib/client.d.ts` existir
+       o lint nem cruzava `lib/`; agora ignora-se o directório inteiro (mesma
+       regra que `dist/**` e `types/**`). */
+    'lib/**',
     'coverage/**',
     /* Espelhos byte-a-byte de tarballs de terceiros, regerados por
        `pnpm types:fetch`. Lintar codigo gerado e ruido: o gate real deles e

@@ -39,7 +39,7 @@ cumprem (sem mudar o harness):
 1. **`package.json` declara**:
    ```jsonc
    "exports": {
-     "./client": { "default": "./lib/client.js" },
+     "./client": { "types": "./lib/client.d.ts", "default": "./lib/client.js" },
      "./package.json": "./package.json"   // <<< OBRIGATÓRIO — ver quadro abaixo
    },
    "dsh": { "client": { "platform": "web" }, "bundle": { "patch": "./cordis.patch.yml" } }
@@ -100,6 +100,11 @@ Ficheiros desta worktree (são a prova):
   publish). Sem isso, um `pack` sem `build:client` deixaria `exports["./client"]`
   a apontar para um ficheiro ausente → client.js 404. (`prepublishOnly` também roda
   `build:all` + `package:check`.)
+- **Tipos do subpath:** `build-client.mjs` também COPIA `client/client.d.ts`
+  (fonte commited) para `lib/client.d.ts` (produto, gitignored) — a mesma viagem
+  que `client.js`. Sem a declaração irmã, o `attw` reprova `./client` com
+  `UntypedResolution` ("No types"); o `exports["./client"]` referencia-a no bloco
+  `types`.
 
 Resumo do `apply`:
 ```ts
