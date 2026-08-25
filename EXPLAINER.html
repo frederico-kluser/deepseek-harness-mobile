@@ -1,614 +1,724 @@
-<!doctype html>
-
-<html lang="pt-BR" data-bs-theme="dark">
+<!DOCTYPE html>
+<html lang="pt">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Diz ao navegador que a página é escura ANTES do CSS carregar: sem flash
-     branco, e os controles nativos (scrollbar, select, input) já nascem escuros. -->
-<meta name="color-scheme" content="dark">
-<title>EXPLAINER — deep-orchestrator-agent-skill · de-para da execução</title>
-
-<link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
-      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
-      crossorigin="anonymous">
-<link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      integrity="sha384-CK2SzKma4jA5H/MXDUU7i1TqZlCFaD4T01vtyDFvPlD97JQyS+IsSh1nI2EFbpyk"
-      crossorigin="anonymous">
-<link rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css"
-      integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH"
-      crossorigin="anonymous">
-
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="plannotator-theme" content="host">
+<title>Auditoria dsh-guard-messenger</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='.9em' font-size='52'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
 <style>
-  /* ── Paleta do deep-orchestrator-agent-skill ──────────────────────────────────────────
-     Fundo #1a1a2e, accent #00d4ff (ciano), sucesso #00ff88, warning #ffaa00.
-     Tudo deriva destas variáveis — não cravamos hex no conteúdo. */
   :root {
-    --do-bg: #1a1a2e;
-    --do-bg-soft: #16213e;
-    --do-card: #1e1e38;
-    --do-accent: #00d4ff;
-    --do-success: #00ff88;
-    --do-warning: #ffaa00;
-    --do-danger: #ff6b6b;
+    --background: oklch(0.97 0.005 260);
+    --foreground: oklch(0.18 0.02 260);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.18 0.02 260);
+    --muted: oklch(0.92 0.01 260);
+    --muted-foreground: oklch(0.40 0.02 260);
+    --primary: oklch(0.50 0.25 280);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.50 0.18 180);
+    --accent: oklch(0.60 0.22 50);
+    --accent-foreground: oklch(0.18 0.02 260);
+    --destructive: oklch(0.50 0.25 25);
+    --success: oklch(0.45 0.20 150);
+    --warning: oklch(0.55 0.18 85);
+    --border: oklch(0.88 0.01 260);
+    --code-bg: oklch(0.92 0.01 260);
+    --ring: oklch(0.50 0.25 280);
+    --radius: 0.625rem;
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    --font-display: 'Newsreader', ui-serif, Georgia, 'Times New Roman', serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: oklch(0.15 0.02 260);
+      --foreground: oklch(0.90 0.01 260);
+      --card: oklch(0.22 0.02 260);
+      --card-foreground: oklch(0.90 0.01 260);
+      --muted: oklch(0.26 0.02 260);
+      --muted-foreground: oklch(0.72 0.02 260);
+      --primary: oklch(0.75 0.18 280);
+      --primary-foreground: oklch(0.15 0.02 260);
+      --accent: oklch(0.70 0.20 60);
+      --border: oklch(0.35 0.02 260);
+      --code-bg: oklch(0.26 0.02 260);
+      --destructive: oklch(0.65 0.20 25);
+      --success: oklch(0.72 0.17 150);
+      --warning: oklch(0.75 0.15 85);
+    }
   }
 
-  [data-bs-theme="dark"] {
-    --bs-body-bg: var(--do-bg);
-    --bs-body-color: #dcdce8;
-    --bs-secondary-color: #8b8ba7;
-    --bs-border-color: #2e2e4a;
-    --bs-body-font-family: system-ui, -apple-system, 'Segoe UI', Roboto,
-                           'Helvetica Neue', Arial, sans-serif;
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--background);
+    color: var(--foreground);
+    line-height: 1.65;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
   }
 
-  body { background-image: radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0,212,255,.07), transparent 60%); }
+  .container { max-width: 1080px; margin: 0 auto; padding: 56px 24px 88px; }
 
-  /* Âncora não fica escondida atrás da navbar fixa. */
-  [id] { scroll-margin-top: 5rem; }
-
-  a { color: var(--do-accent); }
-  a:hover { color: #4de0ff; }
-
-  .brand-accent, .stat-value { color: var(--do-accent); }
-
-  /* Navbar com borda inferior em tom de accent. */
-  .navbar { border-bottom: 1px solid rgba(0,212,255,.25); }
-
-  /* Hero com gradiente sutil: azul-noite para um leve toque ciano. */
-  .explainer-hero {
-    background: linear-gradient(135deg, #16213e 0%, #1a1a2e 55%, #0f3460 100%);
-    border: 1px solid var(--bs-border-color);
-    box-shadow: inset 0 0 2.5rem rgba(0,212,255,.05);
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-foreground);
   }
-
-  /* Título de seção com filete de gradiente sutil sob o texto. */
-  .pane-title { position: relative; padding-bottom: .5rem; }
-  .pane-title::after {
-    content: ''; position: absolute; left: 0; bottom: 0;
-    height: 2px; width: 4.5rem; border-radius: 2px;
-    background: linear-gradient(90deg, var(--do-accent), transparent);
+  header h1 {
+    font-family: var(--font-display);
+    font-size: 2.2rem;
+    font-weight: 500;
+    margin: 10px 0 14px;
+    line-height: 1.1;
+    text-wrap: balance;
   }
-
-  /* Cards e grupos de lista: tom levemente mais claro que o fundo. */
-  .card { --bs-card-bg: var(--do-card); --bs-card-border-color: var(--bs-border-color); }
-  .card-header {
-    background: linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,0));
-    border-bottom: 1px solid var(--bs-border-color);
+  .lede {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    margin: 4px 0 24px;
+    padding: 18px 22px;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
   }
-  .list-group-item { background-color: var(--do-card); }
-
-  /* Abas: ativa em accent com sublinhado no mesmo tom. */
-  .nav-tabs { border-bottom-color: var(--bs-border-color); }
-  .nav-tabs .nav-link { color: var(--bs-secondary-color); }
-  .nav-tabs .nav-link:hover { color: var(--bs-body-color); border-color: var(--bs-border-color) var(--bs-border-color) transparent; }
-  .nav-tabs .nav-link.active {
-    color: var(--do-accent); font-weight: 600;
-    background-color: transparent;
-    border-color: var(--bs-border-color) var(--bs-border-color) var(--do-accent);
+  .lede-tick { color: var(--success); font-size: 1.5rem; line-height: 1; margin-top: 2px; }
+  .lede p { font-size: 1.04rem; max-width: 74ch; color: var(--card-foreground); }
+  .lede strong { font-weight: 600; }
+  .prompt-box {
+    background: var(--muted);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    margin-top: 22px;
   }
-
-  /* Badges da paleta. */
-  .badge-accent  { background: rgba(0,212,255,.14);  color: var(--do-accent);  border: 1px solid rgba(0,212,255,.35); }
-  .badge-ok      { background: rgba(0,255,136,.12);  color: var(--do-success); border: 1px solid rgba(0,255,136,.35); }
-  .badge-warn    { background: rgba(255,170,0,.12);  color: var(--do-warning); border: 1px solid rgba(255,170,0,.35); }
-  .badge-danger  { background: rgba(255,107,107,.12); color: var(--do-danger); border: 1px solid rgba(255,107,107,.35); }
-  .badge-soft    { background: rgba(139,139,167,.12); color: var(--bs-secondary-color); border: 1px solid var(--bs-border-color); }
-
-  /* Diff stats: + verde, − vermelho, dígitos tabulares. */
-  .diff-plus  { color: var(--do-success); font-variant-numeric: tabular-nums; }
-  .diff-minus { color: var(--do-danger); font-variant-numeric: tabular-nums; }
-
-  /* De-Para: cartões com borda indicando o lado da comparação. */
-  .depara-antes  { border-color: rgba(139,139,167,.45); }
-  .depara-depois { border-color: rgba(0,255,136,.35); }
-
-  /* Timeline vertical: linha + marcador ciano com brilho sutil. */
-  .timeline { position: relative; }
-  .timeline-item { position: relative; padding-left: 1.4rem; border-left: 2px solid var(--bs-border-color); }
-  .timeline-item::before {
-    content: ''; position: absolute; left: -.42rem; top: .3rem;
-    width: .7rem; height: .7rem; border-radius: 50%;
-    background: var(--do-accent); box-shadow: 0 0 .6rem rgba(0,212,255,.6);
+  .prompt-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-foreground);
+    display: block;
+    margin-bottom: 4px;
   }
-  .timeline-item:last-child { border-left-color: transparent; }
+  .prompt-box p { font-size: 0.9rem; color: var(--muted-foreground); line-height: 1.5; }
 
-  /* Bloco de código: espaço à direita para o botão de copiar não cobrir o texto. */
-  pre { position: relative; margin-bottom: 1rem; }
-  pre code.hljs { padding-right: 4rem; border-radius: var(--bs-border-radius); font-size: .875rem; }
-
-  .copy-btn { position: absolute; top: .5rem; right: .5rem; opacity: .4; transition: opacity .15s; }
-  pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
-
-  /* Abrir o arquivo em #pane-x foca o painel (bom: o leitor de tela cai no
-     conteúdo), e o outline branco do navegador fica gritante. Anel discreto,
-     do tema, no lugar — tirar o indicador por completo quebraria quem navega
-     por teclado. */
-  .tab-pane:focus-visible { outline: 0; box-shadow: 0 0 0 .2rem rgba(var(--bs-emphasis-color-rgb), .15); }
-
-  /* Impressão/PDF: abre TODAS as abas, senão o papel sai com uma só. */
-  @media print {
-    .nav-tabs, .copy-btn, details, .explainer-hero { display: none !important; }
-    .tab-content > .tab-pane { display: block !important; opacity: 1 !important; page-break-inside: avoid; }
-    .tab-pane::before { content: attr(data-print-title); display: block;
-                        font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 .5rem; }
+  .summary-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+    margin: 30px 0 4px;
   }
+  .stat-card {
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    background: var(--card);
+  }
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 1.7rem;
+    font-weight: 500;
+    display: block;
+    color: var(--foreground);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-value small { font-size: 0.62em; color: var(--muted-foreground); }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+    margin-top: 6px;
+    display: block;
+  }
+  .stat-card--ok .stat-value { color: var(--success); }
+  .stat-card--warn .stat-value { color: var(--warning); }
+
+  section { margin-top: 54px; }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding-bottom: 8px;
+    border-bottom: 1.5px solid var(--border);
+  }
+  .section-number { font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; color: var(--primary); }
+  .section-header h2 { font-family: var(--font-display); font-size: 1.45rem; font-weight: 500; }
+
+  section p.lede-copy { max-width: 65ch; color: var(--card-foreground); font-size: 0.96rem; margin-bottom: 14px; }
+  section p.lede-copy strong { font-weight: 600; }
+
+  .table-scroll { overflow-x: auto; border: 1.5px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; background: var(--card); }
+  thead th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+    padding: 12px 18px;
+    border-bottom: 1.5px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td { padding: 11px 18px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.term { font-family: var(--font-mono); font-weight: 500; font-size: 0.8rem; color: var(--primary); white-space: nowrap; }
+  td.def { color: var(--card-foreground); }
+  code { font-family: var(--font-mono); font-size: 0.8em; background: var(--muted); padding: 1px 5px; border-radius: 4px; color: var(--foreground); }
+
+  figure { margin: 8px 0 20px; }
+  .diagram-shell { position: relative; }
+  .diagram-shell__hint {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin-bottom: 6px;
+    opacity: 0.7;
+  }
+  .mermaid-wrap {
+    position: relative;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+    cursor: grab;
+  }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .zoom-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 2px;
+    z-index: 10;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+    align-items: center;
+  }
+  .zoom-controls button {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .zoom-controls button:hover { background: var(--border); color: var(--foreground); }
+  .mermaid-viewport { position: relative; overflow: hidden; width: 100%; height: 100%; min-height: 280px; }
+  .mermaid-canvas { position: absolute; top: 0; left: 0; }
+  .zoom-label {
+    font-family: var(--font-mono); font-size: 10px; color: var(--muted-foreground);
+    padding: 0 6px; white-space: nowrap;
+  }
+  figcaption {
+    font-size: 0.92rem;
+    color: var(--muted-foreground);
+    margin-top: 12px;
+    padding-left: 14px;
+    border-left: 3px solid var(--primary);
+    line-height: 1.5;
+  }
+  figcaption strong { color: var(--foreground); font-weight: 600; }
+
+  .mermaid .nodeLabel { font-family: var(--font-sans) !important; font-size: 14px !important; }
+  .mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 12px !important; }
+  .mermaid .node rect, .mermaid .node circle, .mermaid .node polygon { stroke-width: 1.5px !important; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 4px 0 8px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
+
+  .defect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .ve-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .ve-card .card-tag { align-self: flex-start; }
+  .tag {
+    font-family: var(--font-mono); font-size: 0.66rem; font-weight: 600;
+    padding: 3px 9px; border-radius: calc(var(--radius) - 4px);
+    background: var(--muted); color: var(--muted-foreground);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .tag.gate { background: color-mix(in oklab, var(--destructive) 12%, transparent); color: var(--destructive); }
+  .tag.fix { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); }
+  .ve-card h3 { font-family: var(--font-display); font-size: 1.08rem; font-weight: 500; line-height: 1.25; }
+  .ve-card p { font-size: 0.9rem; color: var(--muted-foreground); line-height: 1.55; }
+  .ve-card p strong { color: var(--card-foreground); font-weight: 600; }
+  .commit-line { font-family: var(--font-mono); font-size: 0.76rem; color: var(--primary); margin-top: auto; }
+
+  details { border: 1.5px solid var(--border); border-radius: var(--radius); margin: 18px 0; background: var(--card); }
+  summary {
+    font-family: var(--font-sans); font-weight: 500; padding: 14px 22px; cursor: pointer;
+    list-style: none; color: var(--card-foreground);
+  }
+  summary::before { content: '▸'; display: inline-block; margin-right: 8px; transition: transform 0.2s; color: var(--primary); }
+  details[open] summary::before { transform: rotate(90deg); }
+  .details-body { padding: 0 24px 22px; font-size: 0.9rem; color: var(--card-foreground); }
+  .details-body p { margin-bottom: 10px; max-width: 62ch; }
+  .details-body p:last-child { margin-bottom: 0; }
+  .details-body code { font-size: 0.8em; }
+  .details-body .mini-list { padding-left: 20px; margin: 6px 0 10px; }
+  .details-body .mini-list li { margin-bottom: 4px; }
+
+  .callout { border-left: 3px solid var(--primary); padding: 14px 22px; margin: 16px 0; background: var(--card); border-radius: 0 var(--radius) var(--radius) 0; }
+  .callout p { font-size: 0.9rem; color: var(--card-foreground); line-height: 1.55; }
+  .callout strong { font-weight: 600; }
+
+  .debt-note { border-left: 3px solid var(--warning); padding: 14px 20px; margin: 6px 0 16px; background: var(--card); border-radius: 0 var(--radius) var(--radius) 0; }
+  .debt-note p { font-size: 0.9rem; color: var(--card-foreground); line-height: 1.55; }
+  .debt-note strong { color: var(--warning); font-weight: 600; }
+
+  .debt-list-wrap { overflow-x: auto; border: 1.5px solid var(--border); border-radius: var(--radius); }
+  .debt-list-wrap table { font-size: 0.85rem; }
+
+  .meta-foot {
+    margin-top: 48px;
+    padding-top: 18px;
+    border-top: 1.5px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--muted-foreground);
+  }
+  .meta-foot b { font-weight: 600; color: var(--card-foreground); }
 </style>
 </head>
+<body>
 
-<body class="bg-body">
+<div class="container">
 
-<nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
-  <div class="container">
-    <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator-agent-skill <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">vdsh-guard-messenger@2026-08-23 · 2026-08-23</span>
-  </div>
-</nav>
-
-<main class="container py-4" style="max-width: 62rem">
-
-  <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
-    <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
-    <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Botao da sidebar removido (acesso pela aba no rail do settings); cartao 'Como criar o bot' (@BotFather) no painel; projeto renomeado para dsh-guard-messenger (identidade multi-provedor) + docs/BRANDING.md com prompt do logo.</p>
-    <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">vdsh-guard-messenger@2026-08-23</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-23</span>
-      <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
+  <header>
+    <span class="eyebrow">Auditoria de gate &middot; deepseek-harness-mobile &middot; 2026-08-25</span>
+    <h1>Auditoria dsh-guard-messenger</h1>
+    <div class="lede">
+      <div class="lede-tick">&#9989;</div>
+      <p><strong>O projeto estava estruturalmente saudável.</strong> A auditoria encontrou e corrigiu <strong>3 defeitos reais &mdash; todos de gate (o mecanismo que valida entregáveis), nenhum de lógica de negócio</strong>. O único ponto vermelho derradeiro, cobertura de funções 90.07% ante um limiar de 95%, é débito pré-existente: não foi introduzido por estas correções.</p>
+    </div>
+    <div class="prompt-box">
+      <span class="prompt-label">Tarefa</span>
+      <p>Verificação completa do estado do projeto (plugin Cordis TypeScript "dsh-guard-messenger", acesso remoto ao DeepSeek Harness via Telegram) e correção de tudo que estivesse errado, sem interromper o usuário. Autônomo, sem paradas.</p>
     </div>
   </header>
 
-  <!-- ABAS
-       Regras que não podem ser quebradas:
-       · <ul role="tablist"> e cada <button role="tab">
-       · button.id  ←→  tabpanel.aria-labelledby
-       · button.data-bs-target ←→ #id do tabpanel (e aria-controls com o mesmo id, sem #)
-       · exatamente UM botão .active + UM painel .show.active
-       O Bootstrap já faz navegação por seta/Home/End no tablist; não reimplemente. -->
-  <ul class="nav nav-tabs" id="doc-tabs" role="tablist">
-    <li class="nav-item" role="presentation">
-      <button class="nav-link active" id="tab-visao" data-bs-toggle="tab" data-bs-target="#pane-visao"
-              type="button" role="tab" aria-controls="pane-visao" aria-selected="true">
-        <i class="bi bi-eye me-1"></i>Visão geral
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-ondas" data-bs-toggle="tab" data-bs-target="#pane-ondas"
-              type="button" role="tab" aria-controls="pane-ondas" aria-selected="false">
-        <i class="bi bi-layers me-1"></i>Ondas
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-arquivos" data-bs-toggle="tab" data-bs-target="#pane-arquivos"
-              type="button" role="tab" aria-controls="pane-arquivos" aria-selected="false">
-        <i class="bi bi-files me-1"></i>Arquivos
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-depara" data-bs-toggle="tab" data-bs-target="#pane-depara"
-              type="button" role="tab" aria-controls="pane-depara" aria-selected="false">
-        <i class="bi bi-arrow-left-right me-1"></i>De-Para
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-decisoes" data-bs-toggle="tab" data-bs-target="#pane-decisoes"
-              type="button" role="tab" aria-controls="pane-decisoes" aria-selected="false">
-        <i class="bi bi-lightbulb me-1"></i>Decisões
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
-      <button class="nav-link" id="tab-timeline" data-bs-toggle="tab" data-bs-target="#pane-timeline"
-              type="button" role="tab" aria-controls="pane-timeline" aria-selected="false">
-        <i class="bi bi-clock-history me-1"></i>Timeline
-      </button>
-    </li>
-  </ul>
+  <div class="summary-strip">
+    <div class="stat-card"><span class="stat-value">3</span><span class="stat-label">defeitos corrigidos</span></div>
+    <div class="stat-card stat-card--ok"><span class="stat-value">7/8</span><span class="stat-label">gates verdes</span></div>
+    <div class="stat-card stat-card--warn"><span class="stat-value">90.07%</span><span class="stat-label">cov. funções &lt; 95% (débito)</span></div>
+    <div class="stat-card"><span class="stat-value">0</span><span class="stat-label">defeitos de lógica de negócio</span></div>
+    <div class="stat-card"><span class="stat-value">3</span><span class="stat-label">squash commits em main</span></div>
+  </div>
 
-  <div class="tab-content border border-top-0 rounded-bottom p-4" id="doc-tabs-content">
-
-    <!-- ══════════════ ABA 1 · VISÃO GERAL ══════════════ -->
-    <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
-         aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
-      <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Botao da sidebar removido (acesso pela aba no rail do settings); cartao 'Como criar o bot' (@BotFather) no painel; projeto renomeado para dsh-guard-messenger (identidade multi-provedor) + docs/BRANDING.md com prompt do logo.</p>
-
-      <div class="alert alert-primary d-flex gap-2" role="alert">
-        <i class="bi bi-info-circle-fill flex-shrink-0"></i>
-        <div><strong>O que é este documento:</strong> o EXPLAINER gerado pelo deep-orchestrator-agent-skill na fase COMMIT-FINAL, ao fim de cada execução. Mostra o de-para (antes/depois) de tudo que foi feito: ondas, worktrees, arquivos modificados, decisões autônomas e timeline.</div>
-      </div>
-
-      <div class="row g-3">
-        <div class="col-6 col-lg-4">
-          <div class="card h-100 text-center">
-            <div class="card-body py-4">
-              <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">1</div>
-              <div class="text-body-secondary small">Ondas executadas</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-6 col-lg-4">
-          <div class="card h-100 text-center">
-            <div class="card-body py-4">
-              <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">4</div>
-              <div class="text-body-secondary small">Sub-agentes</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-6 col-lg-4">
-          <div class="card h-100 text-center">
-            <div class="card-body py-4">
-              <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">2</div>
-              <div class="text-body-secondary small">Commits (squash)</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <h2 class="h4 pane-title mt-5">Como este documento é gerado</h2>
-      <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
-<pre><code class="language-bash"># Gera o explainer a partir do template
-./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders dsh-guard-messenger@2026-08-23, 2026-08-23, main, ...</code></pre>
-      <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
-
-      <details class="mt-4">
-        <summary class="text-body-secondary">Placeholders usados na geração</summary>
-        <div class="table-responsive mt-2">
-          <table class="table table-sm align-middle">
-            <thead>
-              <tr><th scope="col">Placeholder</th><th scope="col">Onde aparece</th><th scope="col">Preenchido com</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><code>&#123;&#123;VERSION&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Versão do orquestrador</td></tr>
-              <tr><td><code>&#123;&#123;DATE&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Data da execução</td></tr>
-              <tr><td><code>&#123;&#123;BRANCH&#125;&#125;</code></td><td>Hero, rodapé</td><td>Branch principal</td></tr>
-              <tr><td><code>&#123;&#123;TASK_SUMMARY&#125;&#125;</code></td><td>Visão geral</td><td>Resumo da tarefa</td></tr>
-              <tr><td><code>&#123;&#123;TOTAL_WAVES&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de ondas</td></tr>
-              <tr><td><code>&#123;&#123;TOTAL_AGENTS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de sub-agentes</td></tr>
-              <tr><td><code>&#123;&#123;TOTAL_COMMITS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de commits</td></tr>
-              <tr><td><code>&#123;&#123;WAVES_TABLE&#125;&#125;</code></td><td>Aba Ondas</td><td>Tabela HTML de ondas (Onda | Worktree | Tarefas | Commits | Status)</td></tr>
-              <tr><td><code>&#123;&#123;FILES_TABLE&#125;&#125;</code></td><td>Aba Arquivos</td><td>Tabela HTML de arquivos modificados (Arquivo | Tipo | Diff)</td></tr>
-              <tr><td><code>&#123;&#123;COMMITS_LIST&#125;&#125;</code></td><td>Aba Arquivos</td><td>Lista de commits squash</td></tr>
-              <tr><td><code>&#123;&#123;BEFORE_AFTER&#125;&#125;</code></td><td>Aba De-Para</td><td>Cards Antes/Depois + seções de-para adicionais</td></tr>
-              <tr><td><code>&#123;&#123;IMPACT&#125;&#125;</code></td><td>Aba De-Para</td><td>Lista de impactos da execução</td></tr>
-              <tr><td><code>&#123;&#123;CAPABILITIES&#125;&#125;</code></td><td>Aba De-Para</td><td>Grid de novas capacidades</td></tr>
-              <tr><td><code>&#123;&#123;DECISIONS&#125;&#125;</code></td><td>Aba Decisões</td><td>Lista de decisões autônomas</td></tr>
-              <tr><td><code>&#123;&#123;TIMELINE&#125;&#125;</code></td><td>Aba Timeline</td><td>Linha do tempo da execução</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </details>
+  <section>
+    <div class="section-header"><span class="section-number">01</span><h2>O que a auditoria viu</h2></div>
+    <p class="lede-copy">Antes de tocar em qualquer coisa, a auditoria confirmou a saúde estrutural: bom espelhamento de testes, boundaries respeitadas e <strong>zero referências residuais ao nome antigo</strong> do pacote. Depois disso, rodou os gates reais &mdash; e cada defeito encontrado era um <strong>defeito de gate</strong>, não de comportamento do produto.</p>
+    <p class="lede-copy">A trilha da execução seguiu um encadeamento em ondas: <strong>FASE 0</strong> (contida) &rarr; <strong>FASE 1</strong> (auditoria + rodadas de gate) &rarr; <strong>Onda 1</strong> (dois fixes paralelos) &rarr; <strong>Onda 2</strong> (limpeza de lint) &rarr; <strong>CONVERGÊNCIA</strong> (revisor de plano, 2ª rodada) &rarr; <strong>COMMIT-FINAL</strong>. Cada Onda trabalhou numa <strong>worktree</strong> isolada, com os gates validados por snapshot e depois validados de forma integrada.</p>
+    <div class="callout">
+      <p><strong>Sinal verde estrutural.</strong> Nenhum dos 3 defeitos tocava a lógica de negócio do acesso remoto via Telegram &mdash; todos estavam no ferramental de validação (testes, distribuição de tipos, config de lint). Saúde de base, infeccionada no tooling.</p>
     </div>
+  </section>
 
-    <!-- ══════════════ ABA 2 · ONDAS EXECUTADAS ══════════════ -->
-    <div class="tab-pane fade" id="pane-ondas" role="tabpanel"
-         aria-labelledby="tab-ondas" tabindex="0" data-print-title="Ondas executadas">
-      <h2 class="h4 pane-title">Ondas executadas</h2>
-      <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
-
-<div class="table-responsive">
-  <table class="table table-hover align-middle">
-    <thead><tr><th>Onda</th><th>Worktree</th><th>Tarefas</th><th class="text-end">Commits</th><th>Status</th></tr></thead>
-    <tbody>
-      <tr><td><span class="badge badge-accent">1a</span></td><td><code>onda1-remover-botao-e-botfather</code></td><td>Removido o botão Telegram da sidebar (sidebar.footer.action + affordance DOM) — acesso à aba pelo rail do settings padrão; cartão "Como criar o bot" (@BotFather: 6 passos + /token) no painel quando não configurado; testes client e docs</td><td class="text-end">1</td><td><span class="badge badge-ok">Concluída</span></td></tr>
-      <tr><td><span class="badge badge-accent">1b</span></td><td><code>onda1-rename-messenger</code></td><td>Rename dsh-guarded-bot-orchestrator → dsh-guard-messenger (48 arquivos: package/cordis/runtime/CI/docs/skills; PLUGIN_NAME/WORKER_LOG_NAME/registrant) + docs/BRANDING.md com o prompt do logo + resolução do conflito de merge com a UI</td><td class="text-end">2</td><td><span class="badge badge-ok">Concluída</span></td></tr>
-    </tbody>
-  </table>
-</div>
-<p class="text-body-secondary small">Gate completo verde em cada snapshot (test 1860/1860, security 136/0, e2e 51/51, lint 0, pack → dsh-guard-messenger-0.1.1.tgz).</p>
-
-      <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
-      <div class="d-flex flex-wrap gap-2">
-        <span class="badge badge-ok">Concluída</span>
-        <span class="badge badge-warn">Parcial</span>
-        <span class="badge badge-danger">Bloqueada</span>
+  <section>
+    <div class="section-header"><span class="section-number">02</span><h2>Glossário fechado &mdash; termos de que o resto depende</h2></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Termo</th><th>Definição</th></tr></thead>
+        <tbody>
+          <tr><td class="term">plugin Cordis</td><td class="def">Projeto TypeScript que estende o framework Cordis a outro sistema &mdash; aqui, o DeepSeek Harness visto de fora via Telegram.</td></tr>
+          <tr><td class="term">gate</td><td class="def">Check automatizado (typecheck, lint, build, test, cov, package check&hellip;) que valida um entregável; tudo verde = liberado.</td></tr>
+          <tr><td class="term">varredura de órfão</td><td class="def">Rotina de segurança que varre processos órfãos (ex: <code>cloudflared</code>) e os mata, audita e avisa quando reconhece o dono.</td></tr>
+          <tr><td class="term">closure-factory</td><td class="def">Função que devolve outra função, fechando sobre estado; padrão usado pelo harness para impor bounds herdadas.</td></tr>
+          <tr><td class="term">exports&nbsp;/&nbsp;subpath</td><td class="def">Mapa <code>exports</code> do <code>package.json</code> que expõe caminhos de import públicos &mdash; ex: <code>./client</code>.</td></tr>
+          <tr><td class="term">attw / publint</td><td class="def">Validadores de distribuição: <code>attw</code> ("Are The Types Wrong") e <code>publint</code> checam se os tipos declarados batem com o que o pacote exporta.</td></tr>
+          <tr><td class="term">DI seam</td><td class="def">Ponto proposital de injeção de dependência; permite trocar a implementação que o código real usa por um duble num teste.</td></tr>
+          <tr><td class="term">worktree</td><td class="def">Área de trabalho git isolada em que uma Onda trabalha em paralelo sem sujar <code>main</code>.</td></tr>
+          <tr><td class="term">coverage threshold</td><td class="def">Limiar mínimo de cobertura de código que o gate de teste não deixa passar (aqui, 95% de funções).</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <section>
+    <div class="section-header"><span class="section-number">03</span><h2>Os três defeitos de gate</h2></div>
+    <p class="lede-copy">Cada defeito quebrou um gate diferente, e cada fix o deixou verde. Todos os números abaixo vêm da auditoria.</p>
+    <div class="defect-grid">
+      <div class="ve-card">
+        <span class="tag gate card-tag">Defeito 1 &middot; Gate: test</span>
+        <h3>Teste de varredura de órfão quebrado</h3>
+        <p><strong>O quê:</strong> o teste <code>index.test.ts:948</code> quebrava <code>pnpm test</code> ao assumir uma premissa falsa sobre <code>argv0</code>/<code>/proc</code>.</p>
+        <p><strong>O porquê:</strong> o código de produção estava <strong>correto</strong>; o bug era 100% do teste. O shell exec-otimiza para <code>sleep</code>, então <code>/proc/cmdline</code> nunca mostra o <code>argv0</code> inventado.</p>
+        <p><strong>O como:</strong> injetou-se um <strong>seam de DI</strong> (<code>bootSweep</code>) e um duble de <code>identify</code>; o teste passou a verificar a <strong>política</strong> (matar + revogar + auditar + avisar), não o mecanismo <code>procfs</code>.</p>
+        <span class="commit-line">onda1-fix-teste-orfao &middot; 06bda84</span>
+      </div>
+      <div class="ve-card">
+        <span class="tag gate card-tag">Defeito 2 &middot; Gate: package:check</span>
+        <h3>Distribuição sem tipos no subpath <code>./client</code></h3>
+        <p><strong>O quê:</strong> <code>exports["./client"]</code> apontava para <code>lib/client.js</code> (bundle closure-factory do harness) sem um <code>.d.ts</code>.</p>
+        <p><strong>O porquê:</strong> <code>attw</code> reprovava com <code>UntypedResolution</code>, derrubando <code>package:check</code>.</p>
+        <p><strong>O como:</strong> adicionou-se a declaração <code>client/client.d.ts</code> (fonte commitada), copiada para <code>lib/client.d.ts</code> pelo <code>build-client.mjs</code>; <code>exports["./client"].types</code> foi adicionado e <code>lib/**</code> ignorado no lint.</p>
+        <span class="commit-line">onda1-fix-dist-client &middot; 4ec4756</span>
+      </div>
+      <div class="ve-card">
+        <span class="tag gate card-tag">Defeito 3 &middot; Gate: lint</span>
+        <h3>Target morto no lint</h3>
+        <p><strong>O quê:</strong> os overrides <code>TRANSITORIO-monolito-onda-0</code> (eslint + oxlint) listavam <code>test/index.test.ts</code>, mas o arquivo real é <code>test/unit/index.test.ts</code>.</p>
+        <p><strong>O porquê:</strong> o path morreu; o override virava regra que nunca se aplicava ao arquivo que deveria escorar.</p>
+        <p><strong>O como:</strong> corrigiu-se o path, mantendo o override vivo para <code>src/index.ts</code> e as 146 warnings de <code>no-unnecessary-condition</code> como covariância intencional.</p>
+        <span class="commit-line">onda2-fix-lint-dead-target &middot; f158070</span>
       </div>
     </div>
+  </section>
 
-    <!-- ══════════════ ABA 3 · ARQUIVOS MODIFICADOS ══════════════ -->
-    <div class="tab-pane fade" id="pane-arquivos" role="tabpanel"
-         aria-labelledby="tab-arquivos" tabindex="0" data-print-title="Arquivos modificados">
-      <h2 class="h4 pane-title">Arquivos modificados</h2>
-      <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
+  <section>
+    <div class="section-header"><span class="section-number">04</span><h2>O encadeamento: da auditoria ao verde</h2></div>
+    <figure>
+      <section class="diagram-shell" role="img" aria-label="Fluxo da auditoria: FASE 0 e 1 produzem três defeitos de gate, cada um corrigido numa worktree via snapshot verde, convergindo numa validação integrada que funde em main e deixa um único débito de cobertura.">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda para zoom &middot; arrastar para pan &middot; duplo-clique para caber.</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
+            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Cabimento inteligente">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Abrir em tela cheia">&#x26F6;</button>
+            <span class="zoom-label">Carregando...</span>
+          </div>
+          <div class="mermaid-viewport">
+            <div class="mermaid mermaid-canvas"></div>
+          </div>
+        </div>
+      </section>
+      <script type="text/plain" class="diagram-source">
+flowchart TD
+    F0["FASE 0<br/>contida"] -->|"base estável"| F1["FASE 1<br/>auditoria + rodadas de gate"]
+    F1 -->|"encontra"| D1["Defeito 1<br/>teste de varredura de órfão"]
+    F1 -->|"encontra"| D2["Defeito 2<br/>subpath ./client sem tipos"]
+    F1 -->|"encontra"| D3["Defeito 3<br/>target morto no lint"]
+    D1 -->|"conserta"| O1["worktree<br/>onda1-fix-teste-orfao"]
+    D2 -->|"conserta"| O2["worktree<br/>onda1-fix-dist-client"]
+    D3 -->|"limpa"| O3["worktree<br/>onda2-fix-lint-dead-target"]
+    O1 -->|"snapshot verde"| V["validação integrada<br/>tudo verde"]
+    O2 -->|"snapshot verde"| V
+    O3 -->|"snapshot verde"| V
+    V -->|"3 squash commits"| M["main (integrada)"]
+    M -. "90.07% < 95%" .-> DEB["DÉBITO pré-existente<br/>cobertura de funções"]
+      </script>
+      <figcaption><strong>Afirmação:</strong> a auditoria derivou cada um dos 3 defeitos de gate para uma worktree própria, validou-os por snapshot e depois de forma integrada, e os 3 squash commits fundiram em <code>main</code> &mdash; sobrando apenas um débito pré-existente de cobertura, não introduzido por estas ondas.</figcaption>
+    </figure>
+  </section>
+  <section>
+    <div class="section-header"><span class="section-number">05</span><h2>O mecanismo por trás do Defeito 1</h2></div>
+    <p class="lede-copy">Este é o exemplo mais instrutivo: o <strong>código de produção estava certo</strong>, mas o teste presumia um comportamento do sistema operacional que não existe &mdash; e a premissa estava escondida dentro do teste. A correção trocou <em>o que</em> se testa.</p>
+    <figure>
+      <section class="diagram-shell" role="img" aria-label="Mecanismo do bug: o teste spawna /bin/sh -c 'sleep 60' com argv0 'cloudflared'; o shell exec-otimiza para sleep; /proc/cmdline vira 'sleep 60'; looksLikeCloudflared retorna falso e o ramo foreign é tomado, sem warning, kill ou audit.">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda para zoom &middot; arrastar para pan &middot; duplo-clique para caber.</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
+            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Cabimento inteligente">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Abrir em tela cheia">&#x26F6;</button>
+            <span class="zoom-label">Carregando...</span>
+          </div>
+          <div class="mermaid-viewport">
+            <div class="mermaid mermaid-canvas"></div>
+          </div>
+        </div>
+      </section>
+      <script type="text/plain" class="diagram-source">
+flowchart TD
+    S["spawn /bin/sh -c 'sleep 60'<br/>argv0: 'cloudflared'"] -->|"o teste cria o filho"| E["shell exec-otimiza<br/>para sleep"]
+    E -->|"o que o OS realmente vê"| P["/proc/&lt;pid&gt;/cmdline =<br/>'sleep 60'"]
+    P -->|"o teste lê essa linha"| L{"looksLikeCloudflared?<br/>reconhece 'sleep 60'?"}
+    L -->|"false ⚠ premissa falsa"| F["ramo 'foreign'<br/>sem warning / kill / audit"]
+    L -->|"true (o esperado)"| G["ramo 'guarded'<br/>matar + revogar + audit + aviso"]
+      </script>
+      <figcaption><strong>Afirmação:</strong> o teste spawnava <code>sleep 60</code> com <code>argv0: 'cloudflared'</code> esperando vê-lo em <code>/proc/cmdline</code>, mas o shell exec-otimiza para <code>sleep</code> &mdash; o caminho real cai no ramo <em>foreign</em>, sem warning/kill/audit. A correção (seam <code>bootSweep</code>) faz o teste verificar a política, não o procfs.</figcaption>
+    </figure>
+  </section>
 
-      <!-- FILES_TABLE begin (não preenchido — conteúdo demo do template) -->
-      <div class="table-responsive">
-        <table class="table table-hover align-middle">
-          <thead>
-            <tr>
-              <th scope="col">Arquivo</th>
-              <th scope="col">Tipo</th>
-              <th scope="col" class="text-end">Diff</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>scripts/brave-search.sh</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+310</td>
-            </tr>
-            <tr>
-              <td><code>scripts/check-brave-credits.sh</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+98</td>
-            </tr>
-            <tr>
-              <td><code>prompts/ecc-prompts.md</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+340</td>
-            </tr>
-            <tr>
-              <td><code>prompts/ecc-skills.md</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+315</td>
-            </tr>
-            <tr>
-              <td><code>prompts/search-prompts.md</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+420</td>
-            </tr>
-            <tr>
-              <td><code>templates/html-explainer.html</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+520</td>
-            </tr>
-            <tr>
-              <td><code>SKILL.md</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end"><span class="diff-plus">+140</span> <span class="diff-minus">−45</span></td>
-            </tr>
-            <tr>
-              <td><code>README.md</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end"><span class="diff-plus">+85</span> <span class="diff-minus">−15</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — valores aproximados, substituídos na geração.</p>
-      <!-- FILES_TABLE end (não preenchido — conteúdo demo do template) -->
-
-      <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
-      <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
-
-<ul class="list-group list-group-flush">
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">d87542b</span><div><strong>Onda 1a:</strong> remove botão Telegram da sidebar + cartão @BotFather (6 passos + nota /token) no painel</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">a8d4262</span><div><strong>Onda 1b:</strong> rename dsh-guarded-bot-orchestrator → dsh-guard-messenger (48 arquivos) + BRANDING.md com prompt do logo + resolve merge com a UI</div></li>
-</ul>
+  <section>
+    <div class="section-header"><span class="section-number">06</span><h2>Como o fix aconteceu, onda a onda</h2></div>
+    <p class="lede-copy">Onda 1 abriu duas worktrees em paralelo (teste-órfão e dist-client); a Onda 2 limpou o lint. Cada commit carrega o que tocou.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Onda</th><th>Worktree</th><th>Entregou</th><th>Arquivos</th></tr></thead>
+        <tbody>
+          <tr><td class="term">1</td><td class="def"><code>onda1-fix-teste-orfao</code></td><td class="def">Corrigiu o teste que quebrava <code>pnpm test</code> (premissa falsa sobre <code>argv0</code>/<code>/proc</code>)</td><td class="def"><code>src/index.ts</code> (+seam DI), <code>test/support/fixtures.ts</code>, <code>test/unit/index.test.ts</code></td></tr>
+          <tr><td class="term">1</td><td class="def"><code>onda1-fix-dist-client</code></td><td class="def">Corrigiu <code>pnpm package:check</code> vermelho (subpath <code>./client</code> sem tipos)</td><td class="def"><code>client/client.d.ts</code> (novo), <code>scripts/build-client.mjs</code>, <code>package.json</code>, <code>eslint.config.js</code>, <code>docs/SPIKE</code></td></tr>
+          <tr><td class="term">2</td><td class="def"><code>onda2-fix-lint-dead-target</code></td><td class="def">Corrigiu target morto no lint (<code>var@ index.test.ts</code> &rarr; <code>unit/index.test.ts</code>)</td><td class="def"><code>eslint.config.js</code>, <code>.oxlintrc.json</code></td></tr>
+        </tbody>
+      </table>
     </div>
+    <details>
+      <summary>Onde mora o andaime técnico (paths e decisões de fingerprint)</summary>
+      <div class="details-body">
+        <p><strong>Defeito 1</strong> &mdash; o seam <code>bootSweep</code> foi injetado em <code>src/index.ts</code> para que o teste pudesse substituir <code>identify</code> por um duble. O teste passou a verificar a política (matar + revogar + auditar + avisar), não o mecanismo procfs.</p>
+        <p><strong>Defeito 2</strong> &mdash; <code>client/client.d.ts</code> é a fonte commitada; <code>scripts/build-client.mjs</code> a copia para <code>lib/client.d.ts</code> no build; <code>exports["./client"].types</code> aponta para ela; <code>lib/**</code> foi ignorado no lint para não alertar sobre artefato gerado.</p>
+        <p><strong>Defeito 3</strong> &mdash; os overrides em <code>eslint.config.js</code> e <code>.oxlintrc.json</code> foram corrigidos de <code>test/index.test.ts</code> para <code>test/unit/index.test.ts</code>, mantendo viva a isenção das 146 warnings de <code>no-unnecessary-condition</code> como covariância intencional em <code>src/index.ts</code>.</p>
+      </div>
+    </details>
+  </section>
 
-    <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
-    <div class="tab-pane fade" id="pane-depara" role="tabpanel"
-         aria-labelledby="tab-depara" tabindex="0" data-print-title="De-Para">
-      <h2 class="h4 pane-title">De-Para: o que mudou</h2>
-      <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
-
-<div class="row g-3 mb-4">
-  <div class="col-lg-6">
-    <div class="card h-100 depara-antes">
-      <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
-      <div class="card-body">
-        <ul class="list-unstyled mb-0 d-grid gap-2">
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Botão "✈️ Telegram" no rodapé da sidebar (sem hover de clicável como o settings)</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Painel só dizia "cole o token que o @BotFather deu" — sem ensinar a criar o bot</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Nome do projeto: dsh-guarded-bot-orchestrator (amarrava a identidade a "bot", não à mensageria multi-provedor)</li>
-          <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i>Sem identidade visual documentada (logo inexistente)</li>
+  <section>
+    <div class="section-header"><span class="section-number">07</span><h2>O débito que ficou (e a decisão de não pagá-lo agora)</h2></div>
+    <div class="debt-note">
+      <p><strong>test:cov falhou por cobertura de FUNÇÕES 90.07% &lt; 95%.</strong> O baseline antes destas ondas (stash) era 90.22% &mdash; ou seja, <strong>não foi introduzido por estas correções</strong>; é débito pré-existente. Tudo o mais está verde.</p>
+    </div>
+    <p class="lede-copy">Subir 90 &rarr; 95% tocaria 8+ módulos de runtime de rede/Telegram, com risco de regressão num gate de linhas (97% de cobertura de linhas) já sólido. Relaxar o limiar seria um "zero-fix" &mdash; proibido pela auditoria. A decisão foi registrar como débito para o dono.</p>
+    <details>
+      <summary>Módulos com cobertura de funções abaixo de 95%</summary>
+      <div class="details-body">
+        <ul class="mini-list">
+          <li><code>src/errors.ts</code> &mdash; 0%</li>
+          <li><code>worker/lib/clock.ts</code> &mdash; 0%</li>
+          <li><code>worker/providers/telegram/bot.ts</code> e <code>telegram-bot.ts</code> &mdash; 44%</li>
+          <li><code>interface/outbox.ts</code> &mdash; 76%</li>
+          <li><code>telegram/polling.ts</code> &mdash; 70%</li>
+          <li><code>worker/surface/core.ts</code> &mdash; 82%</li>
+          <li><code>worker/lib/log.ts</code> &mdash; 80%</li>
+          <li><code>telegram/interno.ts</code> &mdash; 66%</li>
         </ul>
       </div>
+    </details>
+  </section>
+
+  <section>
+    <div class="section-header"><span class="section-number">08</span><h2>Estado final e a contenção em main</h2></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Gate</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="term">typecheck</td><td class="def">PASS</td></tr>
+          <tr><td class="term">lint</td><td class="def">PASS (146 warnings / 0 errors)</td></tr>
+          <tr><td class="term">build</td><td class="def">PASS</td></tr>
+          <tr><td class="term">test</td><td class="def">PASS (1932/1932)</td></tr>
+          <tr><td class="term">contract</td><td class="def">PASS (9)</td></tr>
+          <tr><td class="term">security</td><td class="def">PASS (136)</td></tr>
+          <tr><td class="term">e2e</td><td class="def">PASS (51)</td></tr>
+          <tr><td class="term">package:check</td><td class="def">PASS</td></tr>
+          <tr><td class="term">test:cov</td><td class="def"><strong style="color:var(--warning)">FAIL</strong> &mdash; cobertura de funções 90.07% &lt; 95% (débito pré-existente)</td></tr>
+        </tbody>
+      </table>
     </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card h-100 depara-depois">
-      <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
-      <div class="card-body">
-        <ul class="list-unstyled mb-0 d-grid gap-2">
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Botão da sidebar removido; aba "Telegram Guard" continua no rail do modal de settings</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Cartão "Como criar o bot": 6 passos do @BotFather + nota /token, aparece só quando não configurado</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>Projeto renomeado: dsh-guard-messenger (multi-provedor; Telegram hoje, WhatsApp/Discord/Matrix/etc. depois)</li>
-          <li><i class="bi bi-terminal me-2 text-body-secondary"></i>docs/BRANDING.md com o prompt de geração do logo + favicon</li>
-        </ul>
-      </div>
+    <div class="callout">
+      <p><strong>Contenção provada.</strong> 3 squash commits em <code>main</code>, working tree limpa, verify OK e trabalho de terceiros (1 item) intocado. O <code>.tgz</code> residual de nome antigo foi <strong>só reportado</strong>, nunca tocado &mdash; pré-existente e gitignored. O state dir <code>guarded-bot</code> foi mantido por compatibilidade com instalações existentes.</p>
     </div>
-  </div>
+    <div class="meta-foot">
+      <span><b>Auditoria</b> &middot; deepseek-harness-mobile / dsh-guard-messenger</span>
+      <span><b>Data da execução</b> &middot; 2026-08-25</span>
+      <span><b>Fonte</b> &middot; fatos.md do run-20260825-131522-101480</span>
+    </div>
+  </section>
+
 </div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  import elkLayouts from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs';
 
-      <h2 class="h4 pane-title">Impacto</h2>
-      <p>O que cada mudança significa para quem usa o deep-orchestrator-agent-skill:</p>
-<div class="list-group list-group-flush mb-4">
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Interface limpa</strong> — sem botão duplicado na sidebar; o acesso ao painel do bot é só pelo modal de settings (consistente com o shell)</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Onboarding guiado</strong> — quem nunca criou um bot consegue seguir os 6 passos do @BotFather dentro do próprio painel e revogar token depois</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Identidade multi-provedor</strong> — dsh-guard-messenger reflete que o guard de acesso + mensageria não é só Telegram; novo provedor = novo adaptador, sem rename futuro</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Marca pronta</strong> — prompt do logo persistido em docs/BRANDING.md (escudo + balão + dots multichannel), reutilizável para favicon e divulgacao</div></div>
-  <div class="list-group-item d-flex gap-3 align-items-start"><i class="bi bi-stars fs-5 stat-value flex-shrink-0 mt-1"></i><div><strong>Zero ruptura de contrato</strong> — binário, env var, entrada do worker, rotas e diretório de estado preservados; instalações existentes continuam funcionando</div></div>
-</div>
+  const config = { fitPadding: 28, minHeight: 340, maxHeightPx: 960, maxHeightVh: 0.84, maxInitialZoom: 1.8, minZoom: 0.08, maxZoom: 6.5, zoomStep: 0.14, readabilityFloor: 0.58 };
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  let activeDrag = null;
+  addEventListener('mousemove', (e) => activeDrag?.onMove(e));
+  addEventListener('mouseup', () => { activeDrag?.onEnd(); activeDrag = null; });
 
-      <h2 class="h4 pane-title">Novas capacidades</h2>
-      <!-- CAPABILITIES begin (não preenchido — conteúdo demo do template) -->
-      <div class="row g-3">
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 1</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 2</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-stars fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Capacidade 3</h3>
-              <p class="small text-body-secondary mb-0">Descrição genérica, substituída na geração.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas capacidades reais.</p>
-      <!-- CAPABILITIES end (não preenchido — conteúdo demo do template) -->
-    </div>
+  const darkTheme = { darkMode: true, primaryColor: '#1e242e', primaryTextColor: '#dadee5', primaryBorderColor: '#343b45', lineColor: '#9da5b2', secondaryColor: '#1e242e', secondaryTextColor: '#dadee5', tertiaryColor: '#1e242e', tertiaryTextColor: '#dadee5', background: '#070b14' };
+  const lightTheme = { darkMode: false, primaryColor: '#5537eb', primaryTextColor: '#ffffff', primaryBorderColor: '#d4d8de', lineColor: '#414853', secondaryColor: '#e1e5eb', secondaryTextColor: '#414853', tertiaryColor: '#f2edfd', tertiaryTextColor: '#414853', background: '#f3f5f9' };
 
-    <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
-    <div class="tab-pane fade" id="pane-decisoes" role="tabpanel"
-         aria-labelledby="tab-decisoes" tabindex="0" data-print-title="Decisões autônomas">
-      <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
-      <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
+  const colorScheme = getComputedStyle(document.documentElement).colorScheme;
+  const isDarkNow = () => { const cs = getComputedStyle(document.documentElement).colorScheme; return cs === 'dark' || (cs === 'normal' && matchMedia('(prefers-color-scheme: dark)').matches); };
+  const themeFor = (dark) => (dark ? darkTheme : lightTheme);
 
-<ul class="list-group list-group-flush">
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">UI</span><div><strong>Botão da sidebar removido por completo</strong> (registro, componente e affordance DOM) — a aba "Telegram Guard" continua no modal, acessível pelo botão de settings padrão do shell</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">onboarding</span><div><strong>Onboarding completo no painel</strong> — cartão "Como criar o bot" com os 6 passos do @BotFather + nota de revogar (/token), visível só quando não configurado</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">naming</span><div><strong>dsh-guard-messenger</strong> — identidade multi-provedor (guard do acesso + mensageria); contrato estável preservado: bin dsh-guard-setup, DSH_GUARD_PROVIDER, worker/telegram-bot.ts, rotas /__guard-ui, estado ~/.dsh/guarded-bot</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">branding</span><div><strong>docs/BRANDING.md</strong> — prompt completo do logo (escudo + balão + dots multi-canal, paleta, o que não incluir, favicon) persistido no repo</div></li>
-  <li class="list-group-item d-flex gap-3 align-items-start"><span class="badge badge-soft font-monospace">história</span><div><strong>Rastro histórico anotado</strong> — docs/plano, relatórios e manual-runs mantêm o nome antigo com nota "(hoje: dsh-guard-messenger)"; zero vestígios em produto</div></li>
-</ul>
-    </div>
+  mermaid.registerLayoutLoaders(elkLayouts);
+  mermaid.initialize({ startOnLoad: false, theme: 'base', look: 'classic', layout: 'elk', themeVariables: { ...themeFor(isDarkNow()), fontFamily: "'Inter', system-ui, sans-serif", fontSize: '14px' } });
 
-    <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
-    <div class="tab-pane fade" id="pane-timeline" role="tabpanel"
-         aria-labelledby="tab-timeline" tabindex="0" data-print-title="Timeline">
-      <h2 class="h4 pane-title">Linha do tempo da execução</h2>
-      <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
+  const rerenderers = [];
 
-<ul class="timeline list-unstyled mb-0">
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>FASE 0 + plano</strong> — fronteira resolvida; escopo: remover botão, ensinar BotFather, rename multi-provedor + prompt de logo; naming decidido (dsh-guard-messenger; contrato estável preservado).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1a (UI)</strong> — botão da sidebar removido (registro+componente+affordance) ; cartão @BotFather com 6 passos + nota /token no painel; testes client atualizados (só settings.section).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>Onda 1b (rename)</strong> — 48 arquivos renomeados (package/cordis/runtime/CI/docs/skills; PLUGIN_NAME/WORKER_LOG_NAME/registrant) ; docs/BRANDING.md com o prompt do logo; conflito de merge com a UI resolvido na filha (botão removido + registrant dsh-guard-messenger).</div></li>
-  <li class="timeline-item"><div class="timeline-marker"></div><div class="timeline-content"><strong>COMMIT-FINAL</strong> — revalidação adversarial APPROVE; gate final verde (1860/1860, security 136/0, e2e 51/51); EXPLAINER regenerado; push.</div></li>
-</ul>
-    </div>
+  async function initDiagram(shell) {
+    const wrap = shell.querySelector('.mermaid-wrap');
+    const viewport = shell.querySelector('.mermaid-viewport');
+    const canvas = shell.querySelector('.mermaid-canvas');
+    const source = shell.querySelector('.diagram-source');
+    const label = shell.querySelector('.zoom-label');
+    if (!wrap || !viewport || !canvas || !source || !label) return;
 
-  </div>
+    let zoom = 1, fitMode = 'contain', panX = 0, panY = 0, svgW = 0, svgH = 0;
+    let sx = 0, sy = 0, spx = 0, spy = 0, touchDist = 0, touchCx = 0, touchCy = 0;
 
-  <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator-agent-skill</strong> vdsh-guard-messenger@2026-08-23 · 2026-08-23 · branch main.
-    Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
-  </footer>
-
-</main>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
-        crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
-        integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU"
-        crossorigin="anonymous"></script>
-
-<script>
-/* ── runtime do documento ────────────────────────────────────────────────────
-   Copie este bloco inteiro, sem editar. Ele faz três coisas:
-   1. guarda o código-fonte cru ANTES de qualquer transformação (para o copiar);
-   2. destaca a sintaxe e injeta o botão de copiar;
-   3. liga as abas ao #hash da URL, nos dois sentidos.
-   ────────────────────────────────────────────────────────────────────────── */
-(function () {
-  'use strict';
-
-  // 1. Fonte cru primeiro. Depois do highlight o DOM ganha <span>; textContent ainda
-  //    devolve o texto certo, mas plugins de numeração de linha o contaminam. Guardar
-  //    antes é a única versão que nunca mente.
-  var sources = new WeakMap();
-  document.querySelectorAll('pre > code').forEach(function (code) {
-    sources.set(code, code.textContent.replace(/\n$/, ''));
-  });
-
-  // 2. Highlight. Declare sempre a linguagem na classe: a auto-detecção erra em
-  //    trechos curtos (o mesmo snippet vira "ruby" numa aba e "perl" na outra).
-  if (window.hljs) hljs.highlightAll();
-
-  // Copiar. navigator.clipboard exige contexto seguro; em file:// o comportamento
-  // varia por navegador, então o fallback com execCommand não é opcional.
-  function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      return navigator.clipboard.writeText(text).then(function () { return true; },
-                                                      function () { return legacyCopy(text); });
+    function constrainPan() {
+      const vpW = viewport.clientWidth, vpH = viewport.clientHeight;
+      const rW = svgW * zoom, rH = svgH * zoom, pad = config.fitPadding;
+      panX = (rW + pad * 2 <= vpW) ? (vpW - rW) / 2 : clamp(panX, vpW - rW - pad, pad);
+      panY = (rH + pad * 2 <= vpH) ? (vpH - rH) / 2 : clamp(panY, vpH - rH - pad, pad);
     }
-    return Promise.resolve(legacyCopy(text));
-  }
-
-  function legacyCopy(text) {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    // position:fixed + opacity:0 evita que a página role até o textarea.
-    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, ta.value.length); // iOS ignora select() sozinho
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    document.body.removeChild(ta);
-    return ok;
-  }
-
-  document.querySelectorAll('pre > code').forEach(function (code) {
-    var pre = code.parentElement;
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
-    btn.innerHTML = '<i class="bi bi-clipboard"></i>';
-    btn.setAttribute('aria-label', 'Copiar código');
-    btn.addEventListener('click', function () {
-      copyText(sources.get(code) || code.textContent).then(function (ok) {
-        btn.innerHTML = ok ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-x-lg"></i>';
-        btn.classList.toggle('btn-outline-success', ok);
-        btn.classList.toggle('btn-outline-danger', !ok);
-        btn.classList.remove('btn-outline-secondary');
-        setTimeout(function () {
-          btn.innerHTML = '<i class="bi bi-clipboard"></i>';
-          btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
-        }, 1500);
-      });
+    function applyTransform() {
+      const svg = canvas.querySelector('svg');
+      if (!svg || !svgW) return;
+      constrainPan();
+      svg.style.width = (svgW * zoom) + 'px';
+      svg.style.height = (svgH * zoom) + 'px';
+      canvas.style.transform = `translate(${panX}px, ${panY}px)`;
+      label.textContent = Math.round(zoom * 100) + '% — ' + fitMode;
+    }
+    function canPan() {
+      const rW = svgW * zoom, rH = svgH * zoom;
+      return rW + config.fitPadding * 2 > viewport.clientWidth || rH + config.fitPadding * 2 > viewport.clientHeight;
+    }
+    function computeSmartFit() {
+      const vpW = viewport.clientWidth, vpH = viewport.clientHeight;
+      const aW = Math.max(80, vpW - config.fitPadding * 2), aH = Math.max(80, vpH - config.fitPadding * 2);
+      const contain = Math.min(aW / svgW, aH / svgH);
+      let z = contain, mode = 'contain';
+      if (contain < config.readabilityFloor) { const chR = svgH / svgW, vpR = vpH / Math.max(vpW, 1); z = chR >= vpR ? aW / svgW : aH / svgH; mode = chR >= vpR ? 'width-priority' : 'height-priority'; }
+      return { zoom: clamp(z, config.minZoom, config.maxInitialZoom), mode };
+    }
+    function fitDiagram() {
+      if (!svgW) return;
+      const fit = computeSmartFit();
+      zoom = fit.zoom; fitMode = fit.mode;
+      panX = (viewport.clientWidth - svgW * zoom) / 2; panY = (viewport.clientHeight - svgH * zoom) / 2;
+      applyTransform();
+    }
+    function setOneToOne() {
+      zoom = clamp(1, config.minZoom, config.maxZoom); fitMode = '1:1';
+      panX = (viewport.clientWidth - svgW * zoom) / 2; panY = (viewport.clientHeight - svgH * zoom) / 2;
+      applyTransform();
+    }
+    function zoomAround(factor, cx, cy) {
+      const next = clamp(zoom * factor, config.minZoom, config.maxZoom), ratio = next / zoom;
+      panX = cx - ratio * (cx - panX); panY = cy - ratio * (cy - panY);
+      zoom = next; fitMode = 'custom'; applyTransform();
+    }
+    function readSvgNaturalSize(svg) {
+      let w = 0, h = 0;
+      if (svg.viewBox?.baseVal?.width > 0) { w = svg.viewBox.baseVal.width; h = svg.viewBox.baseVal.height; }
+      if (!w) { w = parseFloat(svg.getAttribute('width')) || 0; h = parseFloat(svg.getAttribute('height')) || 0; }
+      if (!w) { const b = svg.getBBox(); w = b.width; h = b.height; }
+      if (!w) { const r = svg.getBoundingClientRect(); w = r.width || 1000; h = r.height || 700; }
+      if (!svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      return { w, h };
+    }
+    function setAdaptiveHeight() {
+      if (!svgW) return;
+      const usableW = Math.max(280, wrap.getBoundingClientRect().width - 2);
+      const idealH = (svgH / svgW) * usableW + config.fitPadding * 2;
+      const maxVp = Math.floor(innerHeight * config.maxHeightVh);
+      const hardMax = Math.min(config.maxHeightPx, Math.max(config.minHeight + 40, maxVp));
+      wrap.style.height = Math.round(clamp(idealH, config.minHeight, hardMax)) + 'px';
+    }
+    function openInNewTab() {
+      const svg = canvas.querySelector('svg'); if (!svg) return;
+      const clone = svg.cloneNode(true); clone.style.width = ''; clone.style.height = '';
+      const bg = getComputedStyle(document.documentElement).getPropertyValue('--card').trim() || (isDarkNow() ? '#070b14' : '#f3f5f9');
+      const html = `<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Diagrama</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${bg};padding:40px;box-sizing:border-box}svg{max-width:100%;max-height:90vh;height:auto}</style></head><body>${clone.outerHTML}</body></html>`;
+      open(URL.createObjectURL(new Blob([html], { type: 'text/html' })), '_blank');
+    }
+    async function render() {
+      try {
+        const code = source.textContent.trim();
+        if (!code) { label.textContent = 'Error: fonte vazia'; return; }
+        const id = 'diagram-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const { svg } = await mermaid.render(id, code);
+        const parsed = new DOMParser().parseFromString(svg, 'text/html');
+        const parsedSvg = parsed.body.querySelector('svg');
+        if (!parsedSvg) { label.textContent = 'Error: sem SVG'; return; }
+        canvas.replaceChildren(document.adoptNode(parsedSvg));
+        const svgNode = canvas.querySelector('svg');
+        if (!svgNode) { label.textContent = 'Error: sem SVG'; return; }
+        const size = readSvgNaturalSize(svgNode);
+        svgW = size.w; svgH = size.h;
+        svgNode.removeAttribute('width'); svgNode.removeAttribute('height');
+        svgNode.style.maxWidth = 'none'; svgNode.style.display = 'block';
+        setAdaptiveHeight(); fitDiagram();
+      } catch (err) { console.error('Mermaid render failed:', err); label.textContent = 'Error: ' + (err.message || 'Render failed'); }
+    }
+    const actions = {
+      'zoom-in': () => zoomAround(1 + config.zoomStep, viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-out': () => zoomAround(1 / (1 + config.zoomStep), viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-fit': fitDiagram, 'zoom-one': setOneToOne, 'zoom-expand': openInNewTab,
+    };
+    Object.entries(actions).forEach(([action, handler]) => wrap.querySelector(`[data-action="${action}"]`)?.addEventListener('click', handler));
+    viewport.addEventListener('dblclick', fitDiagram);
+    viewport.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); const r = viewport.getBoundingClientRect(); const f = e.deltaY < 0 ? 1 + config.zoomStep : 1 / (1 + config.zoomStep); zoomAround(f, e.clientX - r.left, e.clientY - r.top); return; }
+      if (canPan()) { e.preventDefault(); panX -= e.deltaX; panY -= e.deltaY; applyTransform(); }
+    }, { passive: false });
+    viewport.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.zoom-controls') || !canPan()) return;
+      wrap.classList.add('is-panning');
+      sx = e.clientX; sy = e.clientY; spx = panX; spy = panY; e.preventDefault();
+      activeDrag = { onMove: (ev) => { panX = spx + (ev.clientX - sx); panY = spy + (ev.clientY - sy); applyTransform(); }, onEnd: () => wrap.classList.remove('is-panning') };
     });
-    pre.appendChild(btn);
+    viewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; spx = panX; spy = panY; }
+      else if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; touchDist = Math.sqrt(dx * dx + dy * dy); const r = viewport.getBoundingClientRect(); touchCx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left; touchCy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top; }
+    }, { passive: true });
+    viewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && canPan()) {
+        if (touchDist > 0) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; spx = panX; spy = panY; touchDist = 0; }
+        e.preventDefault(); panX = spx + (e.touches[0].clientX - sx); panY = spy + (e.touches[0].clientY - sy); applyTransform();
+      } else if (e.touches.length === 2 && touchDist > 0) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY;
+        const d = Math.sqrt(dx * dx + dy * dy); zoomAround(d / touchDist, touchCx, touchCy); touchDist = d;
+      }
+    }, { passive: false });
+    new ResizeObserver(() => { if (svgW) { setAdaptiveHeight(); fitDiagram(); } }).observe(wrap);
+    rerenderers.push(render);
+    render();
+  }
+
+  document.querySelectorAll('.diagram-shell').forEach(initDiagram);
+
+  const mql = matchMedia('(prefers-color-scheme: dark)');
+  let rerenderTimer = null;
+  mql.addEventListener('change', () => {
+    clearTimeout(rerenderTimer);
+    rerenderTimer = setTimeout(() => {
+      mermaid.initialize({ theme: 'base', look: 'classic', layout: 'elk', themeVariables: { ...themeFor(mql.matches), fontFamily: "'Inter', system-ui, sans-serif", fontSize: '14px' } });
+      window.rerenderDiagrams();
+    }, 180);
   });
 
-  // 3. Aba ↔ URL. Sem isto, mandar "olha a aba De-Para" exige explicar o clique.
-  var tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
-  if (!tabs.length) return;
-
-  function activateFromHash() {
-    var hash = window.location.hash;
-    if (!hash || hash.length < 2) return;
-    var target = document.querySelector(hash);
-    if (!target) return;
-    // O #hash pode apontar para o painel OU para um título dentro dele.
-    var pane = target.closest('.tab-pane') || (target.classList.contains('tab-pane') ? target : null);
-    if (!pane) return;
-    var trigger = document.querySelector('[data-bs-target="#' + CSS.escape(pane.id) + '"]');
-    if (trigger) bootstrap.Tab.getOrCreateInstance(trigger).show();
-    // O navegador já tentou rolar até o alvo — e falhou, porque naquele instante o
-    // painel ainda era display:none. Agora que apareceu, role de novo: sem isto a
-    // página abre num scroll intermediário, com as abas escondidas atrás da navbar.
-    var scrollTo = target !== pane ? target : (trigger && trigger.closest('[role="tablist"]')) || pane;
-    requestAnimationFrame(function () { scrollTo.scrollIntoView({ block: 'start' }); });
-  }
-
-  tabs.forEach(function (t) {
-    t.addEventListener('shown.bs.tab', function (e) {
-      var id = (e.target.getAttribute('data-bs-target') || '').slice(1);
-      // replaceState, não location.hash: mudar o hash direto faz a página pular.
-      if (id) history.replaceState(null, '', '#' + id);
-    });
-  });
-
-  window.addEventListener('hashchange', activateFromHash);
-  activateFromHash();
-})();
+  window.rerenderDiagrams = () => Promise.all(rerenderers.map((render) => render()));
 </script>
+
 </body>
 </html>
