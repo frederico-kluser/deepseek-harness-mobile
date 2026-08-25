@@ -76,7 +76,7 @@
       // achado visivel sem tornar o gate da onda refem de um defeito que ja
       // tem dono. Ver o bloco homonimo em eslint.config.js.
       // ---------------------------------------------------------------------
-      "files": ["src/index.ts", "test/index.test.ts"],
+      "files": ["src/index.ts", "test/unit/index.test.ts"],
       "rules": {
         "no-restricted-imports": [
           "warn",

@@ -274,7 +274,7 @@ export default defineConfig([
    */
   {
     name: 'dsh-guard/TRANSITORIO-monolito-onda-0',
-    files: ['src/index.ts', 'test/index.test.ts'],
+    files: ['src/index.ts', 'test/unit/index.test.ts'],
     rules: {
       'no-restricted-imports': ['warn', SCOPE_AND_404_OPTS],
       'no-restricted-syntax': ['warn', ...RESTRICTED_SYNTAX],
