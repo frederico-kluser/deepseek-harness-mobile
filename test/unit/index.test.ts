@@ -27,6 +27,8 @@ import {
   makeRequest,
 } from '../support/ctx-double.ts'
 import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
+import { defaultOrphanSweepDeps, type OrphanSweepDeps } from '../../src/tunnel/pidfile.ts'
+import { createStateStore, type StateStoreHandle } from '../../src/state/store.ts'
 
 describe('manifesto do plugin', () => {
   it('expoe o nome e as dependencias injetadas exigidas pelo contrato', () => {
@@ -848,6 +850,15 @@ function configTunelCom(autoStart: boolean): Partial<Config> {
   }
 }
 
+/**
+ * StateStore REAL sobre o `state.json` que `comEstadoComCaminho` acabou de
+ * escrever (resolve via `$DSH_HOME`). Serve para `defaultOrphanSweepDeps` ler o
+ * registo de tunel persistido — o MESMO registo que o boot do `apply()` vai ler.
+ */
+function comStateStoreDo(): StateStoreHandle {
+  return createStateStore({ env: process.env })
+}
+
 describe('reemitirEstado: o estado COMPLETO ao worker (CTL-027)', () => {
   it('sem controlador (loopback) e INERTE: nao ha estado a reemitir, nenhum crash', async () => {
     const { limpar } = comEstadoComCaminho('STOPPED', false, { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 })
@@ -946,21 +957,54 @@ describe('CTL-009 fail-closed: o segredo ilegivel no instante do start fecha a i
 
 describe('boot em loopback: um orfao VIVO e derrubado antes de qualquer inicializacao (02-SEGURANCA 9)', () => {
   it('outcome killed: sessoes revogadas, EVENTO_ORFAO no audit, aviso ao dono, processo morto', async () => {
-    // Um filho REAL cujo argv[0] (via `argv0` do spawn, deterministico no
-    // /proc/<pid>/cmdline — sem corrida com o exec da shell) e 'cloudflared':
-    // a varredura reconhece-o como o nosso tunel e derruba a arvore. Sem
-    // /proc (macOS), a identificacao e null e a politica matou na mesma — a
-    // URL publica pesa mais que a ignorancia. `detached: true` faz o filho
-    // lider do seu proprio GRUPO: o tree-kill alveja `-pid`, e sem grupo
-    // proprio o `kill(-pid, SIGKILL)` devolveria ESRCH e o orfao sobreviveria.
-    const filhoOrfao = spawn('/bin/sh', ['-c', 'sleep 60'], { argv0: 'cloudflared', detached: true })
+    // Este teste verifica a POLITICA de recuperacao de orfao no boot, nao o
+    // mecanismo `/proc`. A varredura chama `sweepOrphanTunnel` com as deps REAIS
+    // (kill, isAlive, startedAtOf, store, log) — injeta-se apenas a IDENTIFICACAO,
+    // para o registo de um pid vivo ser classificado como "o nosso cloudflared"
+    // e tomarem-se o caminho `killed` de verdade.
+    //
+    // PORQUE NAO `argv0: 'cloudflared'`: o `argv0` do `spawn` e uma feature de
+    // nivel libc que so muda o `argv[0]` visto pelo SCRIPT (e, em `/bin/sh -c`,
+    // nem compete: a shell exec-otimiza para `sleep`). NUNCA aparece em
+    // `/proc/<pid>/cmdline`, que e o que o kernel executa de facto. Um
+    // `cloudflared` REAL tem `cloudflared` no cmdline; aqui forca-se essa leitura
+    // via a identidade injetada. O `/proc` real e exercitado pelas outras deps.
+    //
+    // `detached: true` faz o filho lider do seu proprio GRUPO: o tree-kill
+    // alveja `-pid`, e sem grupo proprio o `kill(-pid, SIGKILL)` devolveria
+    // ESRCH e o orfao sobreviveria.
+    const filhoOrfao = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' })
     filhoOrfao.unref()
     const pid = filhoOrfao.pid
     assert.ok(pid !== undefined)
     const { dir, limpar } = comEstadoComCaminho('STOPPED', false, undefined, { pid, startedAt: Date.now(), mode: 'quick' })
     let ctx: FakeContext | undefined
     try {
-      ctx = install().ctx
+      // A varredura corre DENTRO do `apply()`. Precisamos do `ctx.logger` antes
+      // de o arranque correr (para o aviso cair no mesmo logger que o teste le),
+      // por isso monta-se o FakeContext aqui, no lugar, em vez do atalho
+      // `install()`. `defaultOrphanSweepDeps` constroi as deps reais (store, log,
+      // kill, isAlive, startedAtOf) sobre o registo persistido; so a IDENTIDADE
+      // e substituida — `readProcessCmdline` real responderia "sleep 60" e tomaria
+      // o ramo `foreign`; injetada, responde "o nosso cloudflared" e o sweep
+      // derruba-o de verdade.
+      ctx = new FakeContext()
+      const storeBootReal = comStateStoreDo()
+      // O sweep escreve a mensagem via `log.warn('...')` direto; a superficie do
+      // duble e `ctx.logger(escopo)` (printf). Adapta-se a mesma forma do
+      // `GuardLogger` real, para o aviso cair no logger que o teste le.
+      const logDoSweep = ctx.logger('guarded-bot')
+      const sweepReal: OrphanSweepDeps = {
+        ...defaultOrphanSweepDeps(storeBootReal.store, {
+          info: (mensagem) => logDoSweep.info(mensagem),
+          warn: (mensagem) => logDoSweep.warn(mensagem),
+        }),
+        identify: (): string => '/usr/bin/cloudflared',
+      }
+      apply(ctx.asContext(), makeConfig(), { bootSweep: sweepReal })
+      // O sweep apos o boot apaga o registo no MESMO store injetado — so depois
+      // de `apply()` (e da varredura sincrona) o store deixa de ser preciso.
+      storeBootReal.dispose()
       assert.equal(ctx.logger.has('warn', 'tunel orfao de uma execucao anterior encontrado VIVO'), true)
 
       // O orfao morreu (SIGTERM+SIGKILL ao grupo/arvore).

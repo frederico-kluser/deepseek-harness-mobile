@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 
 import type { Config } from '../../src/config/schema.ts'
 import { apply } from '../../src/index.ts'
+import type { OrphanSweepDeps } from '../../src/tunnel/pidfile.ts'
 import { FakeContext } from './ctx-double.ts'
 
 /**
@@ -67,11 +68,11 @@ export interface Installation {
 
 export function install(
   overrides: Partial<Config> = {},
-  options: { withUpgrade?: boolean } = {},
+  options: { withUpgrade?: boolean; bootSweep?: OrphanSweepDeps } = {},
 ): Installation {
   const ctx = new FakeContext(options)
   const config = makeConfig(overrides)
-  apply(ctx.asContext(), config)
+  apply(ctx.asContext(), config, options.bootSweep === undefined ? {} : { bootSweep: options.bootSweep })
   return { ctx, config }
 }
 

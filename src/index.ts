@@ -147,6 +147,7 @@ import {
   ownerOrphanMessage,
   recoverTunnelAtBoot,
   sweepOrphanTunnel,
+  type OrphanSweepDeps,
 } from './tunnel/pidfile.ts'
 import { createHttpProbeTransport } from './tunnel/probe.ts'
 import { createTunnelReadiness } from './tunnel/readiness.ts'
@@ -311,6 +312,8 @@ function recuperarBoot(
     readonly auditSink: Pick<AuditSink, 'append'>
     readonly notificarDono: (texto: string) => void
   },
+  /** COSTURA: duble da varredura, para o teste dirigir a classificacao sem /proc. */
+  sweep?: OrphanSweepDeps,
 ): {
   readonly intencao: 'READY' | 'STOPPED'
   readonly restrito: boolean
@@ -322,7 +325,8 @@ function recuperarBoot(
   const restrito = persistido.restricted !== undefined
 
   if (config.tunnel === undefined) {
-    const resultado = sweepOrphanTunnel(defaultOrphanSweepDeps(store, log))
+    const sweepDeps = sweep ?? defaultOrphanSweepDeps(store, log)
+    const resultado = sweepOrphanTunnel(sweepDeps)
     if (resultado.outcome === 'killed') {
       efeitos.revogarSessoes()
       efeitos.auditSink.append({ evento: EVENTO_ORFAO, resultado: 'permitido' })
@@ -440,7 +444,11 @@ export function criarFanoutDeEstado(lerAtual: () => { readonly seq: number; read
     },
   }
 }
-export function apply(ctx: Context, config: Config): void {
+export function apply(
+  ctx: Context,
+  config: Config,
+  options: { readonly bootSweep?: OrphanSweepDeps } = {},
+): void {
   /* --- 1. Validacao ruidosa no arranque -------------------------------- */
   assertValidConfig(config)
   assertSecureBind(ctx.webServer.host, config.allowedHosts)
@@ -957,7 +965,7 @@ export function apply(ctx: Context, config: Config): void {
       revogarSessoes: () => authStack().sessions.revokeAll(),
       auditSink: { append: (evento) => authStack().audit.append(evento) },
       notificarDono: difundirNotificacao,
-    })
+    }, options.bootSweep)
     storeBoot.dispose()
 
     if (config.tunnel === undefined) {
