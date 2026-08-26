@@ -91,6 +91,34 @@ function capturarFetch(respostas: Array<{ urlContem: string; metodo?: string; re
   return { chamadas, fetchStub }
 }
 
+/** Um fetch stub que REJEITA (queda de rede) nas URLs que casam o predicado. */
+function capturarFetchComFalha(
+  falhaEm: (url: string, init?: RequestInit) => boolean,
+): {
+  chamadas: ChamadaFetch[]
+  fetchStub: typeof fetch
+} {
+  const chamadas: ChamadaFetch[] = []
+  const fetchStub = (async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input)
+    chamadas.push({ url, init })
+    if (falhaEm(url, init)) throw new TypeError('falha de rede simulada (fetch rejeitou)')
+    return fakeResposta(404, {})
+  }) as typeof fetch
+  return { chamadas, fetchStub }
+}
+
+/** Uma resposta fake cujo `json()` rejeita (corpo ilegível). */
+function fakeRespostaSemJson(status: number): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => {
+      throw new SyntaxError('corpo ilegível (json() rejeitou)')
+    },
+  } as unknown as Response
+}
+
 /** Carrega `lib/client.js` num sandbox e devolve `module.exports` do factory. */
 function carregarBundle(fetchStub: typeof fetch): Record<string, unknown> {
   const MODULE_LOADER_KEY = '__ModuleLoader__'
@@ -312,6 +340,36 @@ test('bundle: a trilha de 3 checkpoints está presente e o pareamento NÃO loga 
   assert.ok(!/console\.log\(\s*par\b/u.test(codigo), 'não pode haver console.log do estado de pareamento no bundle')
 })
 
+/**
+ * Onda 1 — smoke de REGRESSÃO do painel "Remote Access" (contrato do usuário):
+ * (1) o remove control "Desfazer parear" está no Avançado; (2) o refresh
+ * automático caiu de 15 s para 5 s — o intervalo literal `5000` está no bundle
+ * e o antigo `15000` saiu; (3) o bloco "Uso recente" (KPIs/sessões/rodapé) foi
+ * REMOVIDO do Passo 3 — os marcadores ASCII que só existiam lá estão ausentes.
+ * O `Conex` é o prefixo ASCII de "Conexões ativas": o esbuild foge o não-ASCII
+ * (`\xF5`) mas PRESERVA o prefixo, então a ausência prova a remoção sem
+ * asserção tautológica (o rótulo acentuado completo jamais casaria no bundle).
+ */
+test('bundle: Onda 1 — Desfazer parear presente, refresh 5 s e bloco Uso recente removido', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // Remove control: o botão "Desfazer parear" (e o texto da confirmação).
+  assert.ok(codigo.includes('Desfazer parear'), 'o bundle deve conter o botão "Desfazer parear" do Avançado')
+  assert.ok(codigo.includes('Desfazer o parear'), 'o bundle deve conter o texto da confirmação "Desfazer o parear"')
+
+  // Refresh automático: 5 s (novo) presente; 15 s (antigo) ausente. O esbuild
+  // imprime o literal numérico na forma mais curta (5000 → `5e3`), por isso o
+  // marcador é a forma EMITIDA do intervalo do refresh (`}, 5e3);` — única no
+  // bundle; o poll de pareamento é `3e3` e o ticker é `1e3`).
+  assert.ok(codigo.includes('}, 5e3)'), 'o bundle deve conter o refresh de 5 s (esbuild imprime 5000 como 5e3)')
+  assert.ok(!codigo.includes('15e3'), 'o antigo refresh de 15 s (15000 → 15e3) deve ter saído do bundle')
+
+  // Bloco "Uso recente" removido: os marcadores ASCII do rodapé/botão/KPI saíram.
+  assert.ok(!codigo.includes('Atualizado automaticamente'), 'o rodapé "Atualizado automaticamente…" deve ter saído')
+  assert.ok(!codigo.includes('Atualizar'), 'o botão "Atualizar" do bloco removido deve ter saído')
+  assert.ok(!codigo.includes('Conex'), 'o KPI "Conexões ativas" (prefixo ASCII "Conex") deve ter saído')
+})
+
 test('bundle: formatarContagem exporta o countdown m:ss (expiração + formato)', { skip: BUNDLE_AUSENTE }, async () => {
   const { chamadas, fetchStub } = capturarFetch([])
   const modulo = carregarBundle(fetchStub)
@@ -321,6 +379,37 @@ test('bundle: formatarContagem exporta o countdown m:ss (expiração + formato)'
   assert.equal(fmt(1_000_000_000, 1_000_000_000 - 245_000), '4:05')
   assert.equal(fmt(1_000_000_000, 1_000_000_000), '0:00', 'no prazo, 0:00')
   assert.equal(fmt(1_000_000_000, 1_000_000_000 + 10_000), '0:00', 'já expirou, 0:00')
+  void chamadas
+})
+
+/**
+ * Bordas da contagem regressiva `m:ss` — a expiração EXATA e os limiares de
+ * arredondamento (`Math.floor` da diferença em segundos): 0:00 no prazo/passado
+ * (nunca 0:60); `0:01` só com ≥ 1000 ms restantes; `1:00` no minuto exato
+ * (60_000 ms); `59:59` no teto antes da virada de hora.
+ */
+test('bundle: formatarContagem — bordas de expiração exata e limiares m:ss', { skip: BUNDLE_AUSENTE }, () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const fmt = modulo.formatarContagem as (expiraEm: number, agoraMs: number) => string
+  const BASE = 1_000_000_000
+
+  // Expiração exata: prazo == agora → 0:00 (e não 0:60).
+  assert.equal(fmt(BASE, BASE), '0:00', 'expiração exata → 0:00')
+  assert.equal(fmt(0, 0), '0:00', 'ambos zerados → 0:00')
+  // Passado: qualquer diferença negativa → 0:00.
+  assert.equal(fmt(0, 5_000), '0:00', 'prazo 0 com agora > 0 → 0:00')
+
+  // Limiar de arredondamento: < 1 s inteiro zera; ≥ 1000 ms vira 0:01.
+  assert.equal(fmt(BASE, BASE - 999), '0:00', '999 ms restantes → 0:00 (floor)')
+  assert.equal(fmt(BASE, BASE - 1_000), '0:01', '1000 ms restantes → 0:01')
+
+  // Minuto exato: 60_000 ms → 1:00 (nunca 0:60); 59_999 ms → 0:59.
+  assert.equal(fmt(BASE, BASE - 60_000), '1:00', '60 s restantes → 1:00')
+  assert.equal(fmt(BASE, BASE - 59_999), '0:59', '59.999 s restantes → 0:59')
+
+  // Teto antes da hora: 59:59.
+  assert.equal(fmt(BASE, BASE - 3_599_000), '59:59', '3599 s restantes → 59:59')
   void chamadas
 })
 
@@ -367,6 +456,65 @@ test('bundle: chipDoBot reflete o estado do bot (Online/Offline/verificando)', {
   assert.deepEqual(
     chip({ configurado: true, fonte: 'secrets' }, null),
     { tom: 'neutro', rotulo: 'verificando…' },
+  )
+  void chamadas
+})
+
+/**
+ * Bordas do chip do cabeçalho (chipDoBot) — os casos que o smoke principal não
+ * toca: handle vazio '', fontes 'env'/'nenhum', motivo vazio '' e o SEGUNDO
+ * motivo da rota /telegram ('sem-chave'). O `chipDoEstado` interno não é
+ * exportado e é exercitado AQUI através do `chipDoBot` no caminho
+ * `!configurado` (a única porta de entrada pública dele).
+ */
+test('bundle: chipDoBot — bordas (handle vazio, fontes env/nenhum, motivo vazio)', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const chip = modulo.chipDoBot as (
+    token: unknown,
+    telegrama: unknown,
+  ) => { tom: string; rotulo: string; detalhe?: string }
+
+  // Online com handle VAZIO '' → conta como "sem handle": detalhe = fonte.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets', handle: '' }, { online: true, handle: '' }),
+    { tom: 'ok', rotulo: 'Online', detalhe: 'secrets' },
+    'handle vazio não vira @ — o detalhe é a fonte do token',
+  )
+  // Online sem handle, fonte 'env' → detalhe 'env' (a fonte, não o token).
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'env' }, { online: true }),
+    { tom: 'ok', rotulo: 'Online', detalhe: 'env' },
+  )
+  // Online sem handle, fonte 'nenhum' (configurado por outra via) → detalhe 'nenhum'.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'nenhum' }, { online: true }),
+    { tom: 'ok', rotulo: 'Online', detalhe: 'nenhum' },
+  )
+
+  // Offline com motivo vazio '' → o motivo é repassado TAL QUAL (detalhe:'' —
+  // comportamento OBSERVADO do código; o contrato só promete "sem detalhe"
+  // quando o motivo está AUSENTE/undefined).
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, { online: false, motivo: '' }),
+    { tom: 'aviso', rotulo: 'Offline', detalhe: '' },
+  )
+  // Offline com o SEGUNDO motivo da rota → detalhe = motivo.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, { online: false, motivo: 'sem-chave' }),
+    { tom: 'aviso', rotulo: 'Offline', detalhe: 'sem-chave' },
+  )
+
+  // Token NÃO configurado + fonte 'env' → chipDoEstado: "Env manda" (o env
+  // prevalece sobre o bot — o estado do bot é irrelevante sem token).
+  assert.deepEqual(
+    chip({ configurado: false, fonte: 'env' }, { online: true }),
+    { tom: 'aviso', rotulo: 'Env manda', detalhe: 'sem token até remover a variável' },
+  )
+  // Token NÃO configurado + fonte 'secrets' → chipDoEstado: "Não configurado".
+  assert.deepEqual(
+    chip({ configurado: false, fonte: 'secrets' }, null),
+    { tom: 'neutro', rotulo: 'Não configurado' },
   )
   void chamadas
 })
@@ -428,4 +576,87 @@ test('CSRF HIGH-2: apiPost envia o token NOVO no header x-dsh-csrf', { skip: BUN
   assert.ok(postChamada !== undefined, 'o POST /token deve ter saido')
   const cabecalhos = (postChamada!.init!.headers ?? {}) as Record<string, string>
   assert.equal(cabecalhos['x-dsh-csrf'], 'NOVO-TOKEN', 'o header deve carregar o token NOVO da GET /csrf')
+})
+
+test('CSRF HIGH-2: rede falhou na GET /csrf -> fallback ao meta (catch do fetch)', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetchComFalha((url) => url.includes('/csrf'))
+  const modulo = carregarBundle(fetchStub)
+  const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
+
+  const token = await buscar(documentoComMeta('DO-META'))
+  assert.equal(token, 'DO-META', 'a GET /csrf REJEITOU (não é só 404) e o meta do chrome antigo valeu')
+  assert.ok(chamadas[0]?.url.includes('/csrf'), 'a GET /csrf deve ter sido tentada')
+})
+
+test('CSRF HIGH-2: GET /csrf ok mas SEM token utilizável -> fallback ao meta', { skip: BUNDLE_AUSENTE }, async () => {
+  // `{}` (sem a chave token), `{token:''}` (vazio) e `{token: 123}` (tipo
+  // errado) têm de cair no meta — só string não-vazia vale como token.
+  for (const corpo of [{}, { token: '' }, { token: 123 }]) {
+    const { fetchStub } = capturarFetch([{ urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(200, corpo) }])
+    const modulo = carregarBundle(fetchStub)
+    const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
+    assert.equal(await buscar(documentoComMeta('DO-META')), 'DO-META', `corpo ${JSON.stringify(corpo)} → fallback ao meta`)
+  }
+})
+
+test('CSRF HIGH-2: GET /csrf 500 e meta com conteúdo vazio -> token indisponível', { skip: BUNDLE_AUSENTE }, async () => {
+  // 500 da GET /csrf: não-ok → cai no meta (válido).
+  const { fetchStub } = capturarFetch([{ urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(500, {}) }])
+  const modulo = carregarBundle(fetchStub)
+  const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
+  assert.equal(await buscar(documentoComMeta('DO-META')), 'DO-META', 'GET /csrf 500 → meta')
+
+  // Meta com conteúdo só-espaço (trim → '') → '' = CSRF indisponível.
+  assert.equal(await buscar(documentoComMeta('   ')), '', 'meta só-espaço → \'\' (trim)')
+})
+
+test('apiPost: rede falhou no POST -> {status:0} sem csrfIndisponivel', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetchComFalha((_url, init) => init?.method === 'POST')
+  const modulo = carregarBundle(fetchStub)
+  const post = modulo.apiPost as (
+    caminho: string,
+    corpo: Record<string, unknown>,
+    doc: { querySelector: (s: string) => unknown | null },
+  ) => Promise<{ status: number; dados: Record<string, unknown>; csrfIndisponivel: boolean }>
+
+  // A GET /csrf responde 404 (cai no meta 'META'), o POST /token REJEITA por rede.
+  const r = await post('/token', { token: '123:ABC' }, documentoComMeta('META'))
+  assert.equal(r.status, 0, 'rede falhou no POST → status 0 (NUNCA rejeição não tratada)')
+  assert.equal(r.csrfIndisponivel, false, 'o CSRF ESTAVA disponível — a falha foi só de rede')
+  assert.deepEqual(r.dados, {})
+  const postChamada = chamadas.find((c) => c.url.includes('/api/token') && c.init?.method === 'POST')
+  assert.ok(postChamada !== undefined, 'o POST /token deve ter SAÍDO (e falhado por rede)')
+})
+
+test('apiPost: corpo ilegível usa o status; erro 500 do servidor propaga status', { skip: BUNDLE_AUSENTE }, async () => {
+  // 200 com corpo não-JSON: json() rejeita → dados {} mas o status preservado.
+  const { chamadas, fetchStub } = capturarFetch([
+    { urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(200, { token: 'T-OK' }) },
+    { urlContem: '/__guard-ui/api/token', metodo: 'POST', resposta: fakeRespostaSemJson(200) },
+  ])
+  const modulo = carregarBundle(fetchStub)
+  const post = modulo.apiPost as (
+    caminho: string,
+    corpo: Record<string, unknown>,
+    doc: { querySelector: (s: string) => unknown | null },
+  ) => Promise<{ status: number; dados: Record<string, unknown>; csrfIndisponivel: boolean }>
+
+  const r1 = await post('/token', { token: '123:ABC' }, documentoComMeta('ANTIGO'))
+  assert.equal(r1.status, 200)
+  assert.deepEqual(r1.dados, {}, 'corpo ilegível → dados {} (o status vale)')
+  assert.equal(r1.csrfIndisponivel, false)
+
+  // 500 com JSON válido: status 500 + dados do erro propagados.
+  const { chamadas: chamadas2, fetchStub: fetchStub2 } = capturarFetch([
+    { urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(200, { token: 'T-OK' }) },
+    { urlContem: '/__guard-ui/api/token', metodo: 'POST', resposta: fakeResposta(500, { erro: 'worker-indisponivel' }) },
+  ])
+  const modulo2 = carregarBundle(fetchStub2)
+  const post2 = modulo2.apiPost as typeof post
+  const r2 = await post2('/token', { token: '123:ABC' }, documentoComMeta('ANTIGO'))
+  assert.equal(r2.status, 500)
+  assert.deepEqual(r2.dados, { erro: 'worker-indisponivel' })
+  assert.equal(r2.csrfIndisponivel, false)
+  void chamadas
+  void chamadas2
 })
