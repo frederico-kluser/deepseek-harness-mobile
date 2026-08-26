@@ -35,11 +35,12 @@ FONTES DE PESQUISA citadas:
 | PAIR-010 | Código de pareamento NUNCA sai do host | O código só é devolvido pela rota `POST /pair` e renderizado NOPAINEL; nunca logado, nunca no Telegram (só o digest via `pairing.challenge`). |
 | PAIR-005 | Uma única parelha | Estado "Desfazer parear" só existe no `<details>`; re-parear exige reset (o texto guia, não força). |
 | PAIR-006 | `/start` igual p/ todos | (efeito no bot, ver `01` §3) — o painel não contradiz; a instrução de parear é a única menção pública. |
-| — | Nenhum texto vaza token, código real, endereço, estado sensível a estranho | O painel não devolve o token; não lista sessões fora desta aba autenticada; o IP só quando `ipConfiavel`. |
+| — | Nenhum texto vaza token, código real, endereço, estado sensível a estranho | O painel não devolve o token; não lista sessões nem IP (o bloco "Uso recente" foi removido do painel). |
 
 **O que MUDOU no painel (UX):** de 6 blocos sempre empilhados para uma **trilha
-de 3 checkpoints**; os blocos de privacidade e métricas dobram/migram para o
-checkpoint 3; o CTA passa a ser **um por estado**.
+de 3 checkpoints**; o bloco de privacidade dobra no checkpoint 3 (`E minha
+conversa?`); o bloco de métricas ("Uso recente") foi **removido**; o CTA passa
+a ser **um por estado**.
 
 ---
 
@@ -58,6 +59,16 @@ vertical de 3 checkpoints** na MESMA tela (não é wizard modal):
 - **Só o passo atual fica aberto** com CTA(s) e texto.
 - **Passos futuros** ficam traço/diminuídos (sem detalhe), para a atenção ir ao
   único passo acionável.
+- **Chip do cabeçalho** (ao lado do título "Remote Access", `chipDoBot`):
+  estado AO VIVO do bot via `GET /telegram` — a carregar → neutro
+  `verificando…`; token NÃO configurado → `Não configurado` (ou `Env manda`
+  quando `TELEGRAM_BOT_TOKEN` está no ambiente); configurado + online → verde
+  `Online` (detalhe `@handle`, ou a fonte do token sem handle); configurado +
+  offline → aviso `Offline` com o `motivo` da rota (`sem-chave` /
+  `sem-pareamento`).
+- **Refresh automático**: re-busca no mount e a cada ~5 s enquanto a aba
+  estiver aberta (mais `window.focus`/`visibilitychange`); o ticker de 1 s só
+  re-renderiza o countdown do código de pareamento.
 
 ---
 
@@ -171,7 +182,6 @@ vertical de 3 checkpoints** na MESMA tela (não é wizard modal):
      /parear    (não é preciso — já pareado)
    [ Avançado ▸ ]  ← <details>  (não um botão destrutivo visível)
    [ E minha conversa? ▸ ]  ← <details> privacidade
-   (Uso recente — métricas, só aqui, enxuto)
 ```
 
 ### Textos EXATOS (mapeando `client/index.ts`)
@@ -186,14 +196,15 @@ vertical de 3 checkpoints** na MESMA tela (não é wizard modal):
 - **`<details>` Avançado:**
   - `Trocar o token` (text-link → volta ao Passo 1 com o formulário) + confirmação
     no clique (ver §confirmações).
-  - `Desfazer parear` (text-link → **confirmação** `Tens a certeza? Isto desliga o teu acesso pelo bot e pede um parear novo.` + botão `Desfazer parear` — só aqui, dobrado).
+  - `Desfazer parear` (text-link → **confirmação** `Desfazer o parear fecha o teu acesso pelo bot a partir deste painel. Não dá para desfazer sem parear de novo. O painel vai re-verificar o estado do bot. Continuar?` + botão `Desfazer parear` — só aqui, dobrado; sem rota no painel — re-parear exige `--reset-pairing` na máquina, o texto guia, não força).
   - `Ver todos os comandos` (idem `COMANDOS_DE_USO` completo, dobrado).
 - **`<details>` "E minha conversa?":** (1 linha de risco + 1 linha do que faz)
   - **`As tuas conversas com o bot ficam neste aparelho e no Telegram, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.`**
-- **Uso recente** (métricas — só aqui): manter o cartão `Acesso agora` ENXUTO —
-  KPIs `Conexões ativas` / `Sessões vivas` + lista, mas com título **`Uso recente`**
-  e sem o aviso de "IP não confiável" a céu aberto (dobrar ou encurtar). Mantém o
-  refresh ~15s e o botão `Atualizar`.
+- **Uso recente** (métricas): **REMOVIDO** — o painel não consulta mais
+  `GET /access` (a rota permanece no backend; o client não a usa). Sem KPIs
+  `Conexões ativas`/`Sessões vivas`, sem lista de sessões e sem botão
+  `Atualizar` (o refresh automático do painel fica a cada ~5 s — ver "Visão
+  geral").
 
 ---
 
@@ -212,8 +223,9 @@ vertical de 3 checkpoints** na MESMA tela (não é wizard modal):
 7. **Desabilitado com motivo** (ex.: `Gerar código` desabilitado sem token, com
    a razão no tooltip/texto) — nunca clicável-silencioso.
 8. **Manter classes `guard-*` e tokens `--dsw-*`**; **logo no topo mantida**.
-9. **Privacidade e métricas** mudam para o checkpoint 3 (não atravancam os 2
-   primeiros estados que ensinam a configurar).
+9. **Privacidade** dobra no checkpoint 3 (`E minha conversa?`); o bloco de
+   métricas ("Uso recente") foi **removido** — nada atravanca os 2 primeiros
+   estados que ensinam a configurar.
 
 ---
 
@@ -222,8 +234,13 @@ vertical de 3 checkpoints** na MESMA tela (não é wizard modal):
 - **Trocar token:** `Trocar o token desliga temporariamente o bot. Continuar?`
   → `[Trocar token]` `[Cancelar]`.
 - **Desfazer parear:** `Desfazer o parear fecha o teu acesso pelo bot a partir
-  deste painel. Não dá para desfazer sem parear de novo. Continuar?`
-  → `[Desfazer parear]` `[Cancelar]`.
+  deste painel. Não dá para desfazer sem parear de novo. O painel vai
+  re-verificar o estado do bot. Continuar?` → `[Desfazer parear]` `[Cancelar]`.
+  Ao confirmar (em AMBOS os tipos) o painel dispara refresh completo do estado
+  sincronizado + checagem AO VIVO de descoberta (`getMe` forçado, que contorna
+  o cache curto do backend). O `desfazer` não tem rota no painel: fecha a
+  confirmação e guia — re-parear exige reset na máquina (o texto guia, não
+  força; PAIR-005).
 
 ---
 

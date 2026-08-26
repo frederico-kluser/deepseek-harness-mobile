@@ -101,9 +101,15 @@ Dois `<details>`:
   privacidade por omissão: nenhum comando de estranho funciona e quem não pareou
   não recebe resposta.`
 
-**Uso recente** (métricas, só aqui): KPIs **Conexões ativas** / **Sessões vivas**
-+ lista de sessões vivas (device e tempos relativos, `ip` quando confiável) —
-título `Uso recente`, refresh ~15 s e botão `Atualizar`.
+A confirmação de `Desfazer parear` ganhou a linha **"O painel vai re-verificar
+o estado do bot."**; ao confirmar (tanto `Trocar o token` quanto `Desfazer
+parear`), o painel dispara refresh completo do estado + checagem AO VIVO de
+descoberta (`getMe` forçado). O `desfazer` continua **sem rota no painel** —
+re-parear exige `--reset-pairing` na máquina (o texto guia, não força).
+
+O bloco **"Uso recente"** (KPIs `Conexões ativas`/`Sessões vivas`, lista de
+sessões e botão `Atualizar`) foi **removido**: o painel não consulta mais
+`GET /access` (a rota continua no backend, mas o client não a usa).
 
 ---
 
@@ -128,9 +134,15 @@ O `setMyCommands` é publicado **duas vezes**: `default` (start/ajuda) e
 
 ## Estado do bot e contexto rápido
 
-- **Badge Bot ONLINE / OFFLINE** com o `motivo` (dado pelo backend).
-- **Acesso agora / Uso recente**: re-busca no mount, a cada ~15 s e em
-  `window.focus`/`visibilitychange`; o ticker de 1 s só anima os tempos relativos.
+- **Chip do cabeçalho** (ao lado do título "Remote Access") = estado AO VIVO do
+  bot via `GET /telegram`: a carregar → neutro `verificando…`; token NÃO
+  configurado → `Não configurado` (ou `Env manda` quando `TELEGRAM_BOT_TOKEN`
+  está no ambiente); configurado + online → verde `Online` (detalhe `@handle`,
+  ou a fonte do token sem handle); configurado + offline → aviso `Offline` com
+  o `motivo` da rota (`sem-chave` / `sem-pareamento`).
+- **Refresh automático a cada ~5 s** enquanto a aba estiver aberta, mais
+  re-busca no mount e em `window.focus`/`visibilitychange`; o ticker de 1 s só
+  re-renderiza o countdown do código de pareamento.
 - O token de ambiente `TELEGRAM_BOT_TOKEN` tem **precedência**: estando definido,
   o painel responde **`token-por-env`** e avisa que um token gravado no
   `secrets.env` não mudaria o bot até a variável sair do ambiente.
