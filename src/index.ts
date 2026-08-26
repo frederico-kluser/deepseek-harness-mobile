@@ -1143,7 +1143,7 @@ export function apply(
       // o bot vigente (LOW-1 do revisor).
       let handleAtual: string | undefined
       // Cache curto do `/api/privacidade`: o getMe AO VIVO e caro para bater a
-      // cada poll (~15s) do painel. Guarda-se o resultado + quando foi medido;
+      // cada poll (~5s) do painel. Guarda-se o resultado + quando foi medido;
       // o `forcar` do botao "Verificar de novo" contorna este cache.
       const CACHE_PRIVACIDADE_MS = 30_000
       let cachePrivacidade:
@@ -1203,7 +1203,7 @@ export function apply(
           fonte: fonteEfetiva(),
         }),
         privacidade: async (forcar = false): Promise<UiPrivacidade> => {
-          // Cache curto: no poll (~15s) do painel, NAO bater getMe a cada vez.
+          // Cache curto: no poll (~5s) do painel, NAO bater getMe a cada vez.
           if (!forcar && cachePrivacidade !== undefined) {
             if (agora() - cachePrivacidade.quando < CACHE_PRIVACIDADE_MS) {
               return cachePrivacidade.resultado
