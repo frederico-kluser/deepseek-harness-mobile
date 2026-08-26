@@ -30,11 +30,11 @@
  * plugin Cordis do browser: `apply(ctx)` + `inject`. Como `lib/client.js` é
  * tratado como ESM (`"type": "module"` + extensão `.js`), e o runtime devolve
  * `module.exports` com `__esModule: true`, o interop expõe estes EXPORTS
- * NOMEADOS. Os helpers (`buscarTokenCsrf`, `apiPost`, `normalizarUserAgent`,
- * `tempoRelativo`, `encurtarIdentidade`, `formatarContagem`) são funções puras
- * exportadas do fonte `client/index.ts` para o smoke de teste; entram no
- * bundle e ficam declarados aqui para a superfície corresponder ao que o
- * bundle realmente exporta (`module.exports = __toCommonJS(index_exports)`).
+ * NOMEADOS. Os helpers (`buscarTokenCsrf`, `apiPost`, `formatarContagem`,
+ * `chipDoBot`) são funções puras exportadas do fonte `client/index.ts` para o
+ * smoke de teste; entram no bundle e ficam declarados aqui para a superfície
+ * corresponder ao que o bundle realmente exporta
+ * (`module.exports = __toCommonJS(index_exports)`).
  *
  * Ver `client/index.ts` (a única fonte de verdade das assinaturas) e
  * `docs/SPIKE-CLIENT-SLOTS.md`.
@@ -74,14 +74,37 @@ export function buscarTokenCsrf(documento: Document): Promise<string>
 /** POST JSON com o header `x-dsh-csrf`. Rede falhou ⇒ `{status:0}`; sem CSRF ⇒ `{status:0, csrfIndisponivel:true}`. */
 export function apiPost(caminho: string, corpo: Record<string, unknown>, documento: Document): Promise<RespostaPost>
 
-/** Normaliza o userAgent → `<navegador> no <aparelho/OS>`; devolve o userAgent cru como fallback. */
-export function normalizarUserAgent(userAgent: string): string
-
-/** "agora", "3 min atrás", "2 h atrás", "5 d atrás" — relativo a `agora`. */
-export function tempoRelativo(milissegundos: number, agora: number): string
-
-/** O hash truncado a 8 chars — a identidade visual da sessão, nunca o ?key nem o id. */
-export function encurtarIdentidade(hash: string): string
-
 /** "agora", "3 min atrás"… Contagem regressiva `m:ss` a partir de um prazo epoch ms. */
 export function formatarContagem(expiraEm: number, agoraMs: number): string
+
+/**
+ * O estado do token devolvido por `GET /token-state`. O `fonte` é o literal do
+ * backend (`env`/`secrets`/`nenhum`), mantido em linha aqui porque o alias
+ * `FonteDoToken` do fonte não é exportado.
+ */
+export interface EstadoDoToken {
+  readonly configurado: boolean
+  readonly handle?: string | null
+  readonly fonte: 'env' | 'secrets' | 'nenhum'
+}
+
+/** O estado AO VIVO do bot devolvido por `GET /telegram` (online/offline + motivo/handle). */
+export interface EstadoTelegrama {
+  readonly online: boolean
+  readonly motivo?: string
+  readonly handle?: string
+}
+
+/** Um chip de estado do cabeçalho (tom + rótulo + detalhe opcional). */
+export type EstadoChip =
+  | { readonly tom: 'ok'; readonly rotulo: string; readonly detalhe?: string }
+  | { readonly tom: 'aviso'; readonly rotulo: string; readonly detalhe?: string }
+  | { readonly tom: 'neutro'; readonly rotulo: string; readonly detalhe?: string }
+
+/**
+ * O chip do cabeçalho, estendido com o estado AO VIVO do bot: verde "Online"
+ * quando `/telegram` está online (detalhe `@handle` ou a fonte do token),
+ * aviso "Offline" com o `motivo` quando não; "verificando…" enquanto carrega;
+ * comportamento atual do chip de token quando o token não está configurado.
+ */
+export function chipDoBot(token: EstadoDoToken | null, telegrama: EstadoTelegrama | null): EstadoChip

@@ -19,11 +19,10 @@
  *      vivo "Aguardando…" → "✓ Pareado".
  *   3. "Passo 3 de 3 · Usar" — pareado: comandos essenciais (3), `<details>`
  *      "Avançado" (trocar token / desfazer parear com confirmação / todos os
- *      comandos), `<details>` "E minha conversa?" (privacidade AO VIVO —
- *      green "não encontrável" só com getMe real) e o bloco "Uso recente"
- *      (métricas, só aqui).
- * O estado baseia-se em `GET /token-state` + `GET /telegram` + `GET /access` +
- * `GET /pair-state` (polling de ~15s; sondagem de pareamento a cada ~3s).
+ *      comandos) e `<details>` "E minha conversa?" (privacidade AO VIVO —
+ *      green "não encontrável" só com getMe real).
+ * O estado baseia-se em `GET /token-state` + `GET /telegram` + `GET /pair-state`
+ * (polling de ~5s; sondagem de pareamento a cada ~3s).
  *
  * SEGURANÇA: o token/segredo NUNCA entra neste bundle. O `@handle` (devolvido
  * pela rota quando o `getMe` o confirmou) é a única informação do bot aqui — e
@@ -202,22 +201,6 @@ interface EstadoTelegrama {
   readonly handle?: string
 }
 
-interface SessaoDeAcesso {
-  readonly hash: string
-  readonly criadaEm: number
-  readonly ultimoUsoEm: number
-  readonly ip: string | null
-  readonly userAgent: string | null
-}
-
-interface EstadoDeAcesso {
-  readonly totalConexoes: number
-  readonly totalSessoes: number
-  readonly conexoesAtivas: number
-  readonly ipConfiavel: boolean
-  readonly sessoes: readonly SessaoDeAcesso[]
-}
-
 /** O estado do pareamento devolvido por GET /pair-state. */
 interface EstadoPareamento {
   readonly pareado: boolean
@@ -243,63 +226,6 @@ type EstadoDePareamentoUi =
 /* ========================================================================== */
 /* Helper puro de formatação (testável em isolamento)                         */
 /* ========================================================================== */
-
-/**
- * NORMALIZAÇÃO do userAgent → <navegador> no <aparelho/OS>. Feita em casa, sem
- * dependência nova (o requisito proíbe libs). Reconhece os navegadores/OS mais
- * comuns e DEVOLVE o userAgent cru como fallback se nada bater (nunca uma
- * string vazia por cima de um dado real).
- */
-export function normalizarUserAgent(userAgent: string): string {
-  const ua = (userAgent ?? '').trim()
-  if (ua.length === 0) return 'Dispositivo desconhecido'
-
-  let navegador = 'Navegador'
-  if (/Edg\//u.test(ua)) navegador = 'Edge'
-  else if (/OPR\/|Opera/u.test(ua)) navegador = 'Opera'
-  else if (/CriOS\//u.test(ua)) navegador = 'Chrome'
-  else if (/FxiOS\//u.test(ua)) navegador = 'Firefox'
-  else if (/Firefox\//u.test(ua)) navegador = 'Firefox'
-  else if (/Chrome\//u.test(ua)) navegador = 'Chrome'
-  else if (/\bSafari\//u.test(ua)) navegador = 'Safari'
-
-  let aparelho: string
-  if (/iPhone/u.test(ua)) aparelho = 'iPhone'
-  else if (/iPad/u.test(ua)) aparelho = 'iPad'
-  else if (/iPod/u.test(ua)) aparelho = 'iPod'
-  else if (/Windows NT/u.test(ua)) aparelho = 'Windows'
-  else if (/Android/u.test(ua)) aparelho = 'Android'
-  else if (/Mac OS X/u.test(ua)) aparelho = 'macOS'
-  else if (/CrOS/u.test(ua)) aparelho = 'ChromeOS'
-  else if (/Linux/u.test(ua)) aparelho = 'Linux'
-  else aparelho = 'desconhecido'
-
-  // Só diz "Navegador no X" se reconheceu AMBOS; senão devolve o userAgent cru
-  // (encurtado) — é dado do utilizador, não uma invenção nossa.
-  const conhecido = navegador !== 'Navegador' && aparelho !== 'desconhecido'
-  if (!conhecido) {
-    return ua.length > 72 ? `${ua.slice(0, 69)}…` : ua
-  }
-  return `${navegador} no ${aparelho}`
-}
-
-/** "agora", "3 min atrás", "2 h atrás", "5 d atrás" — relativo a `agora`. */
-export function tempoRelativo(milissegundos: number, agora: number): string {
-  const segundos = Math.max(0, Math.floor((agora - milissegundos) / 1000))
-  if (segundos < 60) return 'agora'
-  const minutos = Math.floor(segundos / 60)
-  if (minutos < 60) return `${minutos} min atrás`
-  const horas = Math.floor(minutos / 60)
-  if (horas < 24) return `${horas} h atrás`
-  const dias = Math.floor(horas / 24)
-  return `${dias} d atrás`
-}
-
-/** Identidade visual da sessão — o hash truncado a 8 chars, nunca o ?key nem o id. */
-export function encurtarIdentidade(hash: string): string {
-  const limpo = (hash ?? '').trim()
-  return limpo.length > 8 ? limpo.slice(0, 8) : limpo
-}
 
 /**
  * Contagem regressiva no formato `m:ss` (ex.: `4:23`) a partir de um prazo em
@@ -329,6 +255,31 @@ function chipDoEstado(token: EstadoDoToken | null): EstadoChip {
   }
   if (token.configurado) return { tom: 'ok', rotulo: 'Configurado', detalhe: token.fonte }
   return { tom: 'neutro', rotulo: 'Não configurado' }
+}
+
+/**
+ * O chip do CABEÇALHO, estendido para refletir o estado AO VIVO do bot
+ * (o usuário quer VER se o bot ainda existe / está conectado). Composição:
+ *  - token ainda a carregar (null) → neutro "verificando…";
+ *  - token NÃO configurado → comportamento atual do `chipDoEstado` (env manda /
+ *    não configurado — o estado do bot é irrelevante sem token);
+ *  - token configurado mas /telegram ainda a carregar (null) → neutro
+ *    "verificando…";
+ *  - token configurado E `/telegram` online → verde "Online" (detalhe: `@handle`
+ *    quando o bot tiver username, senão a fonte do token);
+ *  - token configurado E `/telegram` offline → aviso "Offline" com o `motivo`
+ *    devolvido pela rota (`sem-chave` / `sem-pareamento`) quando presente.
+ * Exportada para o teste de smoke exercitar os três estados sem montar React.
+ */
+export function chipDoBot(token: EstadoDoToken | null, telegrama: EstadoTelegrama | null): EstadoChip {
+  if (token === null) return { tom: 'neutro', rotulo: 'verificando…' }
+  if (!token.configurado) return chipDoEstado(token)
+  if (telegrama === null) return { tom: 'neutro', rotulo: 'verificando…' }
+  if (telegrama.online) {
+    const detalhe = telegrama.handle !== undefined && telegrama.handle.length > 0 ? `@${telegrama.handle}` : token.fonte
+    return { tom: 'ok', rotulo: 'Online', detalhe }
+  }
+  return { tom: 'aviso', rotulo: 'Offline', detalhe: telegrama.motivo }
 }
 
 /* ========================================================================== */
@@ -754,12 +705,14 @@ function espacarCodigo(codigo: string): string {
 
 /**
  * Conteúdo da aba "Remote Access". Dados vêm do backend via fetch; o painel
- * re-busca ao montar e a cada ~15s (mais em `focus`/`visibilitychange`).
+ * re-busca ao montar e a cada ~5s (mais em `focus`/`visibilitychange`).
  */
 function TelegramGuardSection(): React.ReactNode {
   const [token, setToken] = useState<EstadoDoToken | null>(null)
-  const [acesso, setAcesso] = useState<EstadoDeAcesso | null>(null)
-  const [acessoFalhou, setAcessoFalhou] = useState(false)
+  // O estado AO VIVO do bot (GET /telegram): online/offline + motivo/handle —
+  // alimenta o chip do cabeçalho. `null` = ainda a carregar (ou fetch falhou e
+  // mantemos o último resultado honesto).
+  const [telegrama, setTelegrama] = useState<EstadoTelegrama | null>(null)
   const [tokenErro, setTokenErro] = useState<string | null>(null)
   // A checagem AO VIVO de descoberta (GET /api/privacidade); `null` = ainda a
   // carregar (ou o fetch falhou e mantemos o último resultado honesto).
@@ -783,7 +736,7 @@ function TelegramGuardSection(): React.ReactNode {
   // Referencia para parar a sondagem no unmount / quando parear.
   const sondaParRef = useRef<number | null>(null)
 
-  // "Agora" para tempos relativos — ticker de 1s só para re-render.
+  // "Agora" — ticker de 1s só para re-render (contagem do código de pareamento).
   const [agora, setAgora] = useState(() => Date.now())
 
   // Evita setState depois do unmount (fetch async que termina tarde).
@@ -802,6 +755,8 @@ function TelegramGuardSection(): React.ReactNode {
     try {
       const dados = await apiGet<EstadoTelegrama>('/telegram')
       if (vivo.current) {
+        // Guarda o estado do bot para o chip do cabeçalho (Online/Offline).
+        setTelegrama(dados)
         // O bot ONLINE = token configurado E pareamento feito. Se já está
         // pareado (ex.: via CLI, ou por outra aba), o painel reflete logo
         // "Pareado" e NUNCA mostra o botão de parear.
@@ -819,21 +774,9 @@ function TelegramGuardSection(): React.ReactNode {
     }
   }, [])
 
-  const buscarAcesso = React.useCallback(async (): Promise<void> => {
-    try {
-      const dados = await apiGet<EstadoDeAcesso>('/access')
-      if (vivo.current) {
-        setAcesso(dados)
-        setAcessoFalhou(false)
-      }
-    } catch {
-      if (vivo.current) setAcessoFalhou(true)
-    }
-  }, [])
-
   // A checagem AO VIVO de descoberta. `forcar` contorna o cache curto do
   // backend (botão "Verificar de novo"); sem `forcar`, o backend serve um
-  // resultado cacheado de ~30s para não bater getMe a cada poll de ~15s.
+  // resultado cacheado de ~30s para não bater getMe a cada poll de ~5s.
   const buscarPrivacidade = React.useCallback(async (forcar: boolean): Promise<void> => {
     const link = forcar ? '/privacidade?forcar=true' : '/privacidade'
     try {
@@ -845,8 +788,8 @@ function TelegramGuardSection(): React.ReactNode {
   }, [])
 
   const recarregarTudo = React.useCallback(async (): Promise<void> => {
-    await Promise.all([buscarToken(), buscarTelegrama(), buscarAcesso(), buscarPrivacidade(false)])
-  }, [buscarToken, buscarTelegrama, buscarAcesso, buscarPrivacidade])
+    await Promise.all([buscarToken(), buscarTelegrama(), buscarPrivacidade(false)])
+  }, [buscarToken, buscarTelegrama, buscarPrivacidade])
 
   // Sonda /pair-state a cada ~3s enquanto houver um código a aguardar (ou a
   // gerar), até o `pareado:true` chegar (o dono digitou /parear no Telegram).
@@ -935,17 +878,17 @@ function TelegramGuardSection(): React.ReactNode {
     }
   }, [recarregarTudo])
 
-  // Ticker de 1s para animar os tempos relativos.
+  // Ticker de 1s para re-render (contagem do código de pareamento).
   useEffect(() => {
     const t = window.setInterval(() => setAgora(Date.now()), 1000)
     return () => window.clearInterval(t)
   }, [])
 
-  // Refresh automático a cada ~15s enquanto a aba estiver aberta.
+  // Refresh automático a cada ~5s enquanto a aba estiver aberta.
   useEffect(() => {
     const t = window.setInterval(() => {
       void recarregarTudo()
-    }, 15000)
+    }, 5000)
     return () => window.clearInterval(t)
   }, [recarregarTudo])
 
@@ -1057,17 +1000,26 @@ function TelegramGuardSection(): React.ReactNode {
   // Confirma a ação destrutiva do Avançado. Para "trocar", volta ao formulário
   // do Passo 1. Para "desfazer", o parear só se reabre com `--reset-pairing` na
   // MÁQUINA (PAIR-008) — o painel não tem rota de desfazer (o texto guia, não
-  // força); a confirmação fecha e o copy já disse o que acontece.
+  // força); a confirmação fecha e o copy já disse o que acontece. Em AMBOS os
+  // casos, após confirmar, o painel dispara um refresh COMPLETO do estado
+  // sincronizado + uma checagem AO VIVO de descoberta (getMe FORÇADO, que
+  // contorna o cache de ~30s do backend) — responde "o bot ainda existe?" com
+  // checagem real, e reflete já a nova realidade (ex.: token trocado / bot
+  // removido) sem esperar o poll seguinte.
   const confirmar = React.useCallback((): void => {
-    if (confirmacao === 'trocar') {
+    const tipo = confirmacao
+    if (tipo === null) return
+    if (tipo === 'trocar') {
       abrirTrocar()
-      return
+    } else {
+      // 'desfazer': sem rota no painel — fecha a confirmação (orientação honesta).
+      setConfirmacao(null)
     }
-    // 'desfazer': sem rota no painel — fecha a confirmação (orientação honesta).
-    setConfirmacao(null)
-  }, [confirmacao, abrirTrocar])
+    void recarregarTudo()
+    void buscarPrivacidade(true)
+  }, [confirmacao, abrirTrocar, recarregarTudo, buscarPrivacidade])
 
-  const chip = chipDoEstado(token)
+  const chip = chipDoBot(token, telegrama)
   const configurado = token?.configurado === true
   const handleChave = token?.handle
   const rotuloHandle = handleChave && handleChave.length > 0 ? `@${handleChave}` : 'o bot'
@@ -1161,55 +1113,6 @@ function TelegramGuardSection(): React.ReactNode {
           estado: privacidade,
           aoVerificar: () => void buscarPrivacidade(true),
         }),
-        // Uso recente (métricas) — SÓ aqui, enxuto, sem aviso IP a céu aberto.
-        h('div', { className: 'guard-metrics' },
-          h('div', { className: 'guard-card-title' },
-            'Uso recente',
-            h('button', {
-              type: 'button',
-              className: 'guard-btn-sm',
-              onClick: () => void recarregarTudo(),
-              'data-guard-refresh': '',
-            }, 'Atualizar'),
-          ),
-          h('div', { className: 'guard-kpis' },
-            h('div', { className: 'guard-kpi' },
-              h('span', { className: 'guard-kpi-value' }, String(acesso?.conexoesAtivas ?? '—')),
-              h('span', { className: 'guard-kpi-label' }, 'Conexões ativas'),
-            ),
-            h('div', { className: 'guard-kpi' },
-              h('span', { className: 'guard-kpi-value' }, String(acesso?.totalSessoes ?? '—')),
-              h('span', { className: 'guard-kpi-label' }, 'Sessões vivas'),
-            ),
-          ),
-          acessoFalhou && acesso === null
-            ? paragrafo('guard-error', 'não foi possível ler o acesso — servidor inacessível')
-            : null,
-          !acessoFalhou && acesso
-            ? h('ul', { className: 'guard-sessions' },
-                acesso.sessoes.length === 0
-                  ? h('li', { className: 'guard-session' },
-                      h('span', { className: 'guard-session-meta' }, 'Nenhuma sessão viva agora.'))
-                  : acesso.sessoes.map((s, i) => {
-                      const device = s.userAgent !== null ? normalizarUserAgent(s.userAgent) : 'Sessão de dispositivo'
-                      const criada = tempoRelativo(s.criadaEm, agora)
-                      const uso = tempoRelativo(s.ultimoUsoEm, agora)
-                      const identidade = encurtarIdentidade(s.hash)
-                      return h('li', { className: 'guard-session', key: i },
-                        h('span', { className: 'guard-session-id' }, identidade),
-                        h('div', { className: 'guard-session-body' },
-                          h('span', { className: 'guard-session-device' }, device),
-                          h('span', { className: 'guard-session-meta' }, `aberta ${criada} · usada ${uso}`),
-                        ),
-                        s.ip !== null
-                          ? h('span', { className: 'guard-session-ip' }, s.ip)
-                          : h('span', { className: 'guard-tag' }, 'IP não confiável'),
-                      )
-                    }),
-              )
-            : null,
-          paragrafo('guard-report-footer', 'Atualizado automaticamente a cada ~15 s enquanto a aba estiver aberta.'),
-        ),
       )
     : null
 
@@ -1315,7 +1218,7 @@ function CartaoConfirmacao({
   const texto =
     tipo === 'trocar'
       ? 'Trocar o token desliga temporariamente o bot. Continuar?'
-      : 'Desfazer o parear fecha o teu acesso pelo bot a partir deste painel. Não dá para desfazer sem parear de novo. Continuar?'
+      : 'Desfazer o parear fecha o teu acesso pelo bot a partir deste painel. Não dá para desfazer sem parear de novo. O painel vai re-verificar o estado do bot. Continuar?'
   const rotulo = tipo === 'trocar' ? 'Trocar token' : 'Desfazer parear'
   return h('div', { className: 'guard-card guard-confirm' },
     paragrafo('guard-error', texto),

@@ -282,11 +282,25 @@ test('bundle: a trilha de 3 checkpoints está presente e o pareamento NÃO loga 
   // o código"), porque o esbuild foge os acentos.
   assert.ok(codigo.includes('pede o c'), 'o bundle deve anunciar que o bot pede o código (modo híbrido)')
 
-  // Passo 3 — comandos essenciais + Avançado + privacidade + Uso recente.
+  // Passo 3 — comandos essenciais + Avançado + privacidade (Uso recente REMOVIDO).
   assert.ok(codigo.includes('Comandos essenciais'), 'o bundle deve conter os comandos essenciais do Passo 3')
   assert.ok(codigo.includes('/emergencia'), 'o bundle deve conter o comando essencial /emergencia')
   assert.ok(codigo.includes('E minha conversa'), 'o bundle deve conter o <details> "E minha conversa?"')
-  assert.ok(codigo.includes('Uso recente'), 'o bundle deve conter o bloco "Uso recente"')
+  // O bloco "Uso recente" (métricas) foi REMOVIDO do Passo 3 — os valores de
+  // acesso não devem mais aparecer na tela. A string "Uso recente" em si ainda
+  // consta no bundle SÓ por um comentário do CSS embutido (guard-panel.css,
+  // que não muda nesta tarefa), por isso a ausência é verificada numa substring
+  // ASCII que existia APENAS no bloco removido: o rodapé "Atualizado
+  // automaticamente a cada ~15 s..." e o botão "Atualizar" (ambos verificados
+  // como 0 no bundle e no CSS). NÃO usar rótulos acentuados como marcador: o
+  // esbuild foge não-ASCII (`Conex\xF5es ativas`) e a asserção viraria
+  // tautológica, passando mesmo com o bloco presente.
+  assert.ok(!codigo.includes('Atualizado automaticamente'), 'o rodapé do bloco removido deve ter saído do bundle')
+  assert.ok(!codigo.includes('Atualizar'), 'o botão "Atualizar" do bloco removido deve ter saído do bundle')
+
+  // O chip do cabeçalho reflete o estado AO VIVO do bot (Online/Offline).
+  assert.ok(codigo.includes('Online'), 'o bundle deve conter o rótulo do chip "Online"')
+  assert.ok(codigo.includes('Offline'), 'o bundle deve conter o rótulo do chip "Offline"')
 
   // Os rótulos ANTIGOS desapareceram da trilha.
   assert.ok(!codigo.includes('Parear pelo Telegram'), 'o botão/cartão antigo "Parear pelo Telegram" deve ter saído')
@@ -307,6 +321,53 @@ test('bundle: formatarContagem exporta o countdown m:ss (expiração + formato)'
   assert.equal(fmt(1_000_000_000, 1_000_000_000 - 245_000), '4:05')
   assert.equal(fmt(1_000_000_000, 1_000_000_000), '0:00', 'no prazo, 0:00')
   assert.equal(fmt(1_000_000_000, 1_000_000_000 + 10_000), '0:00', 'já expirou, 0:00')
+  void chamadas
+})
+
+/**
+ * O chip do cabeçalho (chipDoBot) reflete o estado AO VIVO do bot — a função
+ * pura exportada, exercitada nos TRÊS estados pedidos + os de carregamento:
+ *  - token configurado + /telegram online  → verde "Online" (@handle ou fonte);
+ *  - token configurado + /telegram offline → aviso "Offline" (motivo quando há);
+ *  - token NÃO configurado                 → comportamento atual do chipDoEstado;
+ *  - estado ainda a carregar (null)        → neutro "verificando…".
+ */
+test('bundle: chipDoBot reflete o estado do bot (Online/Offline/verificando)', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const chip = modulo.chipDoBot as (
+    token: unknown,
+    telegrama: unknown,
+  ) => { tom: string; rotulo: string; detalhe?: string }
+
+  // Online com @handle: detalhe = @handle.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets', handle: 'meu_bot' }, { online: true, handle: 'meu_bot' }),
+    { tom: 'ok', rotulo: 'Online', detalhe: '@meu_bot' },
+  )
+  // Online sem handle: detalhe = a fonte do token.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, { online: true }),
+    { tom: 'ok', rotulo: 'Online', detalhe: 'secrets' },
+  )
+  // Offline com motivo: aviso + o motivo da rota /telegram.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, { online: false, motivo: 'sem-pareamento' }),
+    { tom: 'aviso', rotulo: 'Offline', detalhe: 'sem-pareamento' },
+  )
+  // Offline sem motivo: aviso "Offline" sem detalhe.
+  assert.equal(chip({ configurado: true, fonte: 'secrets' }, { online: false }).detalhe, undefined)
+  // Token NÃO configurado: mantém o chipDoEstado (não chega a olhar o bot).
+  assert.deepEqual(
+    chip({ configurado: false, fonte: 'nenhum' }, null),
+    { tom: 'neutro', rotulo: 'Não configurado' },
+  )
+  // Estado ainda a carregar (token/telegram null): neutro "verificando…".
+  assert.deepEqual(chip(null, null), { tom: 'neutro', rotulo: 'verificando…' })
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, null),
+    { tom: 'neutro', rotulo: 'verificando…' },
+  )
   void chamadas
 })
 
