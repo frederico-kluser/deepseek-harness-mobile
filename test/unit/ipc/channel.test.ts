@@ -901,3 +901,187 @@ describe('nada do que este canal escreve no log leva segredo em claro', () => {
     for (const l of linhas) assert.equal(l.message.includes(TOKEN), false)
   })
 })
+
+/* ========================================================================== */
+/* V2 — a politica minima de isId: trim + nao vazio + sem controlo + teto     */
+/* (EMENDA ONDA-1-IPC-ENVELOPE-STRING: from/chat sao STRING; a forma nao      */
+/* valida FORMATO de provedor nenhum — um snowflake do Discord, um id de      */
+/* Matrix, um `-100...` de grupo sao todos strings utilizaveis)               */
+/* ========================================================================== */
+
+describe('V2 — a politica minima de `from`/`chat` (isId)', () => {
+  it('um id de 64 caracteres passa; de 65 cai (MAX_ID_CHARS)', () => {
+    const ok = `{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"${'a'.repeat(64)}","chat":"1"}`
+    assert.deepEqual(parseIpcLine(ok, 'to-host'), {
+      ok: true,
+      message: { v: 2, type: 'intent', intent: 'emergency', requestId: 'r', from: 'a'.repeat(64), chat: '1' },
+    })
+    const estoura = `{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"${'a'.repeat(65)}","chat":"1"}`
+    assert.deepEqual(parseIpcLine(estoura, 'to-host'), { ok: false, reason: 'forma-invalida' })
+  })
+
+  it('carater de controlo em from OU chat e recusado (ruido de terminal nao viaja)', () => {
+    // Escapes JSON validos (BEL, CR, LF) que o JSON.parse converte em
+    // carateres de controlo reais — e o `hasControlChar` da politica isId
+    // recusa. Um `\n` dentro de um id partiria o enquadramento de linha (S1).
+    for (const escape of ['\\u0007', '\\r', '\\n']) {
+      const comFrom = `{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"${escape}","chat":"1"}`
+      assert.deepEqual(parseIpcLine(comFrom, 'to-host'), { ok: false, reason: 'forma-invalida' }, `from com ${escape}`)
+      const comChat = `{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"1","chat":"${escape}"}`
+      assert.deepEqual(parseIpcLine(comChat, 'to-host'), { ok: false, reason: 'forma-invalida' }, `chat com ${escape}`)
+    }
+  })
+
+  it('um id com espacos em volta passa (trim nao vazio) e viaja como veio', () => {
+    // A politica e "trim + nao vazio", nao "ja trimado": o codec VALIDA a
+    // forma (a normalizacao acontece na fronteira do provedor, no worker).
+    const linha = '{"v":2,"type":"intent","intent":"tunnel.status","requestId":"r","from":"  42  ","chat":"1"}'
+    assert.deepEqual(parseIpcLine(linha, 'to-host'), {
+      ok: true,
+      message: { v: 2, type: 'intent', intent: 'tunnel.status', requestId: 'r', from: '  42  ', chat: '1' },
+    })
+  })
+
+  it('o id vazio (ou so espacos) nao designa ninguem', () => {
+    assert.deepEqual(parseIpcLine('{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"","chat":"1"}', 'to-host'), {
+      ok: false,
+      reason: 'forma-invalida',
+    })
+  })
+})
+
+/* ========================================================================== */
+/* Tetos de transporte: requestId/nonce/mensagem/url/notify                   */
+/* ========================================================================== */
+
+describe('os tetos de transporte do canal', () => {
+  it('requestId: 64 passa, 65 cai, carater de controlo cai', () => {
+    const ok = `{"v":2,"type":"intent","intent":"tunnel.status","requestId":"${'r'.repeat(64)}","from":"1","chat":"1"}`
+    assert.equal(parseIpcLine(ok, 'to-host').ok, true)
+    const estoura = `{"v":2,"type":"intent","intent":"tunnel.status","requestId":"${'r'.repeat(65)}","from":"1","chat":"1"}`
+    assert.deepEqual(parseIpcLine(estoura, 'to-host'), { ok: false, reason: 'forma-invalida' })
+    const comControlo = '{"v":2,"type":"intent","intent":"tunnel.status","requestId":"r\\u0007","from":"1","chat":"1"}'
+    assert.deepEqual(parseIpcLine(comControlo, 'to-host'), { ok: false, reason: 'forma-invalida' })
+  })
+
+  it('nonce: 128 passa, 129 cai, vazio cai, carater de controlo cai (higiene de transporte, S5)', () => {
+    for (const nonce of ['x'.repeat(128), 'opaco-01J']) {
+      const linha = `{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":"${nonce}"}`
+      assert.equal(parseIpcLine(linha, 'to-host').ok, true, `nonce de ${String(nonce.length)} chars`)
+    }
+    const estoura = `{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":"${'x'.repeat(129)}"}`
+    assert.deepEqual(parseIpcLine(estoura, 'to-host'), { ok: false, reason: 'forma-invalida' })
+    assert.deepEqual(
+      parseIpcLine('{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":""}', 'to-host'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+    assert.deepEqual(
+      parseIpcLine('{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":"n\\u0007"}', 'to-host'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+  })
+
+  it('`error.message`: 4096 (o limite do Telegram) passa; 4097 cai; CR e controlo caem; LF e legitimo', () => {
+    const noLimite = { v: 2, type: 'error', code: 'INTERNAL', message: 'm'.repeat(4096) } as const
+    assert.deepEqual(parseIpcLine(serializeIpcMessage(noLimite, 'to-worker').trimEnd(), 'to-worker'), {
+      ok: true,
+      message: noLimite,
+    })
+    const acima = JSON.stringify({ v: 2, type: 'error', code: 'INTERNAL', message: 'm'.repeat(4097) })
+    assert.deepEqual(parseIpcLine(acima, 'to-worker'), { ok: false, reason: 'forma-invalida' })
+    assert.deepEqual(
+      parseIpcLine('{"v":2,"type":"error","code":"INTERNAL","message":"com\\r"}', 'to-worker'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+    assert.deepEqual(
+      parseIpcLine('{"v":2,"type":"error","code":"INTERNAL","message":"com\\u0007"}', 'to-worker'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+  })
+
+  it('`notify.texto`: 4097 cai e CR cai (o LF multilinha ja e coberto na paridade)', () => {
+    assert.deepEqual(
+      parseIpcLine(`{"v":2,"type":"notify","texto":"${'t'.repeat(4097)}"}`, 'to-worker'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+    assert.deepEqual(parseIpcLine('{"v":2,"type":"notify","texto":"com\\r"}', 'to-worker'), {
+      ok: false,
+      reason: 'forma-invalida',
+    })
+  })
+
+  it('a URL do tunel: 2048 passa, 2049 cai', () => {
+    // MAX_URL_CHARS = 2048: `https://` (8) + dominio (2036) + `.com` (4).
+    const url = `https://${'u'.repeat(2036)}.com`
+    assert.equal(url.length, 2048)
+    assert.deepEqual(
+      parseIpcLine(`{"v":2,"type":"state","state":"READY","seq":1,"expiresAt":1,"url":"${url}"}`, 'to-worker'),
+      { ok: true, message: { v: 2, type: 'state', state: 'READY', seq: 1, url, expiresAt: 1 } },
+    )
+    const acima = `https://${'u'.repeat(2037)}.com`
+    assert.equal(acima.length, 2049)
+    assert.deepEqual(
+      parseIpcLine(`{"v":2,"type":"state","state":"READY","seq":1,"expiresAt":1,"url":"${acima}"}`, 'to-worker'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+  })
+
+  it('`seq` tem de ser numero finito: null (o JSON nao tem NaN/Infinity), string ou booleano caem', () => {
+    for (const seq of ['null', '"9"', 'true']) {
+      assert.deepEqual(
+        parseIpcLine(`{"v":2,"type":"state","state":"STOPPED","seq":${seq}}`, 'to-worker'),
+        { ok: false, reason: 'forma-invalida' },
+        `seq=${seq}`,
+      )
+    }
+  })
+})
+
+/* ========================================================================== */
+/* A escrita tambem defende a linha: um valor que o contrato recusa NAO sai,  */
+/* e um BigInt (que o JSON.stringify nao sabe escrever) e recusado ANTES      */
+/* ========================================================================== */
+
+describe('a escrita recusa antes de emitir', () => {
+  it('um BigInt em `seq` e recusado como IPC_MESSAGE_INVALID (a validacao precede o stringify)', () => {
+    const invalida = { v: 2, type: 'state', state: 'STOPPED', seq: 1n } as unknown as IpcMessageToWorker
+    assert.throws(
+      () => serializeIpcMessage(invalida, 'to-worker'),
+      (error: unknown) => error instanceof IpcChannelError && error.code === 'IPC_MESSAGE_INVALID',
+    )
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA-COSTURA-5: `nonce.request` SEM tratador -> error INTERNAL (o        */
+/* respondedor fail-closed do proprio canal — CTL-023)                        */
+/* ========================================================================== */
+
+describe('nonce.request sem tratador montado: fail-closed e visivel', () => {
+  it('o canal responde error INTERNAL ecoando o requestId (sem nonce nao autoriza nada)', async () => {
+    const b = montar()
+    b.entrada.write('{"v":2,"type":"nonce.request","acao":"start","requestId":"req-sem-tratador"}\n')
+
+    await new Promise((resolve) => setImmediate(resolve))
+    const saida = b.escrito()
+    assert.ok(saida.includes('"type":"error"'), 'a resposta e um error')
+    assert.ok(saida.includes('"code":"INTERNAL"'), 'com INTERNAL (fail-closed)')
+    assert.ok(saida.includes('req-sem-tratador'), 'o requestId ecoado para o worker correlacionar')
+    assert.equal(b.canal.stats.received, 1, 'a linha valida foi recebida')
+    b.canal.dispose()
+  })
+
+  it('`error` com `requestId` presente round-tripa fiel (o requestId opcional do contrato)', () => {
+    const message: IpcMessageToWorker = {
+      v: 2,
+      type: 'error',
+      requestId: 'req-do-erro',
+      code: 'RATE_LIMITED',
+      message: 'devagar',
+    }
+    assert.deepEqual(parseIpcLine(serializeIpcMessage(message, 'to-worker').trimEnd(), 'to-worker'), {
+      ok: true,
+      message,
+    })
+  })
+})

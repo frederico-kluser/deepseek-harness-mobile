@@ -16,6 +16,7 @@ import { describe, it } from 'node:test'
 import {
   criarPonteDeNonce,
   criarSurfaceIpcBridge,
+  NONCE_REQUEST_TIMEOUT_MS,
   DEFAULT_PROVIDER_ID,
   montarEnvelopeDeIntent,
   ProvedorDesconhecidoError,
@@ -240,5 +241,177 @@ describe('worker/providers/registry — a ponte de nonce (EMENDA-COSTURA-5)', ()
     const ponte = criarPonteDeNonce({ log: loggerMudo(), time: new RelogioVazio(), ipc })
     void ponte.emitir('secret.rotate')
     assert.equal(enviados[0]?.acao, 'reset')
+  })
+})
+/* ========================================================================== */
+/* EMENDA ONDA-1-IPC-ENVELOPE-STRING: `pairingSuccess` da ponte monta o       */
+/* `pairing.success` STRING (V2) — os dois eixos SEM `Number(...)`            */
+/* ========================================================================== */
+
+describe('worker/providers/registry — pairingSuccess monta o envelope STRING (V2)', () => {
+  it('envia {v:2, type:pairing.success, from/chat string, pairedAt fiel} pelo canal', () => {
+    let enviado: Parameters<WorkerIpc['send']>[0] | undefined
+    const ipc: WorkerIpc = {
+      send: (m) => {
+        enviado = m
+        return true
+      },
+      log: () => undefined,
+      dispose: () => undefined,
+    }
+    const bridge = criarSurfaceIpcBridge(ipc)
+
+    bridge.pairingSuccess({
+      userKey: '1057992969437413409',
+      chatKey: '-1001234567890',
+      pairedAt: 1_700_000_000_000,
+    })
+
+    assert.deepEqual(enviado, {
+      v: 2,
+      type: 'pairing.success',
+      from: '1057992969437413409',
+      chat: '-1001234567890',
+      pairedAt: 1_700_000_000_000,
+    })
+    // A prova de que nao ha `Number(...)` na ponte: o deepEqual acima ja fixou
+    // a string INTACTA no canal — e o cast numerico da mesma snowflake trunca
+    // o valor (arredondaria para ...400), ou seja, uma conversao na ponte
+    // teria sido visivel. A string e o formato certo, por construcao.
+    assert.equal(String(Number('1057992969437413409')), '1057992969437413400', 'o cast numerico trunca')
+  })
+
+  it('best-effort (S4): o retorno do canal nao e observado — o aviso nao derruba a ponte', () => {
+    const ipc: WorkerIpc = {
+      send: () => false,
+      log: () => undefined,
+      dispose: () => undefined,
+    }
+    const bridge = criarSurfaceIpcBridge(ipc)
+    // `pairingSuccess` devolve void: o handshake e fire-and-forget; quem
+    // re-pareia depois re-envia. O que importa e NAO lancar.
+    assert.doesNotThrow(() =>
+      bridge.pairingSuccess({ userKey: '1', chatKey: '2', pairedAt: 1 }),
+    )
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA-COSTURA-5: os caminhos restantes da ponte de nonce                  */
+/* ========================================================================== */
+
+describe('worker/providers/registry — a ponte de nonce, caminhos de falha e de consumo', () => {
+  class RelogioVazio implements TimeSource {
+    agora = 0
+    now(): number {
+      return this.agora
+    }
+    async sleep(ms: number): Promise<void> {
+      this.agora += ms
+    }
+  }
+
+  it('a constante do timeout esta exportada (fail-closed: sem resposta a tempo, undefined)', () => {
+    assert.equal(NONCE_REQUEST_TIMEOUT_MS, 5_000)
+  })
+
+  it('acao SEM nonce (tunnel.down/status): avisa, NAO envia nada e resolve undefined', async () => {
+    const enviados: Array<{ type: string }> = []
+    const avisos: string[] = []
+    const ipc: WorkerIpc = {
+      send: (m) => {
+        enviados.push(m as { type: string })
+        return true
+      },
+      log: () => undefined,
+      dispose: () => undefined,
+    }
+    const log: WorkerLogger = {
+      debug: () => undefined,
+      info: () => undefined,
+      error: () => undefined,
+      warn: (mensagem: string) => void avisos.push(mensagem),
+    }
+    const ponte = criarPonteDeNonce({ log, time: new RelogioVazio(), ipc })
+
+    assert.equal(await ponte.emitir('tunnel.down'), undefined, 'nao ha nonce para reduzir exposicao (CTL-024)')
+    assert.equal(await ponte.emitir('tunnel.status'), undefined)
+    assert.equal(enviados.length, 0, 'nada atravessa o canal')
+    assert.equal(avisos.length, 2, 'o aviso diz que a acao nao exige nonce')
+    assert.match(avisos[0] ?? '', /sem nonce/u)
+  })
+
+  it('CANAL indisponivel (send false): resolve undefined JA, sem esperar o timeout', async () => {
+    const ipc: WorkerIpc = { send: () => false, log: () => undefined, dispose: () => undefined }
+    const relogio = new RelogioVazio()
+    const ponte = criarPonteDeNonce({ log: loggerMudo(), time: relogio, ipc })
+
+    assert.equal(await ponte.emitir('tunnel.up'), undefined, 'fail-closed imediato (CTL-023)')
+    assert.equal(relogio.agora, 0, 'o relogio NAO andou: nao houve espera')
+  })
+
+  it('um `error` com o requestId do pedido resolve undefined e CONSUME a mensagem', async () => {
+    const enviados: Array<{ requestId?: string }> = []
+    const ipc: WorkerIpc = {
+      send: (m) => {
+        enviados.push(m as { requestId?: string })
+        return true
+      },
+      log: () => undefined,
+      dispose: () => undefined,
+    }
+    const ponte = criarPonteDeNonce({ log: loggerMudo(), time: new RelogioVazio(), ipc })
+
+    const pedido = ponte.emitir('tunnel.up')
+    const requestId = enviados[0]?.requestId ?? ''
+    const consumido = ponte.onMessage({
+      v: 2,
+      type: 'error',
+      requestId,
+      code: 'RESTRICTED_MODE',
+      message: 'recusado',
+    })
+    assert.equal(consumido, true, 'o erro pertence ao pedido pendente: nao vai ao nucleo')
+    assert.equal(await pedido, undefined, 'o host recusou emitir: falha fechado JA')
+  })
+
+  it('um `nonce.issued` TARDIO (pedido ja resolvido) e consumido sem resolver ninguem', async () => {
+    const ipc: WorkerIpc = { send: () => true, log: () => undefined, dispose: () => undefined }
+    const relogio = new RelogioVazio()
+    const ponte = criarPonteDeNonce({ log: loggerMudo(), time: relogio, ipc })
+
+    const pedido = ponte.emitir('tunnel.up')
+    relogio.agora += 5_000
+    assert.equal(await pedido, undefined, 'o timeout resolveu primeiro')
+
+    // A resposta do host chega DEPOIS do timeout: tem de ser consumida (nao
+    // ir ao nucleo) e nao pode resolver nada — o pedido ja resolveu.
+    assert.equal(
+      ponte.onMessage({
+        v: 2,
+        type: 'nonce.issued',
+        acao: 'start',
+        requestId: 'req-qualquer',
+        nonce: 'tardio',
+        expiresAt: 1,
+      }),
+      true,
+      'resposta tardia e consumida',
+    )
+  })
+
+  it('uma mensagem que NAO e do nonce nao e consumida (segue o despacho normal)', () => {
+    const ponte = criarPonteDeNonce({
+      log: loggerMudo(),
+      time: new RelogioVazio(),
+      ipc: { send: () => true, log: () => undefined, dispose: () => undefined },
+    })
+    assert.equal(
+      ponte.onMessage({ v: 2, type: 'state', state: 'STOPPED', seq: 1 }),
+      false,
+      'o state nao diz respeito ao nonce',
+    )
+    // Um `error` SEM requestId tambem nao e do nonce (nao ha o que correlacionar).
+    assert.equal(ponte.onMessage({ v: 2, type: 'error', code: 'INTERNAL', message: 'x' }), false)
   })
 })

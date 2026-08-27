@@ -301,3 +301,72 @@ describe('MIGRACAO ADITIVA do pareamento numerico -> string (EMENDA ONDA-1-IPC-E
     assert.deepEqual(saida.pairing, { ownerUserId: '7', ownerChatId: '-1001', pairedAt: 0 })
   })
 })
+
+/* ========================================================================== */
+/* EMENDA ONDA-1-IPC-ENVELOPE-STRING: bordas da migracao ADITIVA — o legado   */
+/* numerico so migra o que nao perde precisao                                 */
+/* ========================================================================== */
+
+describe('a migracao aditiva NUNCA trunca um numero legado', () => {
+  it('um inteiro fora de Number.MAX_SAFE_INTEGER no legado e CORRUPCAO, nao truncagem silenciosa', () => {
+    // 2^53 nao e um inteiro seguro: `String(9007199254740992)` ainda acertaria,
+    // mas 2^53 + 1 ja colapsaria para 9007199254740992 — e a migracao nao pode
+    // adivinhar qual dos dois o disco tinha. Recusa-se: o dono inspeciona.
+    recusa(
+      '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":9007199254740993,"ownerChatId":1,"pairedAt":0}}',
+    )
+    recusa(
+      '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":1,"ownerChatId":9007199254740993,"pairedAt":0}}',
+    )
+  })
+
+  it('um numero NAO-inteiro no legado (1.5) e corrupcao — o piso de inteiro do formato v1 mantem-se', () => {
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":1.5,"ownerChatId":1,"pairedAt":0}}')
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":1,"ownerChatId":-100.5,"pairedAt":0}}')
+  })
+
+  it('`pairedAt` fracionado ou negativo no legado e corrupcao (as regras numericas de sempre)', () => {
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":1,"ownerChatId":1,"pairedAt":1.5}}')
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":1,"ownerChatId":1,"pairedAt":-1}}')
+  })
+
+  it('o chat legado ZERO (sem piso no eixo "onde") migra para "0"', () => {
+    const lido = parseStateDocument(
+      '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":1,"ownerChatId":0,"pairedAt":0}}',
+      FONTE,
+    )
+    assert.deepEqual(lido.pairing, { ownerUserId: '1', ownerChatId: '0', pairedAt: 0 })
+  })
+})
+
+describe('a migracao aditiva — o formato NOVO (string) e a politica do schema', () => {
+  it('um id string maior do que o teto do CODEX (64) e aceite no estado persistido', () => {
+    // O teto MAX_ID_CHARS e do TRANSPORTE (o codec IPC); o state.json e local
+    // e o normalizarEixoDoDono so exige trim + nao vazio — um id de provedor
+    // futuro pode ser comprido sem contaminar a linha IPC.
+    const longo = 'id-'.repeat(40) // 120 chars
+    const lido = parseStateDocument(
+      `{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":"${longo}","ownerChatId":"1","pairedAt":0}}`,
+      FONTE,
+    )
+    assert.equal(lido.pairing?.ownerUserId, longo)
+  })
+
+  it('a forma canonica (string) round-tripa pelo disco sem voltar a numero', () => {
+    const lido = parseStateDocument(
+      '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":"1057992969437413409","ownerChatId":"-1001234567890","pairedAt":0}}',
+      FONTE,
+    )
+    const reescrito = serializeStateDocument(lido)
+    assert.equal(reescrito.includes('"ownerUserId": "1057992969437413409"'), true)
+    assert.equal(reescrito.includes('"ownerUserId": 1057992969437413409'), false, 'nunca volta a numero')
+    assert.deepEqual(parseStateDocument(reescrito, FONTE).pairing, lido.pairing)
+  })
+})
+
+describe('bordas da versao do documento', () => {
+  it('version fracionada e corrupcao (a versao tem de ser inteiro >= 1)', () => {
+    recusa('{"version":1.5,"desiredState":"STOPPED"}')
+    recusa('{"version":0.5,"desiredState":"STOPPED"}')
+  })
+})

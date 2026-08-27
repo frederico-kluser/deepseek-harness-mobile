@@ -18,9 +18,10 @@ import assert from 'node:assert/strict'
 import { PassThrough, Writable } from 'node:stream'
 import { describe, it } from 'node:test'
 
-import type { IpcIntentMessage, IpcMessage, IpcMessageToWorker } from '../../../src/contracts/ipc.ts'
+import type { IpcIntentMessage, IpcMessage, IpcMessageToWorker, IpcParseResult } from '../../../src/contracts/ipc.ts'
 import { WORKER_IPC_ENV_MARK } from '../../../src/proc/env.ts'
 import {
+  createIpcLineDecoder,
   parseIpcLine as parseHost,
   serializeIpcMessage as serializeHost,
   validateIpcMessage as validateHost,
@@ -109,7 +110,9 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
    * Tabela deliberadamente larga: forma valida, forma quase-valida, e todas as
    * quatro razoes de recusa do contrato. Cada entrada corre nos DOIS sentidos.
    */
-  const LINHAS: readonly string[] = [
+  // Mutavel de proposito: as entradas de teto (64/128/4096 chars) e a URL
+  // no limite sao montadas dinamicamente a seguir ao literal.
+  const LINHAS: string[] = [
     // Validas em algum dos sentidos.
     JSON.stringify(INTENCAO),
     JSON.stringify({ ...INTENCAO, nonce: '01JNONCE' }),
@@ -181,7 +184,46 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     '{"v":2,"type":"nonce.issued","requestId":"r","nonce":"x","expiresAt":1}',
     '{"v":2,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x"}',
     '{"v":2,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":1,"extra":true}',
+    // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): bordas da politica minima de isId.
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"  42  ","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"\\u0007","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"1","chat":"\\r"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"a'.repeat(65)+'","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"1","chat":"a'.repeat(65)+'"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r'.repeat(65)+'","from":"1","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r\\u0007","from":"1","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":"x'.repeat(129)+'"}',
+    '{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":"n\\u0007"}',
+    '{"v":2,"type":"error","code":"INTERNAL","message":"com\\r"}',
+    '{"v":2,"type":"error","code":"INTERNAL","message":"com\\u0007"}',
+    '{"v":2,"type":"error","code":"INTERNAL","message":"x","requestId":""}',
+    '{"v":2,"type":"error","code":"INTERNAL","message":"x","requestId":"r\\u0007"}',
+    '{"v":2,"type":"notify","texto":"com\\r"}',
+    '{"v":2,"type":"state","state":"STOPPED","seq":null}',
+    // S4 para a versao ANTERIOR no fio: o envelope V1 numerico e descartado.
+    '{"v":1,"type":"intent","intent":"tunnel.up","requestId":"r","from":1,"chat":1}',
+    // EMENDA-COSTURA-5: `pairing.owner` (host -> worker) — valido e malformado.
+    '{"v":2,"type":"pairing.owner","from":"42","chat":"-1001","pairedAt":1}',
+    '{"v":2,"type":"pairing.owner","from":"1057992969437413409","chat":"-1001234567890","pairedAt":1}',
+    '{"v":2,"type":"pairing.owner","from":"1","chat":"2","pairedAt":1,"extra":true}',
+    '{"v":2,"type":"pairing.owner","from":1,"chat":"2","pairedAt":1}',
+    '{"v":2,"type":"pairing.owner","from":"  ","chat":"2","pairedAt":1}',
+    '{"v":2,"type":"pairing.owner","from":"1","chat":"\\u0007","pairedAt":1}',
+    '{"v":2,"type":"pairing.owner","from":"1","chat":"2","pairedAt":"amanha"}',
+    '{"v":2,"type":"pairing.owner","from":"1","chat":"b'.repeat(65)+'","pairedAt":1}',
   ]
+  // As linhas NO LIMITE dos tetos (64 chars de id, 128 de nonce, 4096 de
+  // mensagem, URL de 2048) — montadas em runtime para o literal nao ter
+  // linhas de quilometro de comprimento.
+  LINHAS.push(
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"' + 'a'.repeat(64) + '","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","nonce":"' + 'x'.repeat(128) + '"}',
+    '{"v":2,"type":"error","code":"INTERNAL","message":"' + 'm'.repeat(4096) + '"}',
+    '{"v":2,"type":"notify","texto":"' + 't'.repeat(4096) + '"}',
+    '{"v":2,"type":"state","state":"READY","seq":1,"expiresAt":1,"url":"https://' + 'u'.repeat(2036) + '.com"}',
+    '{"v":2,"type":"state","state":"READY","seq":1,"expiresAt":1,"url":"https://' + 'u'.repeat(2037) + '.com"}',
+  )
 
   const SENTIDOS: readonly IpcDirection[] = ['to-host', 'to-worker']
 
@@ -239,6 +281,31 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     // Duplicada por fronteira de modulo (o worker nao pode importar
     // `src/proc/env.ts`); presa por este teste em vez de por uma promessa.
     assert.equal(WORKER_IPC_ENV_VAR, WORKER_IPC_ENV_MARK)
+  })
+
+  it('os DOIS ACUMULADORES dao os MESMOS vereditos para a tabela inteira', () => {
+    // A paridade nao e so do parse: o enquadramento (linha partida, linha
+    // gigante, linha em branco) tambem esta duplicado por fronteira de modulo
+    // — e o gate tem de o prender. Cada linha da tabela entra com `\n`; o
+    // veredito dos dois acumuladores tem de ser identico, nos dois sentidos.
+    for (const direction of SENTIDOS) {
+      const host = createIpcLineDecoder({ direction })
+      const worker = createWorkerLineDecoder({ direction })
+      const vereditosHost: IpcParseResult[] = []
+      const vereditosWorker: IpcParseResult[] = []
+      for (const linha of LINHAS) {
+        vereditosHost.push(...host.push(`${linha}\n`))
+        vereditosWorker.push(...worker.push(`${linha}\n`))
+      }
+      assert.equal(vereditosWorker.length, vereditosHost.length, `contagem divergiu em ${direction}`)
+      for (let i = 0; i < vereditosHost.length; i += 1) {
+        assert.deepEqual(
+          vereditosWorker[i],
+          vereditosHost[i],
+          `o acumulador divergiu em ${direction} na entrada ${String(i)}`,
+        )
+      }
+    }
   })
 })
 
@@ -578,5 +645,114 @@ describe('S4 no worker: descarta a linha e sobrevive', () => {
     assert.equal(b.entrada.listenerCount('data'), 0)
     assert.equal(b.entrada.listenerCount('end'), 0)
     assert.equal(b.ipc.send(INTENCAO), false)
+  })
+})
+
+/* ========================================================================== */
+/* O acumulador do worker: ressincronizacao apos linha sem fim                 */
+/* ========================================================================== */
+
+describe('o acumulador do worker corta uma linha sem fim e ressincroniza', () => {
+  it('o estouro e reportado UMA vez, e a mensagem SEGUINTE ao \\n e processada', () => {
+    const decoder = createWorkerLineDecoder({ direction: 'to-worker', maxLineBytes: 64 })
+    assert.deepEqual(decoder.push('x'.repeat(100)), [{ ok: false, reason: 'forma-invalida' }])
+    assert.equal(decoder.pending, 0, 'o acumulador nao pode crescer sem limite')
+
+    // Mais lixo do mesmo estouro nao gera um segundo veredito (ressincronizando).
+    assert.deepEqual(decoder.push('y'.repeat(100)), [])
+    assert.equal(decoder.pending, 0)
+
+    // O `\n` fecha a linha morta; a mensagem seguinte e processada normalmente.
+    const boa = serializeWorkerIpcMessage({ v: 2, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }, 'to-worker')
+    const depois = decoder.push(`\n${boa}`)
+    assert.equal(depois.length, 1)
+    assert.equal(depois[0]?.ok, true)
+  })
+})
+
+/* ========================================================================== */
+/* Os absorvedores do worker: stderr avariado nao derruba o processo           */
+/* ========================================================================== */
+
+describe('o canal de DIAGNOSTICO avariado nao derruba o worker', () => {
+  it('`log()` engole uma escrita que LANCA (nao ha para onde registar o registo)', () => {
+    const entrada = new PassThrough()
+    const stdout = new PassThrough()
+    const stderr = new Writable({
+      write(_chunk, _encoding, callback): void {
+        callback(new Error('EPIPE no stderr'))
+      },
+    })
+    const ipc = createWorkerIpc({
+      input: entrada,
+      output: stdout,
+      diagnostics: stderr,
+      onMessage: (): void => {},
+      onDisconnect: (): void => {},
+    })
+    assert.doesNotThrow(() => ipc.log('o host morreu'))
+    assert.equal(stdout.read()?.toString() ?? '', '', 'o stdout continua limpo (S2)')
+  })
+
+  it("um 'error' no stderr e ABSORVIDO — sem ouvinte, o EventEmitter lancaria no processo", () => {
+    const b = montar()
+    assert.doesNotThrow(() => b.entrada.emit('error', new Error('x')))
+    // O stderr do canal (PassThrough) emitir 'error' sem ouvinte lancaria:
+    assert.doesNotThrow(() => (b.ipc as unknown as { log(m: string): void }).log('ok'))
+  })
+})
+
+/* ========================================================================== */
+/* `bindWorkerIpcToProcess`: o stderr do PROCESSO avariado e o stdin com       */
+/* erro continuam a terminar pelo caminho previsto (dead-man's switch)         */
+/* ========================================================================== */
+
+describe('bindWorkerIpcToProcess em condicoes de falha do proprio processo', () => {
+  it('um `stderr` que LANCA na escrita nao impede a terminacao (EXIT=0)', async () => {
+    const entrada = new PassThrough()
+    const saidas: number[] = []
+    const stderrAvariado = {
+      on: (): void => {},
+      write: (): string => {
+        throw new Error('EPIPE ao escrever no stderr')
+      },
+    }
+    const proc = {
+      stdin: entrada,
+      stdout: new PassThrough(),
+      stderr: stderrAvariado,
+      env: { [WORKER_IPC_ENV_VAR]: '1' },
+      exit: (code: number): void => {
+        saidas.push(code)
+      },
+    } as unknown as NodeJS.Process
+
+    bindWorkerIpcToProcess(proc, { onMessage: (): void => {} })
+    entrada.end()
+    await flush()
+    // O diagnostico e OPCIONAL; a terminacao NAO. O worker vai-se embora
+    // mesmo sem conseguir explicar-se.
+    assert.deepEqual(saidas, [DEAD_MANS_SWITCH_EXIT_CODE])
+  })
+
+  it('um ERRO no stdin do processo tambem termina (o host desapareceu)', async () => {
+    const entrada = new PassThrough()
+    const saidas: number[] = []
+    const proc = {
+      stdin: entrada,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      env: { [WORKER_IPC_ENV_VAR]: '1' },
+      exit: (code: number): void => {
+        saidas.push(code)
+      },
+    } as unknown as NodeJS.Process
+
+    bindWorkerIpcToProcess(proc, { onMessage: (): void => {} })
+    entrada.emit('error', new Error('ECONNRESET no pipe do host'))
+    await flush()
+    // `onInputError` do canal e o ouvinte do proprio switch disparam os dois —
+    // o `terminar` e de UMA vez, e o codigo de saida e o do dead-man's switch.
+    assert.deepEqual(saidas, [DEAD_MANS_SWITCH_EXIT_CODE])
   })
 })

@@ -809,3 +809,157 @@ describe('session.issue com linkToken (Onda 2): o link ?key= do bot', () => {
     assert.ok(!tudoLog.includes('?key='), 'a forma ?key= nao aparece em nenhum log')
   })
 })
+
+/* ========================================================================== */
+/* V2 — requestedBy `telegram:<string>`: a identidade chega ao controlador    */
+/* como STRING, com a precisao inteira da snowflake (EMENDA ONDA-1-           */
+/* IPC-ENVELOPE-STRING: o cast numerico da V1 truncaria em 2^53)              */
+/* ========================================================================== */
+
+import type { ControlAction, ControlIntent, ControlResultado, Nonce } from '../../../src/contracts/control.ts'
+import type { ControladorSnapshot, TunnelController } from '../../../src/control/controller.ts'
+
+/** Controlador duble que REGISTA o ControlIntent e decide "trabalho lento". */
+class ControladorRegistrador implements TunnelController {
+  readonly intents: ControlIntent[] = []
+  private readonly falhaPosAck: boolean
+
+  constructor(falhaPosAck = false) {
+    this.falhaPosAck = falhaPosAck
+  }
+
+  decidirSincrono(pedido: ControlIntent): ControlResultado | null {
+    this.intents.push(pedido)
+    // `null` = trabalho lento: o ack sai JA e o despacho corre na fila.
+    return null
+  }
+
+  despachar(pedido: ControlIntent): Promise<ControlResultado> {
+    this.intents.push(pedido)
+    if (this.falhaPosAck) return Promise.reject(new Error('falha a subir o tunel (disco)'))
+    return Promise.resolve({ estado: 'STARTING', idempotente: false })
+  }
+
+  emitirNonce(action: ControlAction): Nonce {
+    void action
+    return { valor: 'nonce-duble', expiresAt: 1_000 }
+  }
+
+  snapshot(): ControladorSnapshot {
+    return { state: 'STOPPED', attempts: 0, seq: 0 }
+  }
+
+  dispose(): void {}
+}
+
+describe('V2: `requestedBy` e `telegram:<string>` com a precisao inteira', () => {
+  it('tunnel.up: requestedBy leva a snowflake INTACTA, action/requestId/nonce/at ecoados', () => {
+    const clock = new FakeClock(1_000)
+    const controlador = new ControladorRegistrador()
+    const responder = criarRespondedorIpc({
+      controller: controlador,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    const resposta = responder(
+      intent({ intent: 'tunnel.up', requestId: 'req-v2', from: '1057992969437413409', nonce: 'nonce-opaco' }),
+    )
+
+    assert.equal(resposta.type, 'ack')
+    assert.equal((resposta as { result?: string }).result, 'accepted', 'trabalho lento: aceita ja')
+    const controlIntent = controlador.intents[0]
+    assert.ok(controlIntent !== undefined, 'o controlador recebeu a intencao')
+    assert.equal(controlIntent.requestedBy, 'telegram:1057992969437413409', 'a string completa, sem truncar')
+    assert.equal(controlIntent.requestedBy.includes('1057992969437413400'), false, 'o cast numerico da V1 teria truncado')
+    assert.equal(controlIntent.action, 'start')
+    assert.equal(controlIntent.requestId, 'req-v2')
+    assert.equal(controlIntent.nonce, 'nonce-opaco', 'o nonce viaja opaco (S5)')
+    assert.equal(controlIntent.at, 1_000, 'o relogio da superficie e o injetado')
+  })
+
+  it('tunnel.down: requestedBy e `telegram:<string>` tambem no eixo que reduz exposicao', () => {
+    const clock = new FakeClock(1_000)
+    const controlador = new ControladorRegistrador()
+    const responder = criarRespondedorIpc({
+      controller: controlador,
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    responder(intent({ intent: 'tunnel.down', requestId: 'req-down-v2', from: '42', chat: '-1001234567890' }))
+
+    assert.equal(controlador.intents[0]?.requestedBy, 'telegram:42')
+  })
+
+  it('a re-verificacao de identidade (S6) recebe from/chat STRING exatos', () => {
+    const clock = new FakeClock(1_000)
+    const recebidos: Array<{ from: string; chat: string }> = []
+    const responder = criarRespondedorIpc({
+      controller: undefined,
+      modoTunel: true,
+      pareado: (from, chat) => {
+        recebidos.push({ from, chat })
+        return false
+      },
+      audit: { append: () => undefined },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    responder(intent({ intent: 'emergency', from: '1057992969437413409', chat: '-1001234567890' }))
+
+    assert.deepEqual(recebidos, [{ from: '1057992969437413409', chat: '-1001234567890' }])
+  })
+
+  it('o audit da identidade recusada carrega o from STRING inteiro (CTL-029)', () => {
+    const clock = new FakeClock(1_000)
+    const auditoria: AuditEvent[] = []
+    const responder = criarRespondedorIpc({
+      controller: undefined,
+      modoTunel: true,
+      pareado: () => false,
+      audit: { append: (evento) => auditoria.push(evento) },
+      log: createFakeLogger()('r'),
+      agora: () => clock.now(),
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    responder(intent({ intent: 'emergency', from: '1057992969437413409', chat: '1' }))
+
+    assert.deepEqual(auditoria.map((e) => e.evento), ['tunel_intent_nao_pareado:telegram:1057992969437413409'])
+  })
+
+  it('o despacho POS-ACK que rejeita e logado — o ack ja saiu e o processo segue (F4)', async () => {
+    const servico = createFakeLogger()
+    const responder = criarRespondedorIpc({
+      controller: new ControladorRegistrador(true),
+      modoTunel: true,
+      pareado: () => true,
+      audit: { append: () => undefined },
+      log: servico('r'),
+      agora: () => 1_000,
+      reemitirEstado: () => undefined,
+      aposEmergencia: () => undefined,
+    })
+
+    const resposta = responder(intent({ requestId: 'req-pos-ack' }))
+    assert.equal(resposta.type, 'ack', 'o ack sai NO TICK — o contrato nao espera o trabalho lento')
+    assert.equal((resposta as { result?: string }).result, 'accepted')
+    await flush()
+    assert.equal(servico.has('error', 'falha no despacho pos-ack de start'), true, 'a falha e registada, nao engolida')
+  })
+})
