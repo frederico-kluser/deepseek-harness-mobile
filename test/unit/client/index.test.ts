@@ -660,3 +660,119 @@ test('apiPost: corpo ilegível usa o status; erro 500 do servidor propaga status
   void chamadas
   void chamadas2
 })
+
+
+/**
+ * Onda 2 — provider-aware: o mapa local de rótulos escolhe por provedor e cai
+ * no telegram quando o valor está ausente/desconhecido (o host ainda não emite
+ * o campo `provider` — o fallback é o contrato desta onda).
+ */
+test('bundle: rotulosDoProvider — labels por provider e fallback telegram', { skip: BUNDLE_AUSENTE }, () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const rotulos = modulo.rotulosDoProvider as (p?: unknown) => Record<string, unknown>
+
+  // Telegram (o default): os literais atuais.
+  const tel = rotulos('telegram')
+  assert.equal(tel['botFather'], '@BotFather')
+  assert.equal(tel['tokenVar'], 'TELEGRAM_BOT_TOKEN')
+  assert.equal(tel['rotuloCampoToken'], 'Token do bot (@BotFather)')
+  const criacaoTel = tel['criacao'] as string[]
+  assert.ok(
+    Array.isArray(criacaoTel) && criacaoTel.some((passo) => passo.includes('/newbot')),
+    'os passos de criação do telegram devem incluir /newbot',
+  )
+
+  // Discord: rótulos próprios (genéricos, apontam para a doc oficial).
+  const dis = rotulos('discord')
+  assert.equal(dis['tokenVar'], 'DISCORD_BOT_TOKEN')
+  assert.equal(dis['naConversa'], 'No Discord, envia:')
+  assert.equal(dis['rotuloCampoToken'], 'Token do bot (Developer Portal)')
+  const criacaoDis = dis['criacao'] as string[]
+  assert.ok(criacaoDis.some((s) => s.includes('Developer Portal')), 'os passos de criação do discord devem apontar para o Developer Portal')
+
+  // Fallback: ausente (undefined/null) e desconhecido → telegram.
+  assert.equal(rotulos(undefined)['tokenVar'], 'TELEGRAM_BOT_TOKEN', 'sem provider → telegram')
+  assert.equal(rotulos(null)['tokenVar'], 'TELEGRAM_BOT_TOKEN', 'provider null → telegram')
+  assert.equal(rotulos('signal')['tokenVar'], 'TELEGRAM_BOT_TOKEN', 'provider desconhecido → telegram')
+  void chamadas
+})
+
+/**
+ * Onda 2 — o consumo do campo `provider` do GET /telegram é OPCIONAL e
+ * defensivo: `normalizarProvider` é a função que o painel usa para ler o campo
+ * quando o host o emitir — só 'telegram'/'discord' passam; qualquer outro
+ * valor (incl. ausente) cai no 'telegram'.
+ */
+test('bundle: normalizarProvider — campo provider opcional com default telegram', { skip: BUNDLE_AUSENTE }, () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const normalizar = modulo.normalizarProvider as (v: unknown) => string
+
+  assert.equal(normalizar('telegram'), 'telegram')
+  assert.equal(normalizar('discord'), 'discord')
+  // Ausente / tipo errado / valor desconhecido → default telegram.
+  assert.equal(normalizar(undefined), 'telegram')
+  assert.equal(normalizar(null), 'telegram')
+  assert.equal(normalizar('signal'), 'telegram')
+  assert.equal(normalizar(42), 'telegram')
+  void chamadas
+})
+
+/**
+ * Onda 2 — o chip do cabeçalho aceita o provider (3.º argumento, opcional,
+ * default 'telegram') e os estados ALCANÇÁVEIS não mudam com ele: o estado do
+ * bot (Online/Offline) é provider-agnóstico por construção, e o rótulo de env
+ * alcançável ('Env manda') é estático. O rótulo da variável de ambiente por
+ * provider (tokenVar) é verificado no teste do mapa (`rotulosDoProvider`).
+ */
+test('bundle: chipDoBot aceita o provider sem mudar os estados alcançáveis', { skip: BUNDLE_AUSENTE }, () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const chip = modulo.chipDoBot as (
+    token: unknown,
+    telegrama: unknown,
+    provider?: unknown,
+  ) => { tom: string; rotulo: string; detalhe?: string }
+
+  // Env a mandar + token não configurado → 'Env manda', igual p/ qualquer provider.
+  assert.deepEqual(
+    chip({ configurado: false, fonte: 'env' }, null, 'discord'),
+    { tom: 'aviso', rotulo: 'Env manda', detalhe: 'sem token até remover a variável' },
+    'provider discord não muda o rótulo alcançável de env',
+  )
+  assert.deepEqual(
+    chip({ configurado: false, fonte: 'env' }, null),
+    { tom: 'aviso', rotulo: 'Env manda', detalhe: 'sem token até remover a variável' },
+    'sem provider → mesmo rótulo (regressão zero)',
+  )
+  // Online/Offline NÃO mudam com o provider (o estado do bot é agnóstico).
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, { online: true }, 'discord'),
+    { tom: 'ok', rotulo: 'Online', detalhe: 'secrets' },
+  )
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'secrets' }, { online: false, motivo: 'sem-pareamento' }, 'discord'),
+    { tom: 'aviso', rotulo: 'Offline', detalhe: 'sem-pareamento' },
+  )
+  void chamadas
+})
+
+/**
+ * Onda 2 — os rótulos do discord viajam no bundle (o mapa local é
+ * provider-aware): a variável de ambiente, o canal de criação e a instrução de
+ * pareamento do discord constam ao lado dos literais do telegram (o fallback).
+ */
+test('bundle: os rótulos do discord estão no bundle (mapa provider-aware)', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  assert.ok(codigo.includes('DISCORD_BOT_TOKEN'), 'o bundle deve conter a variável de ambiente do discord')
+  assert.ok(codigo.includes('Developer Portal'), 'o bundle deve conter o canal de criação do discord')
+  assert.ok(codigo.includes('No Discord, envia'), 'o bundle deve conter a instrução de pareamento do discord')
+
+  // Os literais do telegram (o fallback) continuam intactos.
+  assert.ok(codigo.includes('TELEGRAM_BOT_TOKEN'), 'o bundle deve continuar a conter a variável do telegram')
+  assert.ok(codigo.includes('@BotFather'), 'o bundle deve continuar a conter o @BotFather')
+  assert.ok(codigo.includes('No Telegram, envia'), 'o bundle deve continuar a conter a instrução do telegram')
+})
+

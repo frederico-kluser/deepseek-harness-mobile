@@ -12,7 +12,8 @@
  * passo atual fica aberto; os concluídos colapsam em `✓`):
  *   1. "Passo 1 de 3 · Criar o bot" — sem token: o formulário do token
  *      (`POST /token` com CSRF) + `<details>` "Como criar o bot do zero"
- *      (@BotFather); erro de token com a ação "Revisar token".
+ *      (os passos de criação do PROVEDOR ATIVO — telegram: @BotFather;
+ *      discord: Developer Portal); erro de token com a ação "Revisar token".
  *   2. "Passo 2 de 3 · Parear" — configurado e NÃO pareado: CTA "Gerar código",
  *      código de 6 dígitos em caixa monospace espaçada + "Copiar", countdown
  *      `expira em m:ss` + "Gerar novo", uma instrução `/parear`, e o status ao
@@ -23,6 +24,13 @@
  *      green "não encontrável" só com getMe real).
  * O estado baseia-se em `GET /token-state` + `GET /telegram` + `GET /pair-state`
  * (polling de ~5s; sondagem de pareamento a cada ~3s).
+ *
+ * PROVIDER-AWARE: os rótulos de onboarding (passos de criação, canal do
+ * provedor, variável de ambiente do token) vivem num mapa local por provedor
+ * (`telegram`/`discord`, fallback `telegram` — ver `rotulosDoProvider`). O
+ * provedor ATIVO vem do campo `provider` do GET /telegram QUANDO o host o
+ * emitir (`normalizarProvider`); hoje o host ainda não o emite e o painel usa
+ * o default `telegram` — nada funcional depende do campo nesta onda.
  *
  * SEGURANÇA: o token/segredo NUNCA entra neste bundle. O `@handle` (devolvido
  * pela rota quando o `getMe` o confirmou) é a única informação do bot aqui — e
@@ -199,6 +207,11 @@ interface EstadoTelegrama {
   readonly online: boolean
   readonly motivo?: string
   readonly handle?: string
+  /**
+   * O provedor ATIVO quando o host o emitir (campo OPCIONAL nesta onda: o
+   * host ainda não o envia — o painel cai no default 'telegram').
+   */
+  readonly provider?: TipoProvider
 }
 
 /** O estado do pareamento devolvido por GET /pair-state. */
@@ -247,10 +260,10 @@ type EstadoChip =
   | { readonly tom: 'aviso'; readonly rotulo: string; readonly detalhe?: string }
   | { readonly tom: 'neutro'; readonly rotulo: string; readonly detalhe?: string }
 
-function chipDoEstado(token: EstadoDoToken | null): EstadoChip {
+function chipDoEstado(token: EstadoDoToken | null, provider: TipoProvider): EstadoChip {
   if (token === null) return { tom: 'neutro', rotulo: 'verificando…' }
   if (token.fonte === 'env') {
-    if (token.configurado) return { tom: 'aviso', rotulo: 'Configurado via env', detalhe: 'TELEGRAM_BOT_TOKEN manda' }
+    if (token.configurado) return { tom: 'aviso', rotulo: 'Configurado via env', detalhe: `${rotulosDoProvider(provider).tokenVar} manda` }
     return { tom: 'aviso', rotulo: 'Env manda', detalhe: 'sem token até remover a variável' }
   }
   if (token.configurado) return { tom: 'ok', rotulo: 'Configurado', detalhe: token.fonte }
@@ -268,12 +281,15 @@ function chipDoEstado(token: EstadoDoToken | null): EstadoChip {
  *  - token configurado E `/telegram` online → verde "Online" (detalhe: `@handle`
  *    quando o bot tiver username, senão a fonte do token);
  *  - token configurado E `/telegram` offline → aviso "Offline" com o `motivo`
- *    devolvido pela rota (`sem-chave` / `sem-pareamento`) quando presente.
+ *    devolvido pela rota (`sem-chave` / `sem-pareamento`) quando presente;
+ *  - o `<provider>` (opcional, default 'telegram') só troca o rótulo da
+ *    variável de ambiente no detalhe de env — o estado do bot é
+ *    provider-agnóstico (Online/Offline).
  * Exportada para o teste de smoke exercitar os três estados sem montar React.
  */
-export function chipDoBot(token: EstadoDoToken | null, telegrama: EstadoTelegrama | null): EstadoChip {
+export function chipDoBot(token: EstadoDoToken | null, telegrama: EstadoTelegrama | null, provider: TipoProvider = 'telegram'): EstadoChip {
   if (token === null) return { tom: 'neutro', rotulo: 'verificando…' }
-  if (!token.configurado) return chipDoEstado(token)
+  if (!token.configurado) return chipDoEstado(token, provider)
   if (telegrama === null) return { tom: 'neutro', rotulo: 'verificando…' }
   if (telegrama.online) {
     const detalhe = telegrama.handle !== undefined && telegrama.handle.length > 0 ? `@${telegrama.handle}` : token.fonte
@@ -316,40 +332,166 @@ const COMANDOS_ESSENCIAIS: readonly BlocoDeComando[] = [
 ]
 
 /* ========================================================================== */
-/* Os passos do @BotFather (cartão "Como criar o bot", só não-configurado)    */
+/* Rótulos por provedor de mensageria (onboarding provider-aware)             */
 /* ========================================================================== */
 
 /**
- * Como criar um bot novo via @BotFather, passo a passo. Mantido como dados
- * planos (sem JSX) para o painel renderizar como uma lista numerada simples —
- * o cartão aparece apenas quando NÃO há token configurado.
+ * O provedor de mensageria ATIVO do host. O host AINDA não emite o campo
+ * `provider` no GET /telegram (a paridade vem na onda do host); quando emitir,
+ * o painel consome-o via {@link normalizarProvider} — sem ele, `'telegram'` é
+ * o default (e o único provedor real hoje).
  */
-const PASSOS_BOTFATHER: readonly string[] = [
-  'Abra o Telegram e converse com @BotFather.',
-  'Envie /newbot.',
-  'Dê um nome para o bot (ex.: "Meu dsh-messenger").',
-  'Dê um username que termine em `bot` (5–32 caracteres, A-Za-z0-9_, ex.: `meu_dsh_messenger_bot`).',
-  'O BotFather responde com um token no formato `<número>:<segredo>` — copie-o.',
-  'Cole o token no campo abaixo e clique em "Salvar bot".',
-]
-
-/** Nota curta mostrada no fim do cartão do @BotFather. */
-const NOTA_BOTFATHER = 'Se precisar trocar o token depois, use /token no @BotFather para revogar e gerar outro.'
+export type TipoProvider = 'telegram' | 'discord'
 
 /**
- * Nota OPCIONAL do cartão "Como criar o bot": a privacidade por desenho. Como o
- * plugin nunca mexeu no `@username`, o dono é quem decide se remove o handle no
- * @BotFather — sem `@username` o bot deixa de aparecer na busca do Telegram.
+ * Os rótulos de ONBOARDING por provedor — o mapa local do client, com fallback
+ * 'telegram' (ver {@link rotulosDoProvider}). O passo 1 ("Criar o bot") e todo
+ * texto que cita o canal de criação, a variável de ambiente do token ou a
+ * conversa do provedor saem daqui. Os valores do telegram são os literais de
+ * sempre; os do discord são GENÉRICOS apontando para a documentação oficial
+ * (a Onda 3/6 refina os textos exatos). Mantidos como strings LITERAIS (não
+ * compostas) para o smoke do bundle verificar a fidelidade por substring.
  *
- * FONTE (remover username via BotFather /setusername): a documentação do
- * BotFather confirma que o comando `/setusername` é o ponto de edição/remoção
- * do `@username` de um bot (em vez de tratar `username` como fixo e permanente)
- * — ver https://www.grambots.com/bots/botfather e
- * https://cnvrse.com/what-is-botfather . Como o prompt de remoção do BotFather
- * pode variar, o passo é escrito de forma conservadora (não inventa prompts
- * exatos): "no @BotFather, em /setusername, remova o username".
+ * Placeholders de render: `{codigo}`, `{ref}` e `{handle}` são substituídos
+ * no momento de montar a frase (ver os pontos de uso).
  */
-const NOTA_BOTFATHER_PRIVADO = 'Opcional — bot privado: remova o username do bot no @BotFather para ele não aparecer na busca do Telegram.'
+export interface RotulosDoProvider {
+  /** O canal/portal onde se cria o bot do provedor (ex.: `@BotFather`). */
+  readonly botFather: string
+  /** A variável de ambiente do token do provedor. */
+  readonly tokenVar: string
+  /** O placeholder do campo do token. */
+  readonly tokenPlaceholder: string
+  /** O texto do formulário do Passo 1 ("Cole o token…"). */
+  readonly coleToken: string
+  /** O rótulo do campo do token. */
+  readonly rotuloCampoToken: string
+  /** O loading do botão "Salvar bot" (ex.: "A conectar ao Telegram…"). */
+  readonly conectando: string
+  /** Os passos numerados do cartão "Como criar o bot do zero". */
+  readonly criacao: readonly string[]
+  /** Nota curta do fim do cartão de criação (trocar/revogar o token). */
+  readonly notaCriacao: string
+  /** Nota OPCIONAL de bot privado do cartão de criação. */
+  readonly notaPrivado: string
+  /** Erro 400 de formato (ex.: "Formato errado. O token vem assim…"). */
+  readonly formatoInvalido: string
+  /** Erro 422 — o provedor recusou o token. */
+  readonly tokenRecusado: string
+  /** Aviso 409 — a variável de ambiente do provedor manda. */
+  readonly envManda: string
+  /** A linha curta antes do código ("No Telegram, envia:"). */
+  readonly naConversa: string
+  /** A instrução final do pareamento; placeholders `{codigo}` e `{ref}`. */
+  readonly parearNoBot: string
+  /** O intro da aba ("Acesso remoto ao Harness pelo Telegram…"). */
+  readonly acessoIntro: string
+  /** Aviso de descoberta com handle; placeholder `{handle}`. */
+  readonly encontravel: string
+  /** Badge "não encontrável na busca". */
+  readonly naoEncontravel: string
+  /** Os passos de remoção do username (cartão Privacidade). */
+  readonly passosRemoverUsername: readonly string[]
+  /** Nota "Sem username o bot deixa de aparecer…"; placeholder `{handle}`. */
+  readonly semUsernameNota: string
+  /** O texto do `<details>` "E minha conversa?" (checkpoint 3). */
+  readonly ckpt3Conversas: string
+}
+
+/** Telegram — os literais atuais, verbatim (a fonte do fallback). */
+const ROTULOS_TELEGRAM: RotulosDoProvider = Object.freeze({
+  botFather: '@BotFather',
+  tokenVar: 'TELEGRAM_BOT_TOKEN',
+  tokenPlaceholder: '1234567890:AAA…',
+  coleToken: 'Cole o token que o @BotFather te entregou ao criar o bot. Fica guardado seguro nesta máquina.',
+  rotuloCampoToken: 'Token do bot (@BotFather)',
+  conectando: 'A conectar ao Telegram…',
+  criacao: [
+    'Abra o Telegram e converse com @BotFather.',
+    'Envie /newbot.',
+    'Dê um nome para o bot (ex.: "Meu dsh-messenger").',
+    'Dê um username que termine em `bot` (5–32 caracteres, A-Za-z0-9_, ex.: `meu_dsh_messenger_bot`).',
+    'O BotFather responde com um token no formato `<número>:<segredo>` — copie-o.',
+    'Cole o token no campo abaixo e clique em "Salvar bot".',
+  ],
+  notaCriacao: 'Se precisar trocar o token depois, use /token no @BotFather para revogar e gerar outro.',
+  notaPrivado: 'Opcional — bot privado: remova o username do bot no @BotFather para ele não aparecer na busca do Telegram.',
+  formatoInvalido: 'Formato errado. O token vem assim: 123456:aaaa… (número, dois pontos, segredo).',
+  tokenRecusado: 'O Telegram não aceitou este token. Veja no @BotFather (/newbot) e tira outro.',
+  envManda: 'A variável TELEGRAM_BOT_TOKEN do ambiente manda; remova-a ou use o token dela.',
+  naConversa: 'No Telegram, envia:',
+  parearNoBot: 'No Telegram, envia: /parear {codigo} no {ref} — ou só /parear e o bot pede o código',
+  acessoIntro: 'Acesso remoto ao Harness pelo Telegram — sem login no túnel.',
+  encontravel: 'O bot é encontrável na busca do Telegram como @{handle}. Se não quiser isso, remova o username:',
+  naoEncontravel: 'Não encontrável na busca ✓ — ninguém acha o bot no Telegram.',
+  passosRemoverUsername: [
+    'No Telegram, abra a conversa com @BotFather.',
+    'Envie /setusername e escolha o teu bot na lista.',
+    'Remova o username (a opção "delete current username"/"remover username").',
+  ],
+  semUsernameNota: 'Sem username o bot deixa de aparecer na busca e o link t.me/@{handle} morre — a conversa já aberta e o pareamento continuam a funcionar.',
+  ckpt3Conversas: 'As tuas conversas com o bot ficam neste aparelho e no Telegram, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.',
+})
+
+/** Discord — textos GENÉRICOS apontando para a documentação oficial (discord.com/developers); a Onda 3/6 refina os passos exatos. */
+const ROTULOS_DISCORD: RotulosDoProvider = Object.freeze({
+  botFather: 'o Developer Portal',
+  tokenVar: 'DISCORD_BOT_TOKEN',
+  tokenPlaceholder: 'cole o token do bot aqui',
+  coleToken: 'Cole o token do bot que criaste no Developer Portal (discord.com/developers/applications). Fica guardado seguro nesta máquina.',
+  rotuloCampoToken: 'Token do bot (Developer Portal)',
+  conectando: 'A conectar ao Discord…',
+  criacao: [
+    'Abra o Developer Portal do Discord (discord.com/developers/applications).',
+    'Crie uma aplicação nova e entre na secção "Bot".',
+    'Dê um nome para o bot (ex.: "Meu dsh-messenger").',
+    'Em "Token", toque em "Reset Token" para gerar o token do bot — copie-o e não o mostres a ninguém.',
+    'Cole o token no campo abaixo e clique em "Salvar bot".',
+  ],
+  notaCriacao: 'Se precisar trocar o token depois, gere um novo no Developer Portal ("Reset Token") — o antigo deixa de valer.',
+  notaPrivado: 'Opcional — bot privado: no Developer Portal, desative "Public Bot" para o bot não poder ser adicionado por terceiros.',
+  formatoInvalido: 'Formato errado. O token do Discord é uma cadeia longa sem dois pontos — cola-a inteira.',
+  tokenRecusado: 'O Discord não aceitou este token. Gere um novo no Developer Portal ("Reset Token") e tenta de novo.',
+  envManda: 'A variável DISCORD_BOT_TOKEN do ambiente manda; remova-a ou use o token dela.',
+  naConversa: 'No Discord, envia:',
+  parearNoBot: 'No Discord, envia: /parear {codigo} no {ref} — ou só /parear e o bot pede o código',
+  acessoIntro: 'Acesso remoto ao Harness pelo Discord — sem login no túnel.',
+  encontravel: 'O bot é encontrável na busca do Discord como @{handle}. Se não quiser isso, restrinja o acesso:',
+  naoEncontravel: 'Não encontrável na busca ✓ — ninguém adiciona o bot a servidores novos.',
+  passosRemoverUsername: [
+    'No Developer Portal, abra a aplicação e a secção "Bot".',
+    'Desative "Public Bot" — o bot deixa de poder ser adicionado a servidores novos.',
+    'Confirme em "Save Changes" (as alterações valem na hora).',
+  ],
+  semUsernameNota: 'Sem o bot público, ele deixa de ser adicionado a novos servidores — as conversas já abertas e o pareamento continuam a funcionar.',
+  ckpt3Conversas: 'As tuas conversas com o bot ficam neste aparelho e no Discord, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.',
+})
+
+const ROTULOS_POR_PROVIDER: Readonly<Record<TipoProvider, RotulosDoProvider>> = {
+  telegram: ROTULOS_TELEGRAM,
+  discord: ROTULOS_DISCORD,
+}
+
+/**
+ * Os rótulos do provedor ATIVO, com fallback 'telegram': um valor ausente ou
+ * desconhecido cai no telegram — o único provedor real hoje (um campo
+ * `provider` de outra onda nunca derruba o painel). Exportada para o teste
+ * exercitar a escolha por provedor e o fallback sem montar React.
+ */
+export function rotulosDoProvider(provider?: TipoProvider | null): RotulosDoProvider {
+  return provider === 'telegram' || provider === 'discord' ? ROTULOS_POR_PROVIDER[provider] : ROTULOS_TELEGRAM
+}
+
+/**
+ * Normaliza o campo `provider` do GET /telegram (OPCIONAL — o host ainda não o
+ * emite) para um TipoProvider: só `'discord'` e `'telegram'` passam; qualquer
+ * outro valor (incl. `undefined`) cai no `'telegram'`. Exportada para o teste
+ * exercitar o consumo do campo sem montar React.
+ */
+export function normalizarProvider(valor: unknown): TipoProvider {
+  return valor === 'discord' ? 'discord' : 'telegram'
+}
+
 
 /* ========================================================================== */
 /* Render helpers (React puro, sem JSX)                                       */
@@ -471,11 +613,11 @@ function PassoConcluido({
  * O conteúdo dobrado "Como criar o bot do zero" — os passos numerados do
  * @BotFather (progressive disclosure: não atravancam o campo de token).
  */
-function BotaoBotFatherDetalhado(): React.ReactNode {
+function BotaoBotFatherDetalhado({ rotulos }: { readonly rotulos: RotulosDoProvider }): React.ReactNode {
   return h('ol', { className: 'guard-botfather-steps' },
-    PASSOS_BOTFATHER.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
-    h('li', { className: 'guard-botfather-step' }, NOTA_BOTFATHER),
-    h('li', { className: 'guard-botfather-step' }, NOTA_BOTFATHER_PRIVADO),
+    rotulos.criacao.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
+    h('li', { className: 'guard-botfather-step' }, rotulos.notaCriacao),
+    h('li', { className: 'guard-botfather-step' }, rotulos.notaPrivado),
   )
 }
 
@@ -497,17 +639,13 @@ const GARANTIAS_PRIVACIDADE: readonly string[] = [
 ]
 
 /**
- * O passo-a-passo ENXUTO para remover o username via @BotFather, mostrado
- * quando o bot AINDA tem `handle`. Escrito de forma conservadora (sem inventar
- * prompts exatos do BotFather) conforme o fluxo confirmado no web_search:
- *   https://www.grambots.com/bots/botfather · https://cnvrse.com/what-is-botfather
- * O comando `/setusername` do BotFather é onde o `@username` se edita/remove.
+ * Os passos de remoção do username vivem nos rótulos do provedor ATIVO
+ * (`rotulos.passosRemoverUsername` — ver o mapa "Rótulos por provedor"): no
+ * telegram são os passos conservadores do /setusername (a documentação do
+ * BotFather confirma que o comando `/setusername` é o ponto de edição/remoção
+ * do `@username` — https://www.grambots.com/bots/botfather e
+ * https://cnvrse.com/what-is-botfather); o discord aponta para o "Public Bot".
  */
-const PASSOS_REMOVER_USERNAME: readonly string[] = [
-  'No Telegram, abra a conversa com @BotFather.',
-  'Envie /setusername e escolha o teu bot na lista.',
-  'Remova o username (a opção "delete current username"/"remover username").',
-]
 
 /**
  * O cartão "Privacidade" (renderizado SÓ quando configurado). Dois vértices:
@@ -525,9 +663,11 @@ const PASSOS_REMOVER_USERNAME: readonly string[] = [
  */
 function CartaoPrivacidade({
   estado,
+  rotulos,
   aoVerificar,
 }: {
   readonly estado: EstadoPrivacidade | null
+  readonly rotulos: RotulosDoProvider
   readonly aoVerificar: () => void
 }): React.ReactNode {
   const titulo = h('span', { className: 'guard-card-title' }, 'Privacidade — só para você')
@@ -538,14 +678,14 @@ function CartaoPrivacidade({
       : estado.ok
         ? estado.handle !== null && estado.handle.length > 0
           ? h('div', { className: 'guard-privacy-body' },
-              paragrafo('guard-intro', `O bot é encontrável na busca do Telegram como @${estado.handle}. Se não quiser isso, remova o username:`),
+              paragrafo('guard-intro', rotulos.encontravel.replaceAll('{handle}', estado.handle)),
               h('ol', { className: 'guard-botfather-steps' },
-                PASSOS_REMOVER_USERNAME.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
+                rotulos.passosRemoverUsername.map((passo, i) => h('li', { className: 'guard-botfather-step', key: i }, passo)),
               ),
-              paragrafo('guard-privacy-note', `Sem username o bot deixa de aparecer na busca e o link t.me/@${estado.handle} morre — a conversa já aberta e o pareamento continuam a funcionar.`),
+              paragrafo('guard-privacy-note', rotulos.semUsernameNota.replaceAll('{handle}', estado.handle)),
             )
           : h('div', { className: 'guard-privacy-body' },
-              h('span', { className: 'guard-badge-ok' }, 'Não encontrável na busca ✓ — ninguém acha o bot no Telegram.'),
+              h('span', { className: 'guard-badge-ok' }, rotulos.naoEncontravel),
             )
         : h('div', { className: 'guard-privacy-body' },
             paragrafo('guard-intro', 'Não foi possível verificar agora (bot offline ou token inválido?).'),
@@ -568,21 +708,20 @@ function CartaoPrivacidade({
 }
 
 /**
- * O cartão "Privacidade" migra para o PASS0 3, dobrado num `<details>`
+ * O cartão "Privacidade" migra para o PASSO 3, dobrado num `<details>`
  * "E minha conversa?" — 1 linha de risco + 1 linha do que faz (texto EXATO do
- * contrato §3), seguido do cartão AO VIVO (getMe real decide o verde de
- * "não encontrável" — NUNCA um verde mentiroso) e das garantias deny-by-default.
+ * contrato §3, provider-aware: `rotulos.ckpt3Conversas`), seguido do cartão AO
+ * VIVO (getMe real decide o verde de "não encontrável" — NUNCA um verde
+ * mentiroso) e das garantias deny-by-default.
  */
-const TEXTO_PRIVACIDADE_CKPT3 =
-  'As tuas conversas com o bot ficam neste aparelho e no Telegram, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.'
-
 function CartaoPrivacidadeCkpt3(props: {
   readonly estado: EstadoPrivacidade | null
+  readonly rotulos: RotulosDoProvider
   readonly aoVerificar: () => void
 }): React.ReactNode {
   return h(Detalhes, { resumo: 'E minha conversa?' },
-    paragrafo('guard-intro', TEXTO_PRIVACIDADE_CKPT3),
-    h(CartaoPrivacidade, { estado: props.estado, aoVerificar: props.aoVerificar }),
+    paragrafo('guard-intro', props.rotulos.ckpt3Conversas),
+    h(CartaoPrivacidade, { estado: props.estado, rotulos: props.rotulos, aoVerificar: props.aoVerificar }),
   )
 }
 
@@ -602,6 +741,7 @@ function CartaoParear(props: {
   readonly estado: EstadoDePareamentoUi
   readonly pareado: boolean
   readonly agora: number
+  readonly rotulos: RotulosDoProvider
   readonly aoGerar: () => void
   readonly aoNovoCodigo: () => void
 }): React.ReactNode {
@@ -633,14 +773,16 @@ function CartaoParear(props: {
         }
       }
       return h('div', { className: 'guard-pair-body' },
-        paragrafo('guard-intro', 'No Telegram, envia:'),
+        paragrafo('guard-intro', props.rotulos.naConversa),
         h('div', { className: 'guard-pair-step' },
           h('code', { className: 'guard-pair-code' }, digitoEspacado),
           h('button', { type: 'button', className: 'guard-btn-sm', onClick: () => void copiar(), 'data-guard-copy-code': '' },
             copiado ? 'copiado' : 'Copiar'),
         ),
         paragrafo('guard-code-line',
-          `No Telegram, envia: /parear ${props.estado.codigo} no ${props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot'} — ou só /parear e o bot pede o código`),
+          props.rotulos.parearNoBot
+            .replaceAll('{codigo}', props.estado.codigo)
+            .replaceAll('{ref}', props.handle && props.handle.length > 0 ? `@${props.handle}` : 'o bot')),
         h('div', { className: 'guard-pair-countdown' },
           h('span', { className: 'guard-muted' }, `expira em ${contagem}`),
           h('button', { type: 'button', className: 'guard-btn-sm', onClick: props.aoNovoCodigo }, 'Gerar novo'),
@@ -713,6 +855,10 @@ function TelegramGuardSection(): React.ReactNode {
   // alimenta o chip do cabeçalho. `null` = ainda a carregar (ou fetch falhou e
   // mantemos o último resultado honesto).
   const [telegrama, setTelegrama] = useState<EstadoTelegrama | null>(null)
+  // O provedor de mensageria ATIVO (campo `provider` do GET /telegram —
+  // OPCIONAL: o host ainda não o emite; o default 'telegram' cobre a
+  // paridade que vem na onda do host).
+  const [provider, setProvider] = useState<TipoProvider>('telegram')
   const [tokenErro, setTokenErro] = useState<string | null>(null)
   // A checagem AO VIVO de descoberta (GET /api/privacidade); `null` = ainda a
   // carregar (ou o fetch falhou e mantemos o último resultado honesto).
@@ -755,6 +901,9 @@ function TelegramGuardSection(): React.ReactNode {
     try {
       const dados = await apiGet<EstadoTelegrama>('/telegram')
       if (vivo.current) {
+        // O provedor ATIVO, quando o host o emitir (campo opcional; hoje não
+        // vem — o default 'telegram' é o único provedor real).
+        setProvider(normalizarProvider(dados.provider))
         // Guarda o estado do bot para o chip do cabeçalho (Online/Offline).
         setTelegrama(dados)
         // O bot ONLINE = token configurado E pareamento feito. Se já está
@@ -945,7 +1094,7 @@ function TelegramGuardSection(): React.ReactNode {
           tipo: 'erro',
           texto:
             erro === 'formato-invalido'
-              ? 'Formato errado. O token vem assim: 123456:aaaa… (número, dois pontos, segredo).'
+              ? rotulos.formatoInvalido
               : 'Token vazio — cole a chave antes de validar.',
         })
         break
@@ -957,7 +1106,7 @@ function TelegramGuardSection(): React.ReactNode {
           texto:
             aviso.length > 0
               ? aviso
-              : 'A variável TELEGRAM_BOT_TOKEN do ambiente manda; remova-a ou use o token dela.',
+              : rotulos.envManda,
         })
         await recarregarTudo()
         break
@@ -965,7 +1114,7 @@ function TelegramGuardSection(): React.ReactNode {
       case 422: {
         setFeedback({
           tipo: 'erro',
-          texto: 'O Telegram não aceitou este token. Veja no @BotFather (/newbot) e tira outro.',
+          texto: rotulos.tokenRecusado,
         })
         break
       }
@@ -1019,7 +1168,8 @@ function TelegramGuardSection(): React.ReactNode {
     void buscarPrivacidade(true)
   }, [confirmacao, abrirTrocar, recarregarTudo, buscarPrivacidade])
 
-  const chip = chipDoBot(token, telegrama)
+  const rotulos = rotulosDoProvider(provider)
+  const chip = chipDoBot(token, telegrama, provider)
   const configurado = token?.configurado === true
   const handleChave = token?.handle
   const rotuloHandle = handleChave && handleChave.length > 0 ? `@${handleChave}` : 'o bot'
@@ -1034,12 +1184,13 @@ function TelegramGuardSection(): React.ReactNode {
       enviando,
       feedback,
       inputRef: inputTokenRef,
+      rotulos,
       aoMudar: setValor,
       aoAlternarMostrar: () => setMostrarToken((v) => !v),
       aoEnviar: enviarToken,
       aoRevisar: revisarToken,
     }),
-    h(Detalhes, { resumo: 'Como criar o bot do zero' }, h(BotaoBotFatherDetalhado)),
+    h(Detalhes, { resumo: 'Como criar o bot do zero' }, h(BotaoBotFatherDetalhado, { rotulos })),
     !configurado ? paragrafo('guard-step-hint', 'Depois disto, avanças para o Passo 2: parear.') : null,
   )
 
@@ -1061,6 +1212,7 @@ function TelegramGuardSection(): React.ReactNode {
           estado: par,
           pareado,
           agora,
+          rotulos,
           aoGerar: () => void gerarCodigo(),
           aoNovoCodigo: () => novoCodigo(),
         }),
@@ -1111,6 +1263,7 @@ function TelegramGuardSection(): React.ReactNode {
         // E minha conversa? (privacidade, dobrada) — migrada do bloco solto.
         h(CartaoPrivacidadeCkpt3, {
           estado: privacidade,
+          rotulos,
           aoVerificar: () => void buscarPrivacidade(true),
         }),
       )
@@ -1135,7 +1288,7 @@ function TelegramGuardSection(): React.ReactNode {
       h('h2', { className: 'guard-title', style: { margin: 0 } }, 'Remote Access'),
       h(Chip, { chip }),
     ),
-    paragrafo('guard-intro', 'Acesso remoto ao Harness pelo Telegram — sem login no túnel.'),
+    paragrafo('guard-intro', rotulos.acessoIntro),
     tokenErro ? paragrafo('guard-error', tokenErro) : null,
 
     // --- A TRILHA (só o passo atual aberto) -----------------------------
@@ -1157,6 +1310,7 @@ function CartaoTokenForm(props: {
   readonly enviando: boolean
   readonly feedback: FeedbackDeForm | null
   readonly inputRef: React.RefObject<HTMLInputElement | null>
+  readonly rotulos: RotulosDoProvider
   readonly aoMudar: (v: string) => void
   readonly aoAlternarMostrar: () => void
   readonly aoEnviar: (e: React.FormEvent) => void
@@ -1164,8 +1318,8 @@ function CartaoTokenForm(props: {
 }): React.ReactNode {
   const mostraErro = props.feedback !== null && props.feedback.tipo === 'erro'
   return h('form', { className: 'guard-field', onSubmit: props.aoEnviar },
-    paragrafo('guard-intro', 'Cole o token que o @BotFather te entregou ao criar o bot. Fica guardado seguro nesta máquina.'),
-    h('label', { className: 'guard-field-label', htmlFor: 'guard-token-input' }, 'Token do bot (@BotFather)'),
+    paragrafo('guard-intro', props.rotulos.coleToken),
+    h('label', { className: 'guard-field-label', htmlFor: 'guard-token-input' }, props.rotulos.rotuloCampoToken),
     h('div', { className: 'guard-input-wrap' },
       h('input', {
         id: 'guard-token-input',
@@ -1175,7 +1329,7 @@ function CartaoTokenForm(props: {
         value: props.valor,
         autoComplete: 'off',
         spellCheck: false,
-        placeholder: '1234567890:AAA…',
+        placeholder: props.rotulos.tokenPlaceholder,
         onChange: (e: React.ChangeEvent<HTMLInputElement>) => props.aoMudar(e.target.value),
       }),
       h('button', {
@@ -1187,7 +1341,7 @@ function CartaoTokenForm(props: {
     ),
     h('div', { className: 'guard-actions' },
       h('button', { type: 'submit', className: 'guard-btn guard-btn-primary', disabled: props.enviando },
-        props.enviando ? 'A conectar ao Telegram…' : 'Salvar bot'),
+        props.enviando ? props.rotulos.conectando : 'Salvar bot'),
       mostraErro
         ? h('button', { type: 'button', className: 'guard-btn guard-btn-outline', onClick: props.aoRevisar },
             'Revisar token')
