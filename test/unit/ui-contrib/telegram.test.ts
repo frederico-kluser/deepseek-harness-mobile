@@ -166,7 +166,7 @@ function criarBancada(): Bancada {
 /* ========================================================================== */
 
 describe('derivarEstadoDoBot (pura)', () => {
-  const pareamento = { ownerUserId: 1, ownerChatId: 1, pairedAt: 1_000 }
+  const pareamento = { ownerUserId: '1', ownerChatId: '1', pairedAt: 1_000 }
 
   it('sem token (mesmo pareado) -> OFFLINE sem-chave', () => {
     assert.deepEqual(derivarEstadoDoBot({ tokenConfigurado: false, pairing: pareamento }), {

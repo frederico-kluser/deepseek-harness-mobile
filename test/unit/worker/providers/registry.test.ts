@@ -5,8 +5,9 @@
  *   1. {@link resolverProvedor}: ausente->telegram, telegram explicito, valor
  *      desconhecido -> falha CLARA (fail-closed, nunca degrada em silencio).
  *   2. {@link montarEnvelopeDeIntent}: a ponte monta o `IpcIntentMessage`
- *      COMPLETO com `v`/`type`/`from`/`chat` NUMERICOS, a partir das chaves
- *      STRING neutras (o PORQUE: envelope IPC V1 numerico — ver o ficheiro).
+ *      COMPLETO com `v:2` e `from`/`chat` STRING, passando as chaves neutras
+ *      adiante SEM conversao (EMENDA ONDA-1-IPC-ENVELOPE-STRING — o envelope
+ *      V1 numerico morreu; ids nao-numericos atravessam intactos).
  */
 
 import assert from 'node:assert/strict'
@@ -81,8 +82,8 @@ function provToken(): string {
   return '123456789:AAHfalso-so-para-teste_0123456789abcd'
 }
 
-describe('worker/providers/registry — a ponte de intent monta o envelope numerico', () => {
-  it('monta v:1, type:intent, e from/chat NUMERICOS a partir das chaves string', () => {
+describe('worker/providers/registry — a ponte de intent monta o envelope STRING (V2)', () => {
+  it('monta v:2, type:intent, e from/chat STRING a partir das chaves string', () => {
     const envelope = montarEnvelopeDeIntent({
       intent: 'tunnel.up',
       requestId: '01HZ0000000000000000000000',
@@ -90,14 +91,14 @@ describe('worker/providers/registry — a ponte de intent monta o envelope numer
       chatKey: '78910',
     })
 
-    assert.equal(envelope.v, 1)
+    assert.equal(envelope.v, 2)
     assert.equal(envelope.type, 'intent')
     assert.equal(envelope.intent, 'tunnel.up')
     assert.equal(envelope.requestId, '01HZ0000000000000000000000')
-    assert.equal(typeof envelope.from, 'number')
-    assert.equal(envelope.from, 123456)
-    assert.equal(typeof envelope.chat, 'number')
-    assert.equal(envelope.chat, 78910)
+    assert.equal(typeof envelope.from, 'string')
+    assert.equal(envelope.from, '123456')
+    assert.equal(typeof envelope.chat, 'string')
+    assert.equal(envelope.chat, '78910')
     assert.equal('nonce' in envelope, false, 'sem nonce, o campo NAO aparece')
   })
 
@@ -113,16 +114,19 @@ describe('worker/providers/registry — a ponte de intent monta o envelope numer
     assert.equal(envelope.nonce, 'abc-xyz-nonce-opaco')
   })
 
-  it('o provisor numerico e fiel ao alfabeto do Telegram (`[0-9]+`)', () => {
-    // `Number` de uma string de digitos e exacto; o contrato exige SafeInteger.
+  it('um id NAO-numerico (snowflake do Discord) atravessa INTACTO — sem Number(...) nem NaN', () => {
+    // 1057992969437413409 > Number.MAX_SAFE_INTEGER: o antigo `Number(userKey)`
+    // da V1 perdia precisao silenciosamente. Em V2 nao ha conversao.
     const envelope = montarEnvelopeDeIntent({
       intent: 'emergency',
       requestId: '01HZ2222222222222222222222',
-      userKey: '9007199254740991',
-      chatKey: '42',
+      userKey: '1057992969437413409',
+      chatKey: '-1001234567890',
     })
-    assert.equal(envelope.from, 9007199254740991)
-    assert.equal(envelope.chat, 42)
+    assert.equal(envelope.from, '1057992969437413409')
+    assert.equal(envelope.chat, '-1001234567890')
+    assert.equal(Number.isNaN(Number(envelope.from)), false)
+    assert.equal(String(Number(envelope.from)) === envelope.from, false, 'o cast numerico PERDERIA o valor — prova de que a string e o formato certo')
   })
 })
 
@@ -148,7 +152,7 @@ describe('worker/providers/registry — a ponte de intent REAL (criarSurfaceIpcB
     const aceite = bridge.send(pedido)
 
     assert.equal(aceite, true)
-    assert.deepEqual(enviado, montarEnvelopeDeIntent(pedido), 'o envelope numerico e montado pela ponte')
+    assert.deepEqual(enviado, montarEnvelopeDeIntent(pedido), 'o envelope string (V2) e montado pela ponte')
     assert.notEqual(enviado, pedido, 'a ponte monta um IpcIntentMessage NOVO; a intent neutra nao e o envelope')
   })
 
@@ -199,7 +203,7 @@ describe('worker/providers/registry — a ponte de nonce (EMENDA-COSTURA-5)', ()
 
     // O host responde `nonce.issued` com o MESMO requestId — a ponte resolve.
     const resolvido = ponte.onMessage({
-      v: 1,
+      v: 2,
       type: 'nonce.issued',
       acao: 'start',
       requestId: pedidoEnviado.requestId ?? '',

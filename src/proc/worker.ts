@@ -28,7 +28,7 @@ import {
   resolveWorkerCwd,
   type Config,
 } from '../config/schema.ts'
-import type { IpcIntentMessage, IpcMessageToWorker } from '../contracts/ipc.ts'
+import { IPC_PROTOCOL_VERSION, type IpcIntentMessage, type IpcMessageToWorker } from '../contracts/ipc.ts'
 import type { Context, SubprocessHandle, SubprocessSpawnSpec } from '../dsh/adapter.ts'
 import { createGuardLogger, type GuardLogger } from '../logging/logger.ts'
 import { createHostIpcChannel, type HostIpcChannel } from '../ipc/channel.ts'
@@ -140,7 +140,7 @@ function rejeitarSemControlador(log: GuardLogger, intent: IpcIntentMessage): Ipc
     `Intencao '${intent.intent}' recebida sem controlador montado; respondida com INTERNAL.`,
   )
   return {
-    v: 1,
+    v: IPC_PROTOCOL_VERSION,
     type: 'error',
     requestId: intent.requestId,
     code: 'INTERNAL',
@@ -158,7 +158,7 @@ function rejeitarSemNonce(log: GuardLogger, request: IpcNonceRequestMessage): Ip
     `Pedido de nonce (${request.acao}) recebido sem tratador montado; respondido com INTERNAL.`,
   )
   return {
-    v: 1,
+    v: IPC_PROTOCOL_VERSION,
     type: 'error',
     requestId: request.requestId,
     code: 'INTERNAL',
@@ -301,7 +301,7 @@ export function createWorkerSupervisor(
             options.onPairingSuccess
               ? options.onPairingSuccess(msg)
               : {
-                  v: 1,
+                  v: IPC_PROTOCOL_VERSION,
                   type: 'error',
                   code: 'INTERNAL',
                   message: 'O pareamento nao foi gravado. Reinicie o plugin e tente de novo.',

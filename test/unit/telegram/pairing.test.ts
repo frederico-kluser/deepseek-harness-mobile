@@ -204,7 +204,9 @@ describe('PAIR-010: o codigo existe no terminal e em mais lado nenhum', () => {
 describe('leitura do update: o que e e o que nao e um `/parear`', () => {
   it('le `/parear 123456` e devolve `from.id` E `chat.id`, que sao campos distintos', () => {
     const lido = lerComandoDePareamento(updateDeMensagem('/parear 123456', 111, 222))
-    assert.deepEqual(lido, { userId: 111, chatId: 222, codigo: '123456' })
+    // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): a fronteira converte os ids
+    // numericos do update cru para STRING, uma unica vez.
+    assert.deepEqual(lido, { userId: '111', chatId: '222', codigo: '123456' })
   })
 
   it('aceita o sufixo `@nome_do_bot` que o cliente acrescenta em grupo', () => {
@@ -284,9 +286,11 @@ describe('TG-065 / PAIR-002: o `/parear` correcto', () => {
     relogio.advance(10_000)
     const resultado = sessao.oferecer(updateDeMensagem('/parear 123456', 111, 222))
     assert.equal(resultado.tipo, 'pareado')
-    assert.deepEqual(resultado.tipo === 'pareado' ? resultado.dono : undefined, {
-      ownerUserId: 111,
-      ownerChatId: 222,
+    assert.deepEqual(resultado.dono, {
+      // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): os ids do update cru (number)
+      // viram STRING na fronteira do parser, uma unica vez.
+      ownerUserId: '111',
+      ownerChatId: '222',
       pairedAt: 1_700_000_010_000,
     })
   })
@@ -362,7 +366,7 @@ describe('TG-066: dois updates com codigos diferentes, um correcto', () => {
 
     assert.equal(motivoDe(errado), 'codigo-errado')
     assert.equal(certo.tipo, 'pareado')
-    assert.equal(certo.tipo === 'pareado' ? certo.dono.ownerUserId : undefined, 111)
+    assert.equal(certo.tipo === 'pareado' ? certo.dono.ownerUserId : undefined, '111')
 
     const resumo = sessao.resumo()
     assert.equal(resumo.descartados, 1, 'o descarte e silencioso mas nao invisivel')
@@ -388,7 +392,7 @@ describe('PAIR-006: um `/start` de estranho ANTES do dono nao pareia ninguem', (
     assert.equal(sessao.estado(), 'aberto')
 
     const dono = sessao.oferecer(updateDeMensagem('/parear 123456', 111, 222))
-    assert.equal(dono.tipo === 'pareado' ? dono.dono.ownerUserId : undefined, 111)
+    assert.equal(dono.tipo === 'pareado' ? dono.dono.ownerUserId : undefined, '111')
   })
 
   it('nem um `/start` com o codigo colado atras pareia', () => {
@@ -423,7 +427,7 @@ describe('PAIR-009: dois `/parear` correctos no mesmo tick', () => {
     const segundo = sessao.oferecer(updateDeMensagem('/parear 123456', 333, 444))
 
     assert.equal(primeiro.tipo, 'pareado')
-    assert.equal(primeiro.tipo === 'pareado' ? primeiro.dono.ownerUserId : undefined, 111)
+    assert.equal(primeiro.tipo === 'pareado' ? primeiro.dono.ownerUserId : undefined, '111')
     assert.equal(motivoDe(segundo), 'ja-pareado')
   })
 })

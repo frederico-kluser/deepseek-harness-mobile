@@ -200,14 +200,52 @@ function parseTunnel(value: unknown, source: string): PersistedState['tunnel'] {
   }
 }
 
+/**
+ * Normaliza UM eixo do dono persistido para STRING (V2 — EMENDA
+ * ONDA-1-IPC-ENVELOPE-STRING). A migracao e ADITIVA: aceita o formato LEGADO
+ * (`number`, com as regras numericas de sempre via `legado`) e o formato NOVO
+ * (`string`, trim + nao vazio — a politica minima do `normalizeKey` do worker,
+ * `worker/surface/ids.ts`). NAO se valida formato de provedor nenhum na string:
+ * um id futuro nao-numerico e legitimo. Devolve a forma canonica (string).
+ */
+function normalizarEixoDoDono(
+  value: unknown,
+  source: string,
+  path: string,
+  legado: (value: unknown) => number,
+): string {
+  if (typeof value === 'number') return String(legado(value))
+  if (typeof value === 'string') {
+    const aparado = value.trim()
+    if (aparado.length === 0) {
+      throw corruptStateError(source, `${path} tinha de ser uma string nao vazia (apos trim)`)
+    }
+    return aparado
+  }
+  throw corruptStateError(
+    source,
+    `${path} tinha de ser um inteiro (formato legado v1) ou uma string nao vazia (formato v2)`,
+  )
+}
+
 function parsePairing(value: unknown, source: string): PersistedState['pairing'] {
   const record = asRecord(value, source, 'pairing')
   rejectUnknownKeys(record, PAIRING_KEYS, source, 'pairing')
   return {
-    ownerUserId: asInteger(record['ownerUserId'], source, 'pairing.ownerUserId', 1),
-    // NAO ha piso: um `chat_id` de grupo/supergrupo do Telegram e NEGATIVO
-    // (`-100...`). Exigir > 0 aqui recusaria um emparelhamento legitimo.
-    ownerChatId: asInteger(record['ownerChatId'], source, 'pairing.ownerChatId', Number.MIN_SAFE_INTEGER),
+    ownerUserId: normalizarEixoDoDono(
+      record['ownerUserId'],
+      source,
+      'pairing.ownerUserId',
+      (v) => asInteger(v, source, 'pairing.ownerUserId', 1),
+    ),
+    // NAO ha piso no legado: um `chat_id` de grupo/supergrupo do Telegram e
+    // NEGATIVO (`-100...`). Exigir > 0 aqui recusaria um emparelhamento legitimo.
+    ownerChatId: normalizarEixoDoDono(
+      record['ownerChatId'],
+      source,
+      'pairing.ownerChatId',
+      (v) => asInteger(v, source, 'pairing.ownerChatId', Number.MIN_SAFE_INTEGER),
+    ),
     pairedAt: asInteger(record['pairedAt'], source, 'pairing.pairedAt', 0),
   }
 }

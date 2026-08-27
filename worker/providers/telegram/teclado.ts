@@ -145,7 +145,10 @@ export async function answerCallbackAlways(
  */
 export async function editMessageTextInPlace(
   api: InlineKeyboardApi,
-  alvo: { readonly chatId: number; readonly messageId: number },
+  // `chatId` alargado a `number | string` (EMENDA ONDA-1-IPC-ENVELOPE-STRING):
+  // o sender do adaptador entrega o id do envelope em STRING (V2) e a Bot API
+  // aceita ambos — o alargamento e de TIPO, o comportamento nao muda.
+  alvo: { readonly chatId: number | string; readonly messageId: number },
   text: string,
   log: WorkerLogger,
   markup?: InlineKeyboardMarkup,

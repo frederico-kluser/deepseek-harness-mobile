@@ -86,7 +86,7 @@ function montar(): Bancada {
           secrets: (): readonly string[] => [],
           onIntent: (intent): IpcMessageToWorker => {
             intencoes.push(intent)
-            return { v: 1, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' }
+            return { v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' }
           },
         })
         corrente = canal
@@ -113,7 +113,7 @@ function montar(): Bancada {
 }
 
 const DIFUSAO = (seq: number): IpcMessageToWorker => ({
-  v: 1,
+  v: 2,
   type: 'state',
   state: 'STOPPED',
   seq,
@@ -129,11 +129,14 @@ describe('a viagem de ida e volta sobre pipes do sistema operativo', () => {
 
     const intencao = h.intencoes[0]
     assert.equal(h.intencoes.length, 1, 'uma difusao produz UMA intencao, nao um ciclo')
-    assert.equal(intencao?.intent, 'tunnel.status')
-    assert.equal(intencao?.requestId, 'eco-1')
-    assert.equal(intencao?.from, 111)
+    assert.ok(intencao !== undefined, 'a intencao do eco chegou')
+    assert.equal(intencao.intent, 'tunnel.status')
+    assert.equal(intencao.requestId, 'eco-1')
+    // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): os eixos viajam como STRING.
+    assert.equal(intencao.from, '111')
+    assert.equal(intencao.chat, '222')
     // S5: o nonce atravessou OPACO, sem ninguem no worker o ter interpretado.
-    assert.equal(intencao?.nonce, 'nonce-opaco-que-o-worker-nao-le')
+    assert.equal(intencao.nonce, 'nonce-opaco-que-o-worker-nao-le')
 
     h.supervisor.dispose()
   })

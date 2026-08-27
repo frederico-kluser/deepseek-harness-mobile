@@ -146,19 +146,19 @@ function todasHostParaWorker(): readonly IpcMessageToWorker[] {
   for (const state of ESTADOS) {
     todas.push(
       state === 'READY'
-        ? { v: 1, type: 'state', state, seq: 1, url: URL_DO_TUNEL, expiresAt: 1_800_000 }
-        : { v: 1, type: 'state', state, seq: 1 },
+        ? { v: 2, type: 'state', state, seq: 1, url: URL_DO_TUNEL, expiresAt: 1_800_000 }
+        : { v: 2, type: 'state', state, seq: 1 },
     )
     for (const result of ['accepted', 'noop'] as const) {
-      todas.push({ v: 1, type: 'ack', requestId: '01J0000000000000000000000A', result, state })
+      todas.push({ v: 2, type: 'ack', requestId: '01J0000000000000000000000A', result, state })
     }
     for (const code of CODIGOS) {
-      todas.push({ v: 1, type: 'ack', requestId: 'r', result: 'rejected', state, code })
+      todas.push({ v: 2, type: 'ack', requestId: 'r', result: 'rejected', state, code })
     }
   }
   for (const code of CODIGOS) {
-    todas.push({ v: 1, type: 'error', code, message: `Falhou: ${code}.` })
-    todas.push({ v: 1, type: 'error', requestId: 'r', code, message: `Falhou: ${code}.` })
+    todas.push({ v: 2, type: 'error', code, message: `Falhou: ${code}.` })
+    todas.push({ v: 2, type: 'error', requestId: 'r', code, message: `Falhou: ${code}.` })
   }
   return todas
 }
@@ -166,8 +166,8 @@ function todasHostParaWorker(): readonly IpcMessageToWorker[] {
 function todasWorkerParaHost(): readonly IpcIntentMessage[] {
   const todas: IpcIntentMessage[] = []
   for (const intent of INTENCOES) {
-    todas.push({ v: 1, type: 'intent', intent, requestId: 'r', from: 123, chat: 456 })
-    todas.push({ v: 1, type: 'intent', intent, requestId: 'r', from: 123, chat: 456, nonce: 'op4co' })
+    todas.push({ v: 2, type: 'intent', intent, requestId: 'r', from: '123', chat: '456' })
+    todas.push({ v: 2, type: 'intent', intent, requestId: 'r', from: '123', chat: '456', nonce: 'op4co' })
   }
   return todas
 }
@@ -179,13 +179,13 @@ function todasWorkerParaHost(): readonly IpcIntentMessage[] {
 describe('S3: o detetor tem de funcionar antes de o resto valer alguma coisa', () => {
   it('apanha um segredo plantado, em cada uma das OITO codificacoes', () => {
     for (const [forma, texto] of codificacoes(SEGREDOS['token'] ?? '')) {
-      const fuga = procurarFuga(`{"v":1,"type":"error","message":"${texto}"}`)
+      const fuga = procurarFuga(`{"v":2,"type":"error","message":"${texto}"}`)
       assert.notEqual(fuga, undefined, `o detetor esta cego para ${forma}`)
     }
   })
 
   it('nao acusa um payload limpo (senao mediria ruido)', () => {
-    assert.equal(procurarFuga(serializeIpcMessage({ v: 1, type: 'state', state: 'STOPPED', seq: 1 }, 'to-worker')), undefined)
+    assert.equal(procurarFuga(serializeIpcMessage({ v: 2, type: 'state', state: 'STOPPED', seq: 1 }, 'to-worker')), undefined)
   })
 })
 
@@ -205,7 +205,7 @@ describe('S3: o vocabulario FECHADO inteiro, serializado, nao leva segredo', () 
 
   it('a URL do tunel PODE viajar -- ela nao e segredo, e o produto depende disso', () => {
     const linha = serializeIpcMessage(
-      { v: 1, type: 'state', state: 'READY', seq: 1, url: URL_DO_TUNEL, expiresAt: 1 },
+      { v: 2, type: 'state', state: 'READY', seq: 1, url: URL_DO_TUNEL, expiresAt: 1 },
       'to-worker',
     )
     assert.equal(linha.includes(URL_DO_TUNEL), true, 'sem URL nao ha como o dono chegar ao painel')
@@ -240,7 +240,7 @@ describe('S3: a COMPOSICAO real -- o token esta na configuracao e nao sai por la
     for (const intent of INTENCOES) {
       child.diz(
         serializeWorkerIpcMessage(
-          { v: 1, type: 'intent', intent, requestId: 'r', from: 1, chat: 1 },
+          { v: 2, type: 'intent', intent, requestId: 'r', from: '1', chat: '1' },
           'to-host',
         ),
       )
@@ -267,7 +267,7 @@ describe('S3: a COMPOSICAO real -- o token esta na configuracao e nao sai por la
     const child = ctx.subprocess.lastChild()
     child.diz(
       serializeWorkerIpcMessage(
-        { v: 1, type: 'intent', intent: 'tunnel.up', requestId: 'r', from: 1, chat: 1 },
+        { v: 2, type: 'intent', intent: 'tunnel.up', requestId: 'r', from: '1', chat: '1' },
         'to-host',
       ),
     )
@@ -335,7 +335,7 @@ describe('S3: a COMPOSICAO real -- o token esta na configuracao e nao sai por la
     h.supervisor.start()
     const child = h.subprocess.lastChild()
 
-    child.diz('{"v":1,"type":"intent","intent":"tunnel.status","requestId":"r","from":1,"chat":1}\n')
+    child.diz('{"v":2,"type":"intent","intent":"tunnel.status","requestId":"r","from":1,"chat":1}\n')
 
     const registos = h.logger.entries.map((e) => e.message)
     // O NOME da intencao entra no log (e diagnostico legitimo e nao e segredo);

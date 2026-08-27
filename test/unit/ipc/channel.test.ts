@@ -86,12 +86,12 @@ const INTENCOES: readonly IpcIntentName[] = [
 ]
 
 const INTENCAO: IpcIntentMessage = {
-  v: 1,
+  v: 2,
   type: 'intent',
   intent: 'tunnel.up',
   requestId: '01J0000000000000000000000A',
-  from: 123456789,
-  chat: 123456789,
+  from: '123456789',
+  chat: '123456789',
 }
 
 interface Bancada {
@@ -125,7 +125,7 @@ function montar(
     onIntent: (intent): IpcMessageToWorker => {
       recebidas.push(intent)
       if (options.onIntent !== undefined) return options.onIntent(intent)
-      return { v: 1, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
+      return { v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
     },
     secrets: (): readonly string[] => options.secrets ?? [],
     ...(options.maxPendingBytes === undefined ? {} : { maxPendingBytes: options.maxPendingBytes }),
@@ -148,7 +148,7 @@ function montar(
 describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
   it('serializa em JSON compacto com exatamente um \\n no fim', () => {
     const linha = serializeIpcMessage(
-      { v: 1, type: 'state', state: 'STOPPED', seq: 42 },
+      { v: 2, type: 'state', state: 'STOPPED', seq: 42 },
       'to-worker',
     )
     assert.equal(linha.endsWith('\n'), true)
@@ -159,7 +159,7 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
 
   it('um \\n DENTRO de um campo nao parte a linha: sai escapado', () => {
     const linha = serializeIpcMessage(
-      { v: 1, type: 'error', code: 'INTERNAL', message: 'primeira\nsegunda' },
+      { v: 2, type: 'error', code: 'INTERNAL', message: 'primeira\nsegunda' },
       'to-worker',
     )
     assert.equal(linha.split('\n').length, 2, 'continua a ser UMA linha')
@@ -176,13 +176,13 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
       ...ESTADOS.map(
         (state): IpcMessageToWorker =>
           state === 'READY'
-            ? { v: 1, type: 'state', state, seq: 1, url: 'https://x.trycloudflare.com', expiresAt: 9 }
-            : { v: 1, type: 'state', state, seq: 1 },
+            ? { v: 2, type: 'state', state, seq: 1, url: 'https://x.trycloudflare.com', expiresAt: 9 }
+            : { v: 2, type: 'state', state, seq: 1 },
       ),
-      { v: 1, type: 'ack', requestId: 'r1', result: 'accepted', state: 'STARTING' },
-      { v: 1, type: 'ack', requestId: 'r1', result: 'noop', state: 'READY' },
-      { v: 1, type: 'ack', requestId: 'r1', result: 'rejected', state: 'STOPPING', code: 'SHUTDOWN_IN_PROGRESS' },
-      ...CODIGOS.map((code): IpcMessageToWorker => ({ v: 1, type: 'error', code, message: `erro ${code}` })),
+      { v: 2, type: 'ack', requestId: 'r1', result: 'accepted', state: 'STARTING' },
+      { v: 2, type: 'ack', requestId: 'r1', result: 'noop', state: 'READY' },
+      { v: 2, type: 'ack', requestId: 'r1', result: 'rejected', state: 'STOPPING', code: 'SHUTDOWN_IN_PROGRESS' },
+      ...CODIGOS.map((code): IpcMessageToWorker => ({ v: 2, type: 'error', code, message: `erro ${code}` })),
     ]
 
     for (const message of todas) {
@@ -198,7 +198,7 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
     }
 
     // EMENDA ONDA-1-PAREAR-VIA-PAINEL: `pairing.success` round-trips fiel.
-    const success: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    const success: IpcPairingSuccessMessage = { v: 2, type: 'pairing.success', from: '111', chat: '222', pairedAt: 1_700_000_000_000 }
     const verdictSuccess = parseIpcLine(serializeIpcMessage(success, 'to-host').trimEnd(), 'to-host')
     assert.deepEqual(verdictSuccess.ok ? verdictSuccess.message : undefined, success)
   })
@@ -250,7 +250,7 @@ describe('o acumulador: uma linha partida entre chunks e reconstruida', () => {
   it('um carater UTF-8 partido entre dois chunks NAO e corrompido', () => {
     // "acao" com cedilha e til: 2 bytes cada. Partir a meio de um deles com
     // `Buffer.toString()` daria U+FFFD e a linha virava `json-invalido`.
-    const message: IpcMessageToWorker = { v: 1, type: 'error', code: 'INTERNAL', message: 'uma acao ficou por concluir' }
+    const message: IpcMessageToWorker = { v: 2, type: 'error', code: 'INTERNAL', message: 'uma acao ficou por concluir' }
     const bytes = Buffer.from(serializeIpcMessage(message, 'to-worker'), 'utf8')
 
     for (let corte = 1; corte < bytes.length; corte += 1) {
@@ -291,16 +291,16 @@ describe('o acumulador: uma linha partida entre chunks e reconstruida', () => {
 describe('S4: linha malformada e descartada, e o canal SOBREVIVE', () => {
   const TABELA: ReadonlyArray<{ nome: string; linha: string; reason: string }> = [
     { nome: 'JSON invalido', linha: '{isto nao e json', reason: 'json-invalido' },
-    { nome: 'truncada a meio', linha: '{"v":1,"type":"inte', reason: 'json-invalido' },
-    { nome: 'versao desconhecida', linha: '{"v":2,"type":"intent"}', reason: 'versao-desconhecida' },
-    { nome: 'versao em texto', linha: '{"v":"1","type":"intent"}', reason: 'versao-desconhecida' },
-    { nome: 'tipo desconhecido', linha: '{"v":1,"type":"reboot"}', reason: 'tipo-desconhecido' },
-    { nome: 'tipo do sentido errado', linha: '{"v":1,"type":"ack","requestId":"r","result":"noop","state":"READY"}', reason: 'tipo-desconhecido' },
-    { nome: 'intencao fora do vocabulario', linha: '{"v":1,"type":"intent","intent":"rm.rf","requestId":"r","from":1,"chat":1}', reason: 'forma-invalida' },
-    { nome: 'from em texto (username)', linha: '{"v":1,"type":"intent","intent":"emergency","requestId":"r","from":"@dono","chat":1}', reason: 'forma-invalida' },
-    { nome: 'from fracionario', linha: '{"v":1,"type":"intent","intent":"emergency","requestId":"r","from":1.5,"chat":1}', reason: 'forma-invalida' },
-    { nome: 'requestId ausente', linha: '{"v":1,"type":"intent","intent":"emergency","from":1,"chat":1}', reason: 'forma-invalida' },
-    { nome: 'array em vez de objeto', linha: '[{"v":1,"type":"intent"}]', reason: 'forma-invalida' },
+    { nome: 'truncada a meio', linha: '{"v":2,"type":"inte', reason: 'json-invalido' },
+    { nome: 'versao desconhecida', linha: '{"v":3,"type":"intent"}', reason: 'versao-desconhecida' },
+    { nome: 'versao em texto', linha: '{"v":"2","type":"intent"}', reason: 'versao-desconhecida' },
+    { nome: 'tipo desconhecido', linha: '{"v":2,"type":"reboot"}', reason: 'tipo-desconhecido' },
+    { nome: 'tipo do sentido errado', linha: '{"v":2,"type":"ack","requestId":"r","result":"noop","state":"READY"}', reason: 'tipo-desconhecido' },
+    { nome: 'intencao fora do vocabulario', linha: '{"v":2,"type":"intent","intent":"rm.rf","requestId":"r","from":"1","chat":"1"}', reason: 'forma-invalida' },
+    { nome: 'from vazio (so espacos)', linha: '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"  ","chat":"1"}', reason: 'forma-invalida' },
+    { nome: 'from numerico (o formato legado V1) e recusado: V2 exige string', linha: '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":1,"chat":"1"}', reason: 'forma-invalida' },
+    { nome: 'requestId ausente', linha: '{"v":2,"type":"intent","intent":"emergency","from":"1","chat":"1"}', reason: 'forma-invalida' },
+    { nome: 'array em vez de objeto', linha: '[{"v":2,"type":"intent"}]', reason: 'forma-invalida' },
     { nome: 'nulo', linha: 'null', reason: 'forma-invalida' },
     { nome: 'numero solto', linha: '7', reason: 'forma-invalida' },
   ]
@@ -359,6 +359,54 @@ describe('S4: linha malformada e descartada, e o canal SOBREVIVE', () => {
 })
 
 /* ========================================================================== */
+/* V2 — ids NAO-numericos atravessam o canal intactos (EMENDA ONDA-1-IPC-      */
+/* ENVELOPE-STRING: o prerequisito do provedor Discord)                        */
+/* ========================================================================== */
+
+describe('V2: um id nao-numerico (snowflake) atravessa intent -> host -> ack sem NaN', () => {
+  it('uma snowflake que estoura Number.MAX_SAFE_INTEGER viaja byte a byte', () => {
+    // 1057992969437413409 > 2^53: `Number(...)` dela perderia precisao (ou
+    // viraria um inteiro errado) — e exatamente o que a V2 elimina.
+    const snowflake = '1057992969437413409'
+    const mensagem: IpcIntentMessage = {
+      v: 2,
+      type: 'intent',
+      intent: 'tunnel.status',
+      requestId: '01J0000000000000000000000A',
+      from: snowflake,
+      chat: snowflake,
+    }
+    const verdict = parseIpcLine(serializeIpcMessage(mensagem, 'to-host').trimEnd(), 'to-host')
+    // O padrao `verdict.ok && ...` e o MESMO do teste S5 do nonce (sem assert
+    // de ok isolado antes: a cadeia e a propria assercao de que a linha leu).
+    assert.equal(verdict.ok && verdict.message.type === 'intent' && verdict.message.from, snowflake)
+    assert.equal(verdict.ok && verdict.message.type === 'intent' && verdict.message.chat, snowflake)
+    assert.equal(verdict.ok && verdict.message.type === 'intent' && Number.isNaN(Number(verdict.message.from)), false)
+  })
+
+  it('o host decide a intencao da snowflake e responde ack no proprio tick', () => {
+    const b = montar({
+      onIntent: (intent): IpcMessageToWorker => {
+        assert.equal(intent.from, '1057992969437413409')
+        assert.equal(intent.chat, '1057992969437413409')
+        return { v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
+      },
+    })
+    b.entrada.write(
+      serializeIpcMessage(
+        { v: 2, type: 'intent', intent: 'tunnel.down', requestId: '01J0000000000000000000000A', from: '1057992969437413409', chat: '1057992969437413409' },
+        'to-host',
+      ),
+    )
+    assert.equal(b.recebidas.length, 1)
+    const saida = b.escrito()
+    assert.ok(saida.includes('"type":"ack"'), 'a resposta do host saiu')
+    assert.ok(saida.includes('01J0000000000000000000000A'), 'o ack correlaciona pelo requestId')
+    b.canal.dispose()
+  })
+})
+
+/* ========================================================================== */
 /* Compatibilidade para a frente: o vocabulario cresce, o despacho nao muda    */
 /* ========================================================================== */
 
@@ -377,8 +425,8 @@ describe('um tipo do FUTURO degrada em silencio em vez de partir o canal', () =>
    * cair, porque cair aqui e derrubar o canal de controlo do dono.
    */
   const FUTURAS: readonly string[] = [
-    '{"v":1,"type":"futuro.desconhecido","x":1}',
-    '{"v":1,"type":"outro.futuro"}',
+    '{"v":2,"type":"futuro.desconhecido","x":1}',
+    '{"v":2,"type":"outro.futuro"}',
   ]
 
   it('cada uma delas e `tipo-desconhecido`, e nada mais acontece', () => {
@@ -407,13 +455,13 @@ describe('um tipo do FUTURO degrada em silencio em vez de partir o canal', () =>
 describe('as clausulas SSE do contrato sao impostas nos dois sentidos', () => {
   it('`url` fora de READY e recusada -- e ela e informacao de operacao', () => {
     assert.deepEqual(
-      parseIpcLine('{"v":1,"type":"state","state":"STARTING","seq":1,"url":"https://x.com","expiresAt":1}', 'to-worker'),
+      parseIpcLine('{"v":2,"type":"state","state":"STARTING","seq":1,"url":"https://x.com","expiresAt":1}', 'to-worker'),
       { ok: false, reason: 'forma-invalida' },
     )
     assert.throws(
       () =>
         serializeIpcMessage(
-          { v: 1, type: 'state', state: 'DEGRADED', seq: 1, url: 'https://x.trycloudflare.com', expiresAt: 1 },
+          { v: 2, type: 'state', state: 'DEGRADED', seq: 1, url: 'https://x.trycloudflare.com', expiresAt: 1 },
           'to-worker',
         ),
       (error: unknown) => error instanceof IpcChannelError && error.code === 'IPC_MESSAGE_INVALID',
@@ -421,7 +469,7 @@ describe('as clausulas SSE do contrato sao impostas nos dois sentidos', () => {
   })
 
   it('READY SEM `url` tambem e recusado: o "sse" corre nos dois sentidos', () => {
-    assert.deepEqual(parseIpcLine('{"v":1,"type":"state","state":"READY","seq":1}', 'to-worker'), {
+    assert.deepEqual(parseIpcLine('{"v":2,"type":"state","state":"READY","seq":1}', 'to-worker'), {
       ok: false,
       reason: 'forma-invalida',
     })
@@ -430,7 +478,7 @@ describe('as clausulas SSE do contrato sao impostas nos dois sentidos', () => {
   it('a URL tem de ser https: um esquema arbitrario nao chega ao Telegram', () => {
     for (const url of ['http://x.trycloudflare.com', 'javascript:alert(1)', 'file:///etc/passwd']) {
       assert.deepEqual(
-        parseIpcLine(`{"v":1,"type":"state","state":"READY","seq":1,"expiresAt":1,"url":${JSON.stringify(url)}}`, 'to-worker'),
+        parseIpcLine(`{"v":2,"type":"state","state":"READY","seq":1,"expiresAt":1,"url":${JSON.stringify(url)}}`, 'to-worker'),
         { ok: false, reason: 'forma-invalida' },
         url,
       )
@@ -439,18 +487,18 @@ describe('as clausulas SSE do contrato sao impostas nos dois sentidos', () => {
 
   it('`code` presente SSE result==="rejected"', () => {
     assert.deepEqual(
-      parseIpcLine('{"v":1,"type":"ack","requestId":"r","result":"accepted","state":"READY","code":"INTERNAL"}', 'to-worker'),
+      parseIpcLine('{"v":2,"type":"ack","requestId":"r","result":"accepted","state":"READY","code":"INTERNAL"}', 'to-worker'),
       { ok: false, reason: 'forma-invalida' },
     )
     assert.deepEqual(
-      parseIpcLine('{"v":1,"type":"ack","requestId":"r","result":"rejected","state":"READY"}', 'to-worker'),
+      parseIpcLine('{"v":2,"type":"ack","requestId":"r","result":"rejected","state":"READY"}', 'to-worker'),
       { ok: false, reason: 'forma-invalida' },
     )
   })
 
   it('D29: um `rejected` com SHUTDOWN_IN_PROGRESS atravessa o canal intacto', () => {
     const message: IpcMessageToWorker = {
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: '01J0000000000000000000000A',
       result: 'rejected',
@@ -498,20 +546,20 @@ describe('pairing.success (worker -> host): o handshake fecha-com-pairing.owner'
       output: saida,
       log,
       secrets: (): readonly string[] => [],
-      onIntent: () => ({ v: 1, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }),
+      onIntent: () => ({ v: 2, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }),
       onPairingSuccess: (msg): IpcMessageToWorker => {
         avisos.push(msg)
-        return { v: 1, type: 'pairing.owner', from: msg.from, chat: msg.chat, pairedAt: msg.pairedAt }
+        return { v: 2, type: 'pairing.owner', from: msg.from, chat: msg.chat, pairedAt: msg.pairedAt }
       },
     })
-    const aviso: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    const aviso: IpcPairingSuccessMessage = { v: 2, type: 'pairing.success', from: '111', chat: '222', pairedAt: 1_700_000_000_000 }
     entrada.write(serializeIpcMessage(aviso, 'to-host'))
     await new Promise((r) => setImmediate(r))
     assert.equal(avisos.length, 1)
     assert.deepEqual(avisos[0], aviso)
     const linha = saida.read()?.toString() ?? ''
     assert.ok(linha.includes('"type":"pairing.owner"'), 'o reply do host e pairing.owner')
-    assert.ok(linha.includes('"from":111') && linha.includes('"chat":222'), 'os dois eixos devolvidos')
+    assert.ok(linha.includes('"from":"111"') && linha.includes('"chat":"222"'), 'os dois eixos devolvidos como string (V2)')
     canal.dispose()
   })
 
@@ -524,9 +572,9 @@ describe('pairing.success (worker -> host): o handshake fecha-com-pairing.owner'
       output: saida,
       log,
       secrets: (): readonly string[] => [],
-      onIntent: () => ({ v: 1, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }),
+      onIntent: () => ({ v: 2, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' }),
     })
-    const aviso: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    const aviso: IpcPairingSuccessMessage = { v: 2, type: 'pairing.success', from: '111', chat: '222', pairedAt: 1_700_000_000_000 }
     entrada.write(serializeIpcMessage(aviso, 'to-host'))
     await new Promise((r) => setImmediate(r))
     const linha = saida.read()?.toString() ?? ''
@@ -536,11 +584,11 @@ describe('pairing.success (worker -> host): o handshake fecha-com-pairing.owner'
   })
 
   it('o tipo NAO e legal no sentido errado (to-worker): rejeitado por S4', () => {
-    const answer: IpcPairingSuccessMessage = { v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 1_700_000_000_000 }
+    const answer: IpcPairingSuccessMessage = { v: 2, type: 'pairing.success', from: '111', chat: '222', pairedAt: 1_700_000_000_000 }
     // Serializar como to-worker tem de recusar (raio do sentido nao o conhece).
     assert.throws(() => serializeIpcMessage(answer, 'to-worker'), IpcChannelError)
     // E como to-host, parse de um tipo fora da allowlist -> tipo-desconhecido.
-    const verdict = parseIpcLine('{"v":1,"type":"pairing.success","from":1,"chat":2,"pairedAt":3}', 'to-worker')
+    const verdict = parseIpcLine('{"v":2,"type":"pairing.success","from":1,"chat":2,"pairedAt":3}', 'to-worker')
     assert.deepEqual(verdict, { ok: false, reason: 'tipo-desconhecido' })
   })
 })
@@ -609,7 +657,7 @@ function montarSaturado(maxPendingBytes = 512): {
     maxPendingBytes,
     onIntent: (intent): IpcMessageToWorker => {
       recebidas.push(intent)
-      return { v: 1, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
+      return { v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
     },
   })
 
@@ -619,7 +667,7 @@ function montarSaturado(maxPendingBytes = 512): {
 describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados', () => {
   it('as difusoes de `state` coalescem em vez de crescerem a fila', () => {
     const b = montarSaturado()
-    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
 
     assert.ok(b.canal.stats.coalesced > 0, 'tem de ter havido coalescencia')
     assert.equal(b.canal.stats.dropped, 0, 'coalescer NAO e descartar')
@@ -635,7 +683,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
 
   it('>>> saturado, uma intencao do dono CONTINUA a receber resposta <<<', () => {
     const b = montarSaturado()
-    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
 
     const antes = b.canal.stats.sent
     const filaAntes = b.saida.writableLength
@@ -653,11 +701,11 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
 
   it('`error` tambem atravessa o teto suave', () => {
     const b = montarSaturado()
-    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
 
     const antes = b.canal.stats.sent
     assert.equal(
-      b.canal.send({ v: 1, type: 'error', code: 'RATE_LIMITED', message: 'devagar' }),
+      b.canal.send({ v: 2, type: 'error', code: 'RATE_LIMITED', message: 'devagar' }),
       true,
     )
     assert.equal(b.canal.stats.sent, antes + 1)
@@ -665,7 +713,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
 
   it('ao drenar sai a difusao MAIS RECENTE, e o resumo e uma linha so', async () => {
     const b = montarSaturado()
-    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+    for (let seq = 0; seq < 500; seq += 1) b.canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
     assert.ok(b.canal.stats.coalesced > 0)
 
     // O worker volta a ler: o `'drain'` chega e o canal entrega o que reteve.
@@ -680,7 +728,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
     const ultima = linhasEscritas.at(-1) ?? ''
     assert.deepEqual(parseIpcLine(ultima, 'to-worker'), {
       ok: true,
-      message: { v: 1, type: 'state', state: 'STOPPED', seq: 499 },
+      message: { v: 2, type: 'state', state: 'STOPPED', seq: 499 },
     })
 
     assert.equal(
@@ -710,7 +758,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
       maxPendingBytes: 64,
       overwhelmedBytes: 256,
       onIntent: (i): IpcMessageToWorker => ({
-        v: 1,
+        v: 2,
         type: 'ack',
         requestId: i.requestId,
         result: 'noop',
@@ -719,11 +767,11 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
     })
 
     for (let i = 0; i < 100; i += 1) {
-      canal.send({ v: 1, type: 'ack', requestId: 'r', result: 'noop', state: 'READY' })
+      canal.send({ v: 2, type: 'ack', requestId: 'r', result: 'noop', state: 'READY' })
     }
 
     assert.equal(canal.stats.overwhelmed, true, 'estado TERMINAL observavel')
-    assert.equal(canal.send({ v: 1, type: 'ack', requestId: 'r', result: 'noop', state: 'READY' }), false)
+    assert.equal(canal.send({ v: 2, type: 'ack', requestId: 'r', result: 'noop', state: 'READY' }), false)
     assert.equal(
       linhas.filter((l) => l.level === 'error' && l.message.includes('INVIAVEL')).length,
       1,
@@ -734,7 +782,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
 
   it('sem `stdin` o canal grita UMA vez e recusa tudo, sem lancar', () => {
     const b = montar({ semSaida: true })
-    assert.equal(b.canal.send({ v: 1, type: 'state', state: 'STOPPED', seq: 1 }), false)
+    assert.equal(b.canal.send({ v: 2, type: 'state', state: 'STOPPED', seq: 1 }), false)
     assert.equal(
       b.linhas.filter((l) => l.level === 'error' && l.message.includes('SEM sentido host->worker')).length,
       1,
@@ -743,7 +791,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
 
   it('uma mensagem que viola o contrato nao sai, e o erro fica no log', () => {
     const b = montar()
-    const invalida = { v: 1, type: 'state', state: 'STOPPED', seq: 1, url: 'https://x' } as IpcMessageToWorker
+    const invalida = { v: 2, type: 'state', state: 'STOPPED', seq: 1, url: 'https://x' } as IpcMessageToWorker
     assert.equal(b.canal.send(invalida), false)
     assert.equal(b.escrito(), '')
     assert.equal(b.linhas.some((l) => l.level === 'error' && l.message.includes('IPC_MESSAGE_INVALID')), true)
@@ -760,7 +808,7 @@ describe('backpressure: `state` coalesce, `ack` e `error` NUNCA sao descartados'
     assert.equal(b.entrada.listenerCount('data'), 0)
     // O absorvedor de 'error' FICA: um EventEmitter sem ele LANCA no host.
     assert.equal(b.entrada.listenerCount('error'), 1)
-    assert.equal(b.canal.send({ v: 1, type: 'state', state: 'STOPPED', seq: 1 }), false)
+    assert.equal(b.canal.send({ v: 2, type: 'state', state: 'STOPPED', seq: 1 }), false)
   })
 
   it('um EPIPE no stdin do filho morto e absorvido, nao propagado', () => {
@@ -841,7 +889,7 @@ describe('nada do que este canal escreve no log leva segredo em claro', () => {
       log,
       secrets: (): readonly string[] => [TOKEN],
       onIntent: (i): IpcMessageToWorker => ({
-        v: 1,
+        v: 2,
         type: 'ack',
         requestId: i.requestId,
         result: 'noop',

@@ -35,11 +35,11 @@ const URL_TUNEL = 'https://x.trycloudflare.com'
 
 /** Estado READY no formato do contrato IPC. */
 function ready(seq: number): IpcStateMessage {
-  return { v: 1, type: 'state', state: 'READY', seq, url: URL_TUNEL, expiresAt: 9_000 }
+  return { v: 2, type: 'state', state: 'READY', seq, url: URL_TUNEL, expiresAt: 9_000 }
 }
 
 function starting(seq: number): IpcStateMessage {
-  return { v: 1, type: 'state', state: 'STARTING', seq }
+  return { v: 2, type: 'state', state: 'STARTING', seq }
 }
 
 function paired(bancada: Bancada): Promise<void> {
@@ -340,7 +340,7 @@ describe('caminhos de erro e difusao', () => {
     await paired(bancada)
     bancada.nucleo.onState(ready(2))
     await tick(6)
-    bancada.nucleo.onState({ v: 1, type: 'state', state: 'STOPPED', seq: 1 })
+    bancada.nucleo.onState({ v: 2, type: 'state', state: 'STOPPED', seq: 1 })
     await tick(6)
     assert.match(bancada.log.all(), /fora de ordem/u)
   })
@@ -361,7 +361,7 @@ describe('caminhos de erro e difusao', () => {
     const bancada = montarBancada()
     await paired(bancada)
     const antes = bancada.sender.mensagens.length
-    bancada.nucleo.onError({ v: 1, type: 'error', requestId: 'r-inexistente', code: 'INTERNAL', message: 'erro orfao' })
+    bancada.nucleo.onError({ v: 2, type: 'error', requestId: 'r-inexistente', code: 'INTERNAL', message: 'erro orfao' })
     await tick(6)
     assert.equal(bancada.sender.mensagens.length, antes, 'nenhuma mensagem nova')
     assert.match(bancada.log.all(), /erro sem intent pendente/u)
@@ -376,7 +376,7 @@ describe('caminhos de erro e difusao', () => {
     const intent = bancada.ipc.intents.at(-1)
     assert.ok(intent !== undefined)
 
-    bancada.nucleo.onError({ v: 1, type: 'error', requestId: intent.requestId, code: 'TUNNEL_FAILED', message: 'o tunel caiu' })
+    bancada.nucleo.onError({ v: 2, type: 'error', requestId: intent.requestId, code: 'TUNNEL_FAILED', message: 'o tunel caiu' })
     await tick(6)
 
     assert.equal(bancada.sender.edicoes.length, 0, 'o erro nao edita in-place')
@@ -387,7 +387,7 @@ describe('caminhos de erro e difusao', () => {
     const bancada = montarBancada()
     await paired(bancada)
     const antes = bancada.sender.mensagens.length
-    bancada.nucleo.onNotify({ v: 1, type: 'notify', texto: 'alerta:sessao-nova' })
+    bancada.nucleo.onNotify({ v: 2, type: 'notify', texto: 'alerta:sessao-nova' })
     await tick(6)
     assert.equal(bancada.sender.mensagens.length, antes, 'nenhuma mensagem para um notify sem corpo')
     assert.match(bancada.log.all(), /notify sem corpo/u)
@@ -441,7 +441,7 @@ describe('MAX_PENDENTES: o mapa de intents pendentes nao cresce sem limite', () 
 
     // O 1o foi expulso pelo teto: o ack dele nao encontra pendente nenhum.
     const antes = bancada.sender.mensagens.length
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId: primeiroRequestId, result: 'accepted', state: 'STARTING' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: primeiroRequestId, result: 'accepted', state: 'STARTING' })
     await tick(6)
     assert.equal(bancada.sender.mensagens.length, antes, 'o ack do expulso nao renderiza nada')
     assert.match(bancada.log.all(), /ack sem intent pendente/u)
@@ -459,7 +459,7 @@ describe('TG-084: /status — estado, seq, tunel, tempo no ar e expiracao do TTL
 
     // O host difunde READY (seq 7, URL, expira em 5 min).
     bancada.nucleo.onState({
-      v: 1,
+      v: 2,
       type: 'state',
       state: 'READY',
       seq: 7,
@@ -472,7 +472,7 @@ describe('TG-084: /status — estado, seq, tunel, tempo no ar e expiracao do TTL
     await bancada.tratar(comandoDoDono('/status'))
     const requestId = bancada.ipc.intents.at(-1)?.requestId
     assert.ok(requestId !== undefined)
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId, result: 'accepted', state: 'READY' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId, result: 'accepted', state: 'READY' })
     await tick()
 
     // A resposta de /status EDITA a mensagem da difusao in-place (TG-028).
@@ -489,13 +489,13 @@ describe('TG-084: /status — estado, seq, tunel, tempo no ar e expiracao do TTL
   it('fora de READY nao ha URL: a difusao de STARTING nao a divulga', async () => {
     const bancada = montarBancada()
     await paired(bancada)
-    bancada.nucleo.onState({ v: 1, type: 'state', state: 'STARTING', seq: 3 })
+    bancada.nucleo.onState({ v: 2, type: 'state', state: 'STARTING', seq: 3 })
     await tick()
 
     await bancada.tratar(comandoDoDono('/status'))
     const requestId = bancada.ipc.intents.at(-1)?.requestId
     assert.ok(requestId !== undefined)
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId, result: 'accepted', state: 'STARTING' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId, result: 'accepted', state: 'STARTING' })
     await tick()
 
     const edicao = bancada.sender.edicoes.at(-1)
@@ -556,7 +556,7 @@ describe('TG-087: /emergencia — derruba tunel e worker, responde uma vez, idem
     const bancada = montarBancada()
     await paired(bancada)
 
-    bancada.nucleo.onNotify({ v: 1, type: 'notify', texto: 'alerta:auth-falha\nTentativa de acesso falhada.' })
+    bancada.nucleo.onNotify({ v: 2, type: 'notify', texto: 'alerta:auth-falha\nTentativa de acesso falhada.' })
     await tick()
     const botao = bancada.sender.mensagens.at(-1)?.opcoes?.actionRows?.[0]?.[0]?.token
     assert.ok(typeof botao === 'string')
@@ -593,7 +593,7 @@ describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
 
     const upRequest = bancada.ipc.intents[0]?.requestId
     assert.ok(upRequest !== undefined)
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
     bancada.nucleo.onState(starting(1))
     bancada.nucleo.onState(ready(2))
 
@@ -614,11 +614,11 @@ describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
     await bancada.tratar(accaoDoDono('tunnel.up', token, messageDoBotao(bancada)))
     const upRequest = bancada.ipc.intents[0]?.requestId
     assert.ok(upRequest !== undefined)
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
     bancada.nucleo.onState(ready(1))
 
     bancada.nucleo.onNotify({
-      v: 1,
+      v: 2,
       type: 'notify',
       texto:
         'alerta:link-magico\nSeu link com a chave de acesso (abre e entra, sem senha):\nhttps://x.trycloudflare.com/?key=ABC234GHJ5678LMNPQRSTVWXYZ234567',
@@ -644,7 +644,7 @@ describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
     const upRequest = bancada.ipc.intents[0]?.requestId
     assert.ok(upRequest !== undefined)
 
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: upRequest, result: 'accepted', state: 'STARTING' })
     bancada.nucleo.onState(ready(1))
     assert.equal(bancada.ipc.intents.length, 2, 'primeiro READY pede o link')
 
@@ -680,7 +680,7 @@ describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
     const upRequest = bancada.ipc.intents[0]?.requestId
     assert.ok(upRequest !== undefined)
 
-    bancada.nucleo.onAck({ v: 1, type: 'ack', requestId: upRequest, result: 'noop', state: 'READY' })
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: upRequest, result: 'noop', state: 'READY' })
     bancada.nucleo.onState(ready(1))
 
     assert.equal(bancada.ipc.intents.length, 1, 'noop em READY nao gera link (nao ha ligacao nova)')
@@ -697,7 +697,7 @@ describe('autolink: /ligar -> READY -> o link da chave de acesso sai', () => {
     assert.ok(upRequest !== undefined)
 
     bancada.nucleo.onAck({
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: upRequest,
       result: 'rejected',

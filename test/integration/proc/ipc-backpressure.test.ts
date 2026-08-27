@@ -76,7 +76,7 @@ function filhoQueNaoLe(): ChildProcess {
   return filho
 }
 
-const LINHA_CRUA = `${JSON.stringify({ v: 1, type: 'state', state: 'STOPPED', seq: 1 })}\n`
+const LINHA_CRUA = `${JSON.stringify({ v: 2, type: 'state', state: 'STOPPED', seq: 1 })}\n`
 
 function makeLog(): { log: GuardLogger; avisos: string[] } {
   const avisos: string[] = []
@@ -158,7 +158,7 @@ describe('o TRATAMENTO: `state` coalesce, `ack` e `error` continuam a sair', () 
       output: filho.stdin ?? undefined,
       log,
       onIntent: (intent): IpcMessageToWorker => ({
-        v: 1,
+        v: 2,
         type: 'ack',
         requestId: intent.requestId,
         result: 'noop',
@@ -169,7 +169,7 @@ describe('o TRATAMENTO: `state` coalesce, `ack` e `error` continuam a sair', () 
 
     const inicio = process.hrtime.bigint()
     for (let seq = 0; seq < 20_000; seq += 1) {
-      canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+      canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
     }
     const decorridoMs = Number(process.hrtime.bigint() - inicio) / 1e6
 
@@ -222,7 +222,7 @@ describe('o TRATAMENTO: `state` coalesce, `ack` e `error` continuam a sair', () 
       onIntent: (intent): IpcMessageToWorker => {
         intencoes.push(intent.intent)
         return {
-          v: 1,
+          v: 2,
           type: 'ack',
           requestId: intent.requestId,
           result: 'accepted',
@@ -231,14 +231,14 @@ describe('o TRATAMENTO: `state` coalesce, `ack` e `error` continuam a sair', () 
       },
     })
 
-    for (let seq = 0; seq < 20_000; seq += 1) canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+    for (let seq = 0; seq < 20_000; seq += 1) canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
     assert.ok(canal.stats.coalesced > 0, 'o canal tem de estar saturado')
 
     const enviadasAntes = canal.stats.sent
     const filaAntes = filho.stdin?.writableLength ?? 0
 
     const respondeu = canal.send({
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: '01J0000000000000000000000A',
       result: 'accepted',
@@ -266,7 +266,7 @@ describe('o TRATAMENTO: `state` coalesce, `ack` e `error` continuam a sair', () 
       output: filho.stdin ?? undefined,
       log,
       onIntent: (intent): IpcMessageToWorker => ({
-        v: 1,
+        v: 2,
         type: 'ack',
         requestId: intent.requestId,
         result: 'noop',
@@ -276,7 +276,7 @@ describe('o TRATAMENTO: `state` coalesce, `ack` e `error` continuam a sair', () 
     })
 
     // Satura...
-    for (let seq = 0; seq < 20_000; seq += 1) canal.send({ v: 1, type: 'state', state: 'STOPPED', seq })
+    for (let seq = 0; seq < 20_000; seq += 1) canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
     assert.ok(canal.stats.coalesced > 0)
 
     // ... e o `dispose` continua sincrono e idempotente, sem lancar.

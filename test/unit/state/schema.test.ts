@@ -46,7 +46,7 @@ describe('serializacao', () => {
       secretDigest: DIGEST,
       restricted: { since: clock.now(), reason: 'brute-force-ceiling' },
       tunnel: { pid: 4242, startedAt: clock.advance(1000), mode: 'quick' },
-      pairing: { ownerUserId: 7, ownerChatId: -1_001_234, pairedAt: clock.advance(1000) },
+      pairing: { ownerUserId: '7', ownerChatId: '-1001234', pairedAt: clock.advance(1000) },
     }
     const texto = serializeStateDocument(estado)
     assert.ok(texto.endsWith('\n'))
@@ -148,13 +148,33 @@ describe('um ficheiro que existe e nao le PARA o arranque', () => {
     recusa('{"version":1,"desiredState":"STOPPED","tunnel":{"pid":1,"startedAt":0,"mode":"lento"}}')
   })
 
-  it('pairing.ownerChatId NEGATIVO e legitimo (grupo do Telegram), ownerUserId <= 0 nao', () => {
+  it('pairing no formato LEGADO (number): chat NEGATIVO e legitimo, ownerUserId <= 0 nao', () => {
     const comGrupo = parseStateDocument(
       '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":5,"ownerChatId":-1001,"pairedAt":0}}',
       FONTE,
     )
-    assert.equal(comGrupo.pairing?.ownerChatId, -1001)
+    // MIGRACAO ADITIVA (EMENDA ONDA-1-IPC-ENVELOPE-STRING): o numero legado
+    // normaliza para string na memoria — o formato canonico passou a ser string.
+    assert.deepEqual(comGrupo.pairing, { ownerUserId: '5', ownerChatId: '-1001', pairedAt: 0 })
     recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":0,"ownerChatId":1,"pairedAt":0}}')
+  })
+
+  it('pairing no formato NOVO (string): qualquer id nao vazio e aceite, vazio nao', () => {
+    const lido = parseStateDocument(
+      '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":"1057992969437413409","ownerChatId":"-1001234567890","pairedAt":0}}',
+      FONTE,
+    )
+    assert.deepEqual(lido.pairing, {
+      ownerUserId: '1057992969437413409',
+      ownerChatId: '-1001234567890',
+      pairedAt: 0,
+    })
+    // A politica minima e trim + nao vazio (espelho do normalizeKey do worker):
+    // um id de so espacos nao designa ninguem.
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":"  ","ownerChatId":"1","pairedAt":0}}')
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":"1","ownerChatId":"","pairedAt":0}}')
+    // Um valor que nao e nem numero legado nem string nova e corrupcao.
+    recusa('{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":true,"ownerChatId":"1","pairedAt":0}}')
   })
 })
 
@@ -244,5 +264,40 @@ describe('`provider` persistido (D3) -- aditivo e fechado', () => {
     const texto = serializeStateDocument(estado)
     assert.deepEqual(Object.keys(JSON.parse(texto) as object), ['version', 'desiredState', 'provider'])
     assert.equal(parseStateDocument(texto, FONTE).provider, 'telegram')
+  })
+})
+
+describe('MIGRACAO ADITIVA do pareamento numerico -> string (EMENDA ONDA-1-IPC-ENVELOPE-STRING)', () => {
+  it('um state.json v1 LEGADO (ids numericos) le, normaliza para string e grava string', () => {
+    // O que um state.json da era V1 tinha no disco.
+    const legado =
+      '{"version":1,"desiredState":"READY","pairing":{"ownerUserId":42,"ownerChatId":-1001234567890,"pairedAt":2000}}'
+
+    const lido = parseStateDocument(legado, FONTE)
+    assert.deepEqual(lido.pairing, { ownerUserId: '42', ownerChatId: '-1001234567890', pairedAt: 2000 })
+
+    // A proxima escrita grava o formato NOVO (string) — o disco migra sozinho
+    // na primeira escrita, sem nenhum passo manual.
+    const reescrito = serializeStateDocument(lido)
+    assert.equal(reescrito.includes('"ownerUserId": "42"'), true)
+    assert.equal(reescrito.includes('"ownerChatId": "-1001234567890"'), true)
+    assert.equal(reescrito.includes('"ownerUserId": 42'), false, 'o numero legado NAO volta ao disco')
+    assert.equal(reescrito.includes('"ownerChatId": -1001234567890'), false)
+    // E o documento reescrito le de volta com a MESMA forma canonica.
+    assert.deepEqual(parseStateDocument(reescrito, FONTE).pairing, lido.pairing)
+  })
+
+  it('parsePersistedState (a saida do callback de update) tambem normaliza numeros', () => {
+    // O `update()` do store valida a SAIDA do callback por este caminho: um
+    // callback que devolva o formato legado e aceite e canonizado para string.
+    const saida = parsePersistedState(
+      {
+        version: 1,
+        desiredState: 'STOPPED',
+        pairing: { ownerUserId: 7, ownerChatId: -1_001, pairedAt: 0 },
+      },
+      FONTE,
+    )
+    assert.deepEqual(saida.pairing, { ownerUserId: '7', ownerChatId: '-1001', pairedAt: 0 })
   })
 })

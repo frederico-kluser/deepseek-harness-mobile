@@ -368,10 +368,10 @@ export type SurfaceSenderFactory = (adapter: ProviderAdapter) => SurfaceSender
  * A intent NEUTRA que atravessa a ponte — chaves STRING (D4).
  *
  * DONO unico deste tipo (onda 5a): `commands.ts` e `core.ts` produzem esta forma
- * e {@link SurfaceIpcBridge.send} aceita-a. O ENVELOPE numerico (`from`/`chat`
- * do `IpcIntentMessage` V1) e responsabilidade da PONTE, nao do chamador — a
- * `criarSurfaceIpcBridge` de `worker/providers/registry.ts` e quem monta e envia
- * o `IpcIntentMessage` completo (o cast falsa atribuicao da Onda 2 morre aqui).
+ * e {@link SurfaceIpcBridge.send} aceita-a. O ENVELOPE do canal (`from`/`chat`
+ * do `IpcIntentMessage` V2) tambem e STRING (EMENDA ONDA-1-IPC-ENVELOPE-STRING)
+ * — a ponte monta o `IpcIntentMessage` completo sem conversao (o cast falsa
+ * atribuicao da Onda 2 morre aqui).
  */
 export interface IntencaoNeutra {
   readonly intent: IpcIntentName
@@ -387,8 +387,8 @@ export interface IntencaoNeutra {
  * equivalente neutro do `ipc` do `ContextoDoComando` de `worker/commands/router.ts`.
  *
  * `send` recebe a intent NEUTRA e devolve `true` sse o canal aceitou. O envelope
- * numerico do canal (`IpcIntentMessage`) e montado pela implementacao da ponte,
- * nunca pelo nucleo nem pelos comandos.
+ * do canal (`IpcIntentMessage`, `from`/`chat` STRING em V2) e montado pela
+ * implementacao da ponte, nunca pelo nucleo nem pelos comandos.
  */
 export interface SurfaceIpcBridge {
   send(pedido: IntencaoNeutra): boolean

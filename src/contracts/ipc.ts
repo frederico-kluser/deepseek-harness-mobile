@@ -11,6 +11,18 @@
  *
  * LEITURA LIVRE, ESCRITA PROIBIDA na Onda 5 (03-ONDAS.md 16).
  *
+ * EMENDA ONDA-1-IPC-ENVELOPE-STRING (onda 1 da rodada de provedores): o
+ * envelope V2 — `from`/`chat` passam de `number` (heranca Telegram) a `string`
+ * em `IpcIntentMessage`, `IpcPairingOwnerMessage` e `IpcPairingSuccessMessage`.
+ * `IPC_PROTOCOL_VERSION` sobe para 2; a invariante S4 (versao desconhecida =
+ * linha descartada, canal sobrevive) torna o bump seguro — host e worker sao
+ * spawnados pelo MESMO build, e uma ponta antiga descarta a linha nova em vez
+ * de partir. O vocabulario de intents e de codigos de erro NAO muda. A
+ * conversao numerica morre na FRONTEIRA dos provedores (o adaptador Telegram
+ * converte `from.id`/`chat.id` numericos para string UMA vez, no parse do
+ * update); todo o resto do pipeline e string — o prerequisito para provedores
+ * com ids nao-numericos (snowflakes do Discord estouram Number.MAX_SAFE_INTEGER).
+ *
  * ===========================================================================
  * PORQUE O BOT E UM SUBPROCESSO, E NAO CODIGO DENTRO DA FIBER
  * ===========================================================================
@@ -134,7 +146,7 @@ import type { ControlAction } from './control.ts'
 // nao por um import novo de `./control.ts`.
 export type { ControlAction }
 
-export const IPC_PROTOCOL_VERSION = 1
+export const IPC_PROTOCOL_VERSION = 2
 
 /** Toda mensagem carrega a versao. Versao desconhecida cai na regra S4. */
 export interface IpcEnvelope {
@@ -285,11 +297,14 @@ export type IpcIntentName =
 /**
  * Intencao vinda do worker.
  *
- * `from` e `chat` sao **ids numericos**, nunca username — username e mutavel e
- * sequestravel. Chegam aqui **ja filtrados** pela allowlist do worker (S6); o
- * host **volta a verificar** contra o pareamento persistido, porque uma
- * verificacao no processo que fala com a internet e a primeira a cair se esse
- * processo for comprometido.
+ * `from` e `chat` sao **ids em STRING** (V2 — EMENDA ONDA-1-IPC-ENVELOPE-STRING),
+ * nunca username — username e mutavel e sequestravel. O envelope foi numerico
+ * na V1 por heranca Telegram; a V2 transporta a string ja normalizada na
+ * fronteira do provedor, o que abre o canal a ids nao-numericos (WhatsApp,
+ * Discord/snowflake, Matrix). Chegam aqui **ja filtrados** pela allowlist do
+ * worker (S6); o host **volta a verificar** contra o pareamento persistido,
+ * porque uma verificacao no processo que fala com a internet e a primeira a
+ * cair se esse processo for comprometido.
  *
  * `nonce` viaja **opaco**. O worker nao o le, nao o valida e nao o gera (S5).
  */
@@ -298,10 +313,10 @@ export interface IpcIntentMessage extends IpcEnvelope {
   readonly intent: IpcIntentName
   /** ULID gerado na superficie. E a CHAVE DE IDEMPOTENCIA: repetido devolve o resultado da primeira execucao. */
   readonly requestId: string
-  /** `from.id` do update do Telegram. Numerico. */
-  readonly from: number
-  /** `chat.id` do update. Numerico. Distinto de `from` em grupo. */
-  readonly chat: number
+  /** O eixo "quem age", como string normalizada (V2). Nunca vazio apos trim. */
+  readonly from: string
+  /** O eixo "onde", como string normalizada (V2). Distinto de `from` em grupo. */
+  readonly chat: string
   /** Presente nas intencoes que aumentam exposicao. Opaco para o worker. */
   readonly nonce?: string | undefined
 }
@@ -400,10 +415,10 @@ export interface IpcNonceIssuedMessage extends IpcEnvelope {
  */
 export interface IpcPairingOwnerMessage extends IpcEnvelope {
   readonly type: 'pairing.owner'
-  /** `from.id` do dono gravado. Numerico. */
-  readonly from: number
-  /** `chat.id` do dono gravado. Numerico; em grupo e o id do grupo. */
-  readonly chat: number
+  /** O eixo "quem" do dono gravado, como string (V2). */
+  readonly from: string
+  /** O eixo "onde" do dono gravado, como string (V2); em grupo e o id do grupo. */
+  readonly chat: string
   /** Epoch ms do pareamento original. */
   readonly pairedAt: number
 }
@@ -424,10 +439,10 @@ export interface IpcPairingOwnerMessage extends IpcEnvelope {
  */
 export interface IpcPairingSuccessMessage extends IpcEnvelope {
   readonly type: 'pairing.success'
-  /** `from.id` do dono que acabou de parear. Numerico. */
-  readonly from: number
-  /** `chat.id` do dono. Numerico; em grupo e o id do grupo. */
-  readonly chat: number
+  /** O eixo "quem" do dono que acabou de parear, como string (V2). */
+  readonly from: string
+  /** O eixo "onde" do dono, como string (V2); em grupo e o id do grupo. */
+  readonly chat: string
   /** Epoch ms do pareamento (o `pairedAt` gravado pelo worker). */
   readonly pairedAt: number
 }

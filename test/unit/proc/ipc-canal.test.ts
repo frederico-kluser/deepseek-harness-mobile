@@ -20,12 +20,12 @@ import { flush, makeConfig } from '../../support/fixtures.ts'
 import { makeContextoComStdio } from './ipc-seat.ts'
 
 const INTENCAO: IpcIntentMessage = {
-  v: 1,
+  v: 2,
   type: 'intent',
   intent: 'tunnel.up',
   requestId: '01J0000000000000000000000A',
-  from: 123456789,
-  chat: 123456789,
+  from: '123456789',
+  chat: '123456789',
 }
 
 const SAIDA_COM_ERRO = { exitCode: 1, signal: null } as const
@@ -84,7 +84,7 @@ describe('a viagem completa: intencao entra pelo stdout, resposta sai pelo stdin
     const vistas: IpcIntentMessage[] = []
     const h = montar((intent): IpcMessageToWorker => {
       vistas.push(intent)
-      return { v: 1, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
+      return { v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' }
     })
     h.supervisor.start()
 
@@ -95,7 +95,7 @@ describe('a viagem completa: intencao entra pelo stdout, resposta sai pelo stdin
     assert.equal(
       child.recebido(),
       serializeIpcMessage(
-        { v: 1, type: 'ack', requestId: INTENCAO.requestId, result: 'accepted', state: 'STARTING' },
+        { v: 2, type: 'ack', requestId: INTENCAO.requestId, result: 'accepted', state: 'STARTING' },
         'to-worker',
       ),
     )
@@ -148,7 +148,7 @@ describe('a viagem completa: intencao entra pelo stdout, resposta sai pelo stdin
 })
 
 describe('`send()` fala sempre com o filho CORRENTE', () => {
-  const DIFUSAO: IpcMessageToWorker = { v: 1, type: 'state', state: 'STOPPED', seq: 1 }
+  const DIFUSAO: IpcMessageToWorker = { v: 2, type: 'state', state: 'STOPPED', seq: 1 }
 
   it('antes do arranque nao ha canal, e `send` devolve false sem lancar', () => {
     const h = montar()
@@ -210,7 +210,7 @@ describe('`send()` fala sempre com o filho CORRENTE', () => {
     // nao mexeu nisto -- a evidencia contra processos reais esta em
     // `test/integration/proc/stdio-pipe-nao-regride-tree-kill.test.ts`.
     assert.deepEqual(kills, [[-77, 'SIGKILL']])
-    assert.equal(supervisor.send({ v: 1, type: 'state', state: 'STOPPED', seq: 1 }), false)
+    assert.equal(supervisor.send({ v: 2, type: 'state', state: 'STOPPED', seq: 1 }), false)
   })
 
   it('a morte do filho fecha o canal: `send` deixa de escrever', async () => {

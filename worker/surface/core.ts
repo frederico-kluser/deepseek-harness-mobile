@@ -1416,8 +1416,10 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       // `pairing.owner` (host -> worker): o dono PERSISTIDO no boot. Re-monta a
       // autorizacao (auth.semearDono) — nao ha segredo (NAO autoriza por si: quem
       // valida intents e o HOST, S6), e o nucleo interno (projecao, pendentes)
-      // sobrevive intacto.
-      deps.auth.semearDono({ userKey: String(msg.from), chatKey: String(msg.chat), pairedAt: msg.pairedAt })
+      // sobrevive intacto. Em V2 o envelope ja carrega os DOIS EIXOS como STRING
+      // (EMENDA ONDA-1-IPC-ENVELOPE-STRING): o `String(...)` da fronteira
+      // numerica foi removido — aqui so se re-tipifica para `SurfaceDono`.
+      deps.auth.semearDono({ userKey: msg.from, chatKey: msg.chat, pairedAt: msg.pairedAt })
       log.info('dono persistido re-montado', { pairedAt: msg.pairedAt })
     } catch (error) {
       log.error('falha ao re-montar dono persistido', { detail: descrever(error) })

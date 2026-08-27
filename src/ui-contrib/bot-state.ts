@@ -48,8 +48,8 @@ export type BotEstado =
 export interface DerivarBotInput {
   /** `true` sse ha token configurado (config.worker.token ou secrets.env). */
   readonly tokenConfigurado: boolean
-  /** O `pairing` do `state.json`; `undefined` = pareamento por fazer. */
-  readonly pairing: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+  /** O `pairing` do `state.json`; `undefined` = pareamento por fazer. Os eixos sao STRING (V2 — EMENDA ONDA-1-IPC-ENVELOPE-STRING); so a PRESENCA importa aqui. */
+  readonly pairing: { readonly ownerUserId: string; readonly ownerChatId: string; readonly pairedAt: number } | undefined
 }
 
 /**

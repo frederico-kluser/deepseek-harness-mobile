@@ -630,7 +630,7 @@ describe('8(b): o /emergencia NAO reinicia o worker — o supervisor e disposto'
 
       // O dono manda /emergencia: o intent atravessa o canal host <- worker.
       filho.stdout.write(
-        JSON.stringify({ v: 1, type: 'intent', intent: 'emergency', requestId: 'emerg-1', from: 123, chat: 456 }) + '\n',
+        JSON.stringify({ v: 2, type: 'intent', intent: 'emergency', requestId: 'emerg-1', from: '123', chat: '456' }) + '\n',
       )
       await flush()
       await flush()
@@ -686,7 +686,7 @@ describe('T5.4 fiada (Frente 2): o toggle do tunel notifica o worker pelo canal 
       // O dono manda /emergencia: o stop em STOPPED e um noop PERMITIDO e
       // o controlador notifica "Tunel desligado" (origem telegram:123).
       filho.stdout.write(
-        JSON.stringify({ v: 1, type: 'intent', intent: 'emergency', requestId: 'emerg-f2', from: 123, chat: 456 }) + '\n',
+        JSON.stringify({ v: 2, type: 'intent', intent: 'emergency', requestId: 'emerg-f2', from: '123', chat: '456' }) + '\n',
       )
       await flush()
       await flush()
@@ -733,8 +733,10 @@ describe('8(c): no boot com dono persistido, o HOST envia pairing.owner ao worke
         (mensagem) => mensagem['type'] === 'pairing.owner',
       )
       assert.ok(dono !== undefined, 'o pairing.owner saiu no boot')
-      assert.equal(dono['from'], 42)
-      assert.equal(dono['chat'], -1001234567890, 'o chat de GRUPO viaja como eixo (8d)')
+      // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): os eixos viajam STRING — o
+      // state.json legado (numeros) normalizou para string na leitura.
+      assert.equal(dono['from'], '42')
+      assert.equal(dono['chat'], '-1001234567890', 'o chat de GRUPO viaja como eixo (8d)')
       assert.equal(dono['pairedAt'], 2_000)
 
       for (const disposer of ctx.effects) disposer()
@@ -821,7 +823,10 @@ describe('aviso de arranque: trustEdgeHeaders=true com borda (modo tunnel)', () 
 function comEstadoComCaminho(
   desejado: 'READY' | 'STOPPED',
   restrito: boolean,
-  pairing?: { ownerUserId: number; ownerChatId: number; pairedAt: number },
+  // O fixture escreve o formato LEGADO (number) no disco de proposito — a
+  // migracao aditiva normaliza para string (EMENDA ONDA-1-IPC-ENVELOPE-STRING);
+  // aceitar ambos aqui e o que permite semear um state.json v1 de verdade.
+  pairing?: { ownerUserId: number | string; ownerChatId: number | string; pairedAt: number },
   tunnelRecord?: { pid: number; startedAt: number; mode: 'quick' | 'named' },
 ): { dir: string; limpar: () => void } {
   const casa = join(tmpdir(), 'dsh-guard-falha-' + process.pid + '-' + Math.random().toString(36).slice(2))
@@ -867,7 +872,7 @@ describe('reemitirEstado: o estado COMPLETO ao worker (CTL-027)', () => {
       ctx = install().ctx
       const filho = ctx.subprocess.lastChild()
       filho.stdout.write(
-        JSON.stringify({ v: 1, type: 'intent', intent: 'tunnel.status', requestId: 'st-loopback', from: 42, chat: -1001234567890 }) + '\n',
+        JSON.stringify({ v: 2, type: 'intent', intent: 'tunnel.status', requestId: 'st-loopback', from: '42', chat: '-1001234567890' }) + '\n',
       )
       await flush()
       const linhas = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>)
@@ -889,7 +894,7 @@ describe('reemitirEstado: o estado COMPLETO ao worker (CTL-027)', () => {
       ctx = install(configTunelCom(false)).ctx
       const filho = ctx.subprocess.lastChild()
       filho.stdout.write(
-        JSON.stringify({ v: 1, type: 'intent', intent: 'tunnel.status', requestId: 'st-tunel', from: 42, chat: -1001234567890 }) + '\n',
+        JSON.stringify({ v: 2, type: 'intent', intent: 'tunnel.status', requestId: 'st-tunel', from: '42', chat: '-1001234567890' }) + '\n',
       )
       await flush()
       const linhas = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>)
@@ -916,7 +921,7 @@ describe('S6: o pareamento ilegivel fecha a intencao (fail-closed, CTL-029)', ()
       chmodSync(join(dir, 'state.json'), 0o000)
       const filho = ctx.subprocess.lastChild()
       filho.stdout.write(
-        JSON.stringify({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'par-ilegivel', from: 42, chat: -1001234567890 }) + '\n',
+        JSON.stringify({ v: 2, type: 'intent', intent: 'tunnel.down', requestId: 'par-ilegivel', from: '42', chat: '-1001234567890' }) + '\n',
       )
       await flush()
       const linhas = filho.stdinLines.map((linha) => JSON.parse(linha) as Record<string, unknown>)

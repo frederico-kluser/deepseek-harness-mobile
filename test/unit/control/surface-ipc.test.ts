@@ -138,12 +138,12 @@ function fazerBancada(overrides: {
 
 function intent(overrides: Partial<IpcIntentMessage> = {}): IpcIntentMessage {
   return {
-    v: 1,
+    v: 2,
     type: 'intent',
     intent: 'tunnel.up',
     requestId: 'req-ipc',
-    from: 123,
-    chat: 456,
+    from: '123',
+    chat: '456',
     ...overrides,
   }
 }
@@ -173,7 +173,7 @@ describe('tunnel.up', () => {
 
     const resposta = h.responder(intent({ requestId: 'req-d29', nonce: h.emitirNonce('start') }))
     assert.deepEqual(resposta, {
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: 'req-d29',
       result: 'rejected',
@@ -187,7 +187,7 @@ describe('tunnel.up', () => {
     const resposta = h.responder(intent({ requestId: 'req-sem-nonce' }))
 
     assert.deepEqual(resposta, {
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: 'req-sem-nonce',
       result: 'rejected',
@@ -214,7 +214,7 @@ describe('tunnel.up', () => {
 
     const resposta = h.responder(intent({ requestId: 'req-ready', nonce: h.emitirNonce('start') }))
     assert.deepEqual(resposta, {
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: 'req-ready',
       result: 'noop',
@@ -282,7 +282,7 @@ describe('tunnel.down', () => {
 
     const resposta = h.responder(intent({ intent: 'tunnel.down', requestId: 'req-down' }))
 
-    assert.deepEqual(resposta, { v: 1, type: 'ack', requestId: 'req-down', result: 'accepted', state: 'STOPPING' })
+    assert.deepEqual(resposta, { v: 2, type: 'ack', requestId: 'req-down', result: 'accepted', state: 'STOPPING' })
     assert.equal(h.supervisor.stopCalls, 1)
   })
 
@@ -290,7 +290,7 @@ describe('tunnel.down', () => {
     const h = fazerBancada()
     const resposta = h.responder(intent({ intent: 'tunnel.down', requestId: 'req-noop' }))
 
-    assert.deepEqual(resposta, { v: 1, type: 'ack', requestId: 'req-noop', result: 'noop', state: 'STOPPED' })
+    assert.deepEqual(resposta, { v: 2, type: 'ack', requestId: 'req-noop', result: 'noop', state: 'STOPPED' })
     assert.equal(h.supervisor.stopCalls, 0)
   })
 })
@@ -309,7 +309,7 @@ describe('emergency (kill switch)', () => {
 
     const resposta = h.responder(intent({ intent: 'emergency', requestId: 'req-emergencia' }))
 
-    assert.deepEqual(resposta, { v: 1, type: 'ack', requestId: 'req-emergencia', result: 'accepted', state: 'STOPPING' })
+    assert.deepEqual(resposta, { v: 2, type: 'ack', requestId: 'req-emergencia', result: 'accepted', state: 'STOPPING' })
     await flush()
     assert.equal(h.supervisor.stopCalls, 1)
     assert.equal(h.emergencias.length, 1, 'a invalidacao de sessoes corre DEPOIS do tunel cair')
@@ -330,7 +330,7 @@ describe('tunnel.status', () => {
     const h = fazerBancada()
     const resposta = h.responder(intent({ intent: 'tunnel.status', requestId: 'req-status' }))
 
-    assert.deepEqual(resposta, { v: 1, type: 'ack', requestId: 'req-status', result: 'noop', state: 'STOPPED' })
+    assert.deepEqual(resposta, { v: 2, type: 'ack', requestId: 'req-status', result: 'noop', state: 'STOPPED' })
     assert.equal(h.reemitidas.contagem, 1, 'o worker (re)conectado recebe o estado completo, nao um delta')
   })
 })
@@ -399,7 +399,7 @@ describe('criarRespondedorDeNonce — o host atende nonce.request', () => {
     })
     void avisos
 
-    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req-nonce' })
+    const resposta = responder({ v: 2, type: 'nonce.request', acao: 'start', requestId: 'req-nonce' })
     assert.equal(resposta.type, 'nonce.issued')
     assert.equal((resposta as { acao?: string }).acao, 'start')
     assert.equal((resposta as { requestId?: string }).requestId, 'req-nonce')
@@ -415,7 +415,7 @@ describe('criarRespondedorDeNonce — o host atende nonce.request', () => {
       controller: undefined,
       log: createFakeLogger()('nonce'),
     })
-    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req-loopback' })
+    const resposta = responder({ v: 2, type: 'nonce.request', acao: 'start', requestId: 'req-loopback' })
     assert.equal(resposta.type, 'error')
     assert.equal((resposta as { code?: string }).code, 'EXPOSURE_DISABLED')
     assert.equal((resposta as { requestId?: string }).requestId, 'req-loopback')
@@ -442,7 +442,7 @@ describe('criarRespondedorDeNonce — o host atende nonce.request', () => {
       debug: (mensagem: string): void => void linhas.push(mensagem),
     }
     const responder = criarRespondedorDeNonce({ controller: controlador, log })
-    const resposta = responder({ v: 1, type: 'nonce.request', acao: 'reset', requestId: 'req-s3' }) as { nonce?: string }
+    const resposta = responder({ v: 2, type: 'nonce.request', acao: 'reset', requestId: 'req-s3' }) as { nonce?: string }
     assert.ok(resposta.nonce !== undefined)
     for (const linha of linhas) assert.ok(!linha.includes(resposta.nonce), 'o nonce nao vai ao log')
   })
@@ -457,9 +457,10 @@ describe('8(d): pareamento de GRUPO — o host revalida os DOIS eixos (from E ch
     const clock = new FakeClock(1_000)
     // O pareamento persistido tem o chat do GRUPO: a revalidacao no host
     // exige from == dono E chat == grupo — o worker nao decide sozinho (S6).
-    const dono = 42
-    const grupo = -1001234567890
-    const pareado = (from: number, chat: number): boolean => from === dono && chat === grupo
+    // V2: os DOIS EIXOS sao STRING (EMENDA ONDA-1-IPC-ENVELOPE-STRING).
+    const dono = '42'
+    const grupo = '-1001234567890'
+    const pareado = (from: string, chat: string): boolean => from === dono && chat === grupo
     const auditoria: AuditEvent[] = []
     const responder = criarRespondedorIpc({
       controller: undefined,
@@ -472,15 +473,15 @@ describe('8(d): pareamento de GRUPO — o host revalida os DOIS eixos (from E ch
       aposEmergencia: () => undefined,
     })
 
-    const aceite = responder({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'g-1', from: dono, chat: grupo })
+    const aceite = responder({ v: 2, type: 'intent', intent: 'tunnel.down', requestId: 'g-1', from: dono, chat: grupo })
     // Sem controlador (modo loopback) a resposta e EXPOSURE_DISABLED — o que
     // importa aqui e que a IDENTIDADE passou: nada de NOT_PAIRED, nada no audit.
     assert.equal((aceite as { code?: string }).code, 'EXPOSURE_DISABLED', 'o dono no grupo pareado passa o portao de identidade')
 
-    const chatErrado = responder({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'g-2', from: dono, chat: 999 })
+    const chatErrado = responder({ v: 2, type: 'intent', intent: 'tunnel.down', requestId: 'g-2', from: dono, chat: '999' })
     assert.equal((chatErrado as { code?: string }).code, 'NOT_PAIRED', 'mesmo from, chat fora do pareamento')
 
-    const fromErrado = responder({ v: 1, type: 'intent', intent: 'tunnel.down', requestId: 'g-3', from: 7, chat: grupo })
+    const fromErrado = responder({ v: 2, type: 'intent', intent: 'tunnel.down', requestId: 'g-3', from: '7', chat: grupo })
     assert.equal((fromErrado as { code?: string }).code, 'NOT_PAIRED', 'mesmo grupo, from fora do pareamento')
 
     assert.equal(auditoria.length, 2, 'as recusas de identidade sao contadas no audit (CTL-029)')
@@ -542,7 +543,7 @@ describe('recusas do controlador mapeadas no canal real (ack com code)', () => {
 
     const resposta = h.responder(intent({ requestId: 'req-failed' }))
     assert.deepEqual(resposta, {
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: 'req-failed',
       result: 'rejected',
@@ -555,7 +556,7 @@ describe('recusas do controlador mapeadas no canal real (ack com code)', () => {
     const h = fazerBancada({ restritoAtivo: true })
     const resposta = h.responder(intent({ requestId: 'req-restrito', nonce: 'x' }))
     assert.deepEqual(resposta, {
-      v: 1,
+      v: 2,
       type: 'ack',
       requestId: 'req-restrito',
       result: 'rejected',

@@ -153,23 +153,30 @@ export function codigosSaoIguais(a: string, b: string): boolean {
 /* ========================================================================== */
 
 /**
- * O DONO, tal como o contrato congelado o guarda (`src/contracts/state.ts`).
+ * O DONO, tal como o contrato o guarda (`src/contracts/state.ts`) — os DOIS
+ * EIXOS em STRING (EMENDA ONDA-1-IPC-ENVELOPE-STRING, V2).
  *
  * DOIS ids, e nao um: `from.id` e quem FALA, `chat.id` e ONDE. Em conversa
  * privada eles coincidem por construcao, que e exatamente a armadilha que faz
  * alguem validar so um (A-12 de `05-QUALIDADE-CODIGO.md`). Guardam-se os dois
- * porque e com os dois que T4.4 decide.
+ * porque e com os dois que a decisao do dono se fecha.
  */
 export interface DonoPareado {
-  readonly ownerUserId: number
-  readonly ownerChatId: number
+  readonly ownerUserId: string
+  readonly ownerChatId: string
   readonly pairedAt: number
 }
 
-/** O que um `/parear <codigo>` traz, depois de lido de um update cru. */
+/**
+ * O que um `/parear <codigo>` traz, depois de lido de um update cru.
+ *
+ * `userId`/`chatId` ja nascem STRING aqui: o update cru carrega numeros, mas a
+ * FRONTEIRA deste parser converte para string UMA vez (V2) — o mesmo principio
+ * do `parse.ts` do adaptador. Todo o resto do pipeline e string.
+ */
 export interface ComandoDePareamento {
-  readonly userId: number
-  readonly chatId: number
+  readonly userId: string
+  readonly chatId: string
   readonly codigo: string
 }
 
@@ -244,7 +251,9 @@ export function lerComandoDePareamento(
   if (chatId === undefined) return { descarte: 'sem-conversa' }
   if (propriedade(chat, 'type') !== 'private') return { descarte: 'conversa-nao-privada' }
 
-  return { userId, chatId, codigo }
+  // A FRONTEIRA (V2): o id nasce number no update cru e vira string AQUI,
+  // uma unica vez — o que sair deste parser ja e o formato canonico.
+  return { userId: String(userId), chatId: String(chatId), codigo }
 }
 
 /**

@@ -370,10 +370,10 @@ describe('ADV-056/057 -- erro e IPC nao carregam o canario', () => {
 
   it('ADV-057: frames do IPC host<->worker (JSONL) nunca carregam o canario, em nenhuma direcao', () => {
     const mensagens: Array<{ m: unknown; dir: IpcDirection }> = [
-      { m: { v: 1, type: 'notify', texto: 'O tunel ligado as 12:00.' }, dir: 'to-worker' },
-      { m: { v: 1, type: 'ack', requestId: '01ABC', result: 'noop', state: 'STOPPED' }, dir: 'to-worker' },
-      { m: { v: 1, type: 'nonce.request', acao: 'start', requestId: '01ABC' }, dir: 'to-host' },
-      { m: { v: 1, type: 'nonce.issued', acao: 'start', requestId: '01ABC', nonce: 'opaco-32-characters-minimum', expiresAt: 0 }, dir: 'to-worker' },
+      { m: { v: 2, type: 'notify', texto: 'O tunel ligado as 12:00.' }, dir: 'to-worker' },
+      { m: { v: 2, type: 'ack', requestId: '01ABC', result: 'noop', state: 'STOPPED' }, dir: 'to-worker' },
+      { m: { v: 2, type: 'nonce.request', acao: 'start', requestId: '01ABC' }, dir: 'to-host' },
+      { m: { v: 2, type: 'nonce.issued', acao: 'start', requestId: '01ABC', nonce: 'opaco-32-characters-minimum', expiresAt: 0 }, dir: 'to-worker' },
     ]
     for (const { m, dir } of mensagens) {
       const linha = serializeIpcMessage(m as never, dir)

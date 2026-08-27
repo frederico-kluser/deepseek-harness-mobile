@@ -47,12 +47,12 @@ function flush(): Promise<void> {
 }
 
 const INTENCAO: IpcIntentMessage = {
-  v: 1,
+  v: 2,
   type: 'intent',
   intent: 'tunnel.up',
   requestId: '01J0000000000000000000000A',
-  from: 123456789,
-  chat: 987654321,
+  from: '123456789',
+  chat: '987654321',
 }
 
 /* ========================================================================== */
@@ -113,22 +113,26 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     // Validas em algum dos sentidos.
     JSON.stringify(INTENCAO),
     JSON.stringify({ ...INTENCAO, nonce: '01JNONCE' }),
-    '{"v":1,"type":"state","state":"STOPPED","seq":0}',
-    '{"v":1,"type":"state","state":"READY","seq":9,"url":"https://x.trycloudflare.com","expiresAt":1}',
-    '{"v":1,"type":"ack","requestId":"r","result":"noop","state":"READY"}',
-    '{"v":1,"type":"ack","requestId":"r","result":"rejected","state":"STOPPING","code":"SHUTDOWN_IN_PROGRESS"}',
-    '{"v":1,"type":"error","code":"RATE_LIMITED","message":"devagar"}',
+    '{"v":2,"type":"state","state":"STOPPED","seq":0}',
+    '{"v":2,"type":"state","state":"READY","seq":9,"url":"https://x.trycloudflare.com","expiresAt":1}',
+    '{"v":2,"type":"ack","requestId":"r","result":"noop","state":"READY"}',
+    '{"v":2,"type":"ack","requestId":"r","result":"rejected","state":"STOPPING","code":"SHUTDOWN_IN_PROGRESS"}',
+    '{"v":2,"type":"error","code":"RATE_LIMITED","message":"devagar"}',
     // PREP 5: as duas mensagens novas, validas no sentido host -> worker.
-    '{"v":1,"type":"notify","texto":"o tunel expira em 5 minutos"}',
-    '{"v":1,"type":"notify","texto":"linha 1\nlinha 2"}',
-    '{"v":1,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expiresAt":1}',
+    '{"v":2,"type":"notify","texto":"o tunel expira em 5 minutos"}',
+    '{"v":2,"type":"notify","texto":"linha 1\nlinha 2"}',
+    '{"v":2,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expiresAt":1}',
     // EMENDA-COSTURA-5: nonce.request (worker -> host) e nonce.issued (host -> worker).
-    '{"v":1,"type":"nonce.request","acao":"start","requestId":"req-nonce-1"}',
-    '{"v":1,"type":"nonce.issued","acao":"reset","requestId":"req-nonce-2","nonce":"0123456789abcdef","expiresAt":1}',
+    '{"v":2,"type":"nonce.request","acao":"start","requestId":"req-nonce-1"}',
+    '{"v":2,"type":"nonce.issued","acao":"reset","requestId":"req-nonce-2","nonce":"0123456789abcdef","expiresAt":1}',
     // EMENDA ONDA-1-PAREAR-VIA-PAINEL: pairing.success (worker -> host).
-    '{"v":1,"type":"pairing.success","from":111,"chat":222,"pairedAt":1700000000000}',
-    '{"v":1,"type":"pairing.success","from":111,"chat":-100123}',
-    '{"v":1,"type":"pairing.success","from":"@nao-numerico","chat":222,"pairedAt":1}',
+    '{"v":2,"type":"pairing.success","from":"111","chat":"222","pairedAt":1700000000000}',
+    '{"v":2,"type":"pairing.success","from":"111","chat":"-100123"}',
+    // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): um from NAO-numerico e aceite —
+    // a politica minima e trim + nao vazio, sem validar formato de provedor.
+    '{"v":2,"type":"pairing.success","from":"@nao-numerico","chat":"222","pairedAt":1}',
+    // V2: uma snowflake do Discord (> 2^53) atravessa byte a byte, sem NaN.
+    '{"v":2,"type":"intent","intent":"tunnel.status","requestId":"r","from":"1057992969437413409","chat":"1057992969437413409"}',
     // Recusadas.
     '',
     '   ',
@@ -137,46 +141,46 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     '42',
     '"texto"',
     '[]',
-    '[{"v":1,"type":"intent"}]',
+    '[{"v":2,"type":"intent"}]',
     '{',
-    '{"v":1,"type":"inte',
+    '{"v":2,"type":"inte',
     '{"v":0,"type":"intent"}',
     '{"v":2,"type":"state","state":"READY","seq":1}',
     '{"v":"1","type":"state","state":"READY","seq":1}',
     '{"type":"state","state":"READY","seq":1}',
-    '{"v":1}',
-    '{"v":1,"type":"notify","text":"do PREP 5"}',
-    '{"v":1,"type":"notify","texto":""}',
-    '{"v":1,"type":"notify","texto":"com controlo \u0007"}',
-    '{"v":1,"type":"notify","texto":42}',
-    '{"v":1,"type":"pairing.challenge","code":"123456"}',
-    '{"v":1,"type":"pairing.challenge","digest":"curto","expiresAt":1}',
-    '{"v":1,"type":"pairing.challenge","digest":"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg","expiresAt":1}',
-    '{"v":1,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
-    '{"v":1,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expiresAt":"amanha"}',
-    '{"v":1,"type":"intent","intent":"shutdown","requestId":"r","from":1,"chat":1}',
-    '{"v":1,"type":"intent","intent":"emergency","requestId":"","from":1,"chat":1}',
-    '{"v":1,"type":"intent","intent":"emergency","requestId":"r","from":"@dono","chat":1}',
-    '{"v":1,"type":"intent","intent":"emergency","requestId":"r","from":1,"chat":1.25}',
-    '{"v":1,"type":"state","state":"PRONTO","seq":1}',
-    '{"v":1,"type":"state","state":"READY","seq":"9","url":"https://x.com","expiresAt":1}',
-    '{"v":1,"type":"state","state":"STARTING","seq":1,"url":"https://x.com","expiresAt":1}',
-    '{"v":1,"type":"state","state":"READY","seq":1,"url":"http://x.com","expiresAt":1}',
-    '{"v":1,"type":"ack","requestId":"r","result":"talvez","state":"READY"}',
-    '{"v":1,"type":"ack","requestId":"r","result":"accepted","state":"READY","code":"INTERNAL"}',
-    '{"v":1,"type":"error","code":"NAO_EXISTE","message":"x"}',
-    '{"v":1,"type":"error","code":"INTERNAL"}',
-    '{"v":1,"type":"error","code":"INTERNAL","message":""}',
+    '{"v":2}',
+    '{"v":2,"type":"notify","text":"do PREP 5"}',
+    '{"v":2,"type":"notify","texto":""}',
+    '{"v":2,"type":"notify","texto":"com controlo \u0007"}',
+    '{"v":2,"type":"notify","texto":42}',
+    '{"v":2,"type":"pairing.challenge","code":"123456"}',
+    '{"v":2,"type":"pairing.challenge","digest":"curto","expiresAt":1}',
+    '{"v":2,"type":"pairing.challenge","digest":"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg","expiresAt":1}',
+    '{"v":2,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+    '{"v":2,"type":"pairing.challenge","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expiresAt":"amanha"}',
+    '{"v":2,"type":"intent","intent":"shutdown","requestId":"r","from":1,"chat":1}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"","from":1,"chat":1}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"@dono","chat":1}',
+    '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":1,"chat":1.25}',
+    '{"v":2,"type":"state","state":"PRONTO","seq":1}',
+    '{"v":2,"type":"state","state":"READY","seq":"9","url":"https://x.com","expiresAt":1}',
+    '{"v":2,"type":"state","state":"STARTING","seq":1,"url":"https://x.com","expiresAt":1}',
+    '{"v":2,"type":"state","state":"READY","seq":1,"url":"http://x.com","expiresAt":1}',
+    '{"v":2,"type":"ack","requestId":"r","result":"talvez","state":"READY"}',
+    '{"v":2,"type":"ack","requestId":"r","result":"accepted","state":"READY","code":"INTERNAL"}',
+    '{"v":2,"type":"error","code":"NAO_EXISTE","message":"x"}',
+    '{"v":2,"type":"error","code":"INTERNAL"}',
+    '{"v":2,"type":"error","code":"INTERNAL","message":""}',
     // EMENDA-COSTURA-5: formas malformadas do transporte de nonce.
-    '{"v":1,"type":"nonce.request","acao":"talvez","requestId":"r"}',
-    '{"v":1,"type":"nonce.request","requestId":"r"}',
-    '{"v":1,"type":"nonce.request","acao":"start"}',
-    '{"v":1,"type":"nonce.request","acao":"start","requestId":""}',
-    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"","expiresAt":1}',
-    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":"amanha"}',
-    '{"v":1,"type":"nonce.issued","requestId":"r","nonce":"x","expiresAt":1}',
-    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x"}',
-    '{"v":1,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":1,"extra":true}',
+    '{"v":2,"type":"nonce.request","acao":"talvez","requestId":"r"}',
+    '{"v":2,"type":"nonce.request","requestId":"r"}',
+    '{"v":2,"type":"nonce.request","acao":"start"}',
+    '{"v":2,"type":"nonce.request","acao":"start","requestId":""}',
+    '{"v":2,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"","expiresAt":1}',
+    '{"v":2,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":"amanha"}',
+    '{"v":2,"type":"nonce.issued","requestId":"r","nonce":"x","expiresAt":1}',
+    '{"v":2,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x"}',
+    '{"v":2,"type":"nonce.issued","acao":"start","requestId":"r","nonce":"x","expiresAt":1,"extra":true}',
   ]
 
   const SENTIDOS: readonly IpcDirection[] = ['to-host', 'to-worker']
@@ -213,14 +217,14 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     const amostras: ReadonlyArray<[IpcMessage, IpcDirection]> = [
       [INTENCAO, 'to-host'],
       [{ ...INTENCAO, nonce: 'opaco' }, 'to-host'],
-      [{ v: 1, type: 'state', state: 'READY', seq: 3, url: 'https://x.trycloudflare.com', expiresAt: 7 }, 'to-worker'],
-      [{ v: 1, type: 'ack', requestId: 'r', result: 'rejected', state: 'STOPPING', code: 'RESTRICTED_MODE' }, 'to-worker'],
-      [{ v: 1, type: 'error', code: 'INTERNAL', message: 'a\nb' }, 'to-worker'],
+      [{ v: 2, type: 'state', state: 'READY', seq: 3, url: 'https://x.trycloudflare.com', expiresAt: 7 }, 'to-worker'],
+      [{ v: 2, type: 'ack', requestId: 'r', result: 'rejected', state: 'STOPPING', code: 'RESTRICTED_MODE' }, 'to-worker'],
+      [{ v: 2, type: 'error', code: 'INTERNAL', message: 'a\nb' }, 'to-worker'],
       // EMENDA-COSTURA-5: as duas mensagens novas serializam igual nos dois lados.
-      [{ v: 1, type: 'nonce.request', acao: 'start', requestId: 'req' }, 'to-host'],
-      [{ v: 1, type: 'nonce.issued', acao: 'reset', requestId: 'req', nonce: 'opaco', expiresAt: 7 }, 'to-worker'],
+      [{ v: 2, type: 'nonce.request', acao: 'start', requestId: 'req' }, 'to-host'],
+      [{ v: 2, type: 'nonce.issued', acao: 'reset', requestId: 'req', nonce: 'opaco', expiresAt: 7 }, 'to-worker'],
       // EMENDA ONDA-1-PAREAR-VIA-PAINEL: `pairing.success` serializa igual.
-      [{ v: 1, type: 'pairing.success', from: 111, chat: 222, pairedAt: 7 }, 'to-host'],
+      [{ v: 2, type: 'pairing.success', from: '111', chat: '222', pairedAt: 7 }, 'to-host'],
     ]
     for (const [message, direction] of amostras) {
       assert.equal(
@@ -419,7 +423,9 @@ describe('S2: stdout so leva JSONL; todo o texto humano vai para stderr', () => 
 
   it('uma intencao invalida NAO chega ao stdout: o erro fica em stderr', () => {
     const b = montar()
-    const invalida = { ...INTENCAO, from: 'nao-e-id' } as unknown as IpcIntentMessage
+    // V2: um id de so espacos e a forma invalida — um id nao-numerico, ao
+    // contrario, passou a ser legitimo (EMENDA ONDA-1-IPC-ENVELOPE-STRING).
+    const invalida = { ...INTENCAO, from: '   ' } as unknown as IpcIntentMessage
 
     assert.equal(b.ipc.send(invalida), false)
     assert.equal(b.stdout(), '')
@@ -516,7 +522,7 @@ describe('backpressure worker -> host: recusa em vez de crescer sem limite', () 
 describe('S4 no worker: descarta a linha e sobrevive', () => {
   it('linha partida entre chunks e reconstruida', () => {
     const linha = serializeWorkerIpcMessage(
-      { v: 1, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' },
+      { v: 2, type: 'ack', requestId: 'r', result: 'accepted', state: 'STARTING' },
       'to-worker',
     )
     const b = montar()
@@ -534,10 +540,10 @@ describe('S4 no worker: descarta a linha e sobrevive', () => {
     const b = montar()
     b.entrada.write('{"v":9,"type":"state"}\n')
     b.entrada.write('nao e json\n')
-    b.entrada.write('{"v":1,"type":"state","state":"FAILED","seq":4}\n')
+    b.entrada.write('{"v":2,"type":"state","state":"FAILED","seq":4}\n')
 
     assert.equal(b.recebidas.length, 1)
-    assert.deepEqual(b.recebidas[0], { v: 1, type: 'state', state: 'FAILED', seq: 4 })
+    assert.deepEqual(b.recebidas[0], { v: 2, type: 'state', state: 'FAILED', seq: 4 })
     assert.deepEqual(b.desligamentos, [], 'o canal NAO cai por causa de uma linha ma')
   })
 
@@ -547,8 +553,8 @@ describe('S4 no worker: descarta a linha e sobrevive', () => {
         if (m.type === 'state' && m.state === 'FAILED') throw new Error('defeito do consumidor')
       },
     })
-    b.entrada.write('{"v":1,"type":"state","state":"FAILED","seq":1}\n')
-    b.entrada.write('{"v":1,"type":"state","state":"STOPPED","seq":2}\n')
+    b.entrada.write('{"v":2,"type":"state","state":"FAILED","seq":1}\n')
+    b.entrada.write('{"v":2,"type":"state","state":"STOPPED","seq":2}\n')
 
     assert.equal(b.recebidas.length, 2, 'a segunda foi processada na mesma')
     assert.match(b.stderr(), /o consumidor lancou/u)

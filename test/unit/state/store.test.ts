@@ -159,7 +159,7 @@ describe('os campos que as outras sub-tarefas vao persistir', () => {
         desiredState: 'READY',
         restricted: { since: clock.now(), reason: 'brute-force-ceiling' },
         tunnel: { pid: 31_337, startedAt: clock.advance(5_000), mode: 'quick' },
-        pairing: { ownerUserId: 42, ownerChatId: -1_001_999, pairedAt: clock.advance(5_000) },
+        pairing: { ownerUserId: '42', ownerChatId: '-1001999', pairedAt: clock.advance(5_000) },
       }))
 
       const lido = store.store.read()
@@ -167,10 +167,39 @@ describe('os campos que as outras sub-tarefas vao persistir', () => {
       assert.deepEqual(lido.restricted, { since: 1_700_000_000_000, reason: 'brute-force-ceiling' })
       assert.deepEqual(lido.tunnel, { pid: 31_337, startedAt: 1_700_000_005_000, mode: 'quick' })
       assert.deepEqual(lido.pairing, {
-        ownerUserId: 42,
-        ownerChatId: -1_001_999,
+        ownerUserId: '42',
+        ownerChatId: '-1001999',
         pairedAt: 1_700_000_010_000,
       })
+    })
+  })
+
+  it('MIGRACAO: um state.json LEGADO (ids numericos) le normalizado e grava string na proxima escrita', () => {
+    comStore(({ temp, store }) => {
+      // Um ficheiro da era V1, com os ids do dono NUMERICOS.
+      writeFileSync(
+        temp.statePath,
+        '{"version":1,"desiredState":"STOPPED","pairing":{"ownerUserId":42,"ownerChatId":-1001234567890,"pairedAt":2000}}\n',
+        { mode: 0o600 },
+      )
+
+      // A leitura normaliza para string em memoria (EMENDA ONDA-1-IPC-ENVELOPE-STRING).
+      const lido = store.store.read()
+      assert.deepEqual(lido.pairing, { ownerUserId: '42', ownerChatId: '-1001234567890', pairedAt: 2000 })
+
+      // A proxima escrita grava STRING — o disco migra sozinho, sem passo manual.
+      store.store.update((s) => ({ ...s, desiredState: 'READY' }))
+      const noDisco = readFileSync(temp.statePath, 'utf8')
+      assert.equal(noDisco.includes('"ownerUserId": "42"'), true)
+      assert.equal(noDisco.includes('"ownerUserId": 42'), false, 'o numero legado nao volta ao disco')
+
+      // E um store NOVO (o arranque seguinte) le a forma canonica.
+      const segundo = createStateStore({ paths: statePathsAt(temp.path) })
+      try {
+        assert.deepEqual(segundo.store.read().pairing, { ownerUserId: '42', ownerChatId: '-1001234567890', pairedAt: 2000 })
+      } finally {
+        segundo.dispose()
+      }
     })
   })
 

@@ -9,6 +9,11 @@
  * INVARIANTE, congelada com o contrato: `src/state/store.ts` (T2.5) e o UNICO
  * writer do `state.json` em todo o repositorio.
  *
+ * EMENDA ONDA-1-IPC-ENVELOPE-STRING: `pairing.ownerUserId`/`ownerChatId`
+ * passam de `number` a `string`. A migracao e ADITIVA (a leitura aceita o
+ * formato legado numerico e normaliza para string em memoria; a escrita grava
+ * string), por isso um `state.json` v1 existente continua a arrancar intacto.
+ *
  * A URL do tunel NAO e persistida — e efemera e muda a cada restart. O que se
  * persiste e o `pid` e o `startedAt`, que e o que permite a varredura de orfao
  * no boot (`02-SEGURANCA.md` 9).
@@ -20,7 +25,8 @@ export interface PersistedState {
   desiredState: 'READY' | 'STOPPED'
   restricted?: { since: number; reason: 'brute-force-ceiling' } | undefined
   tunnel?: { pid: number; startedAt: number; mode: 'quick' | 'named' } | undefined
-  pairing?: { ownerUserId: number; ownerChatId: number; pairedAt: number } | undefined
+  /** Os DOIS EIXOS do dono em STRING (V2 — EMENDA ONDA-1-IPC-ENVELOPE-STRING). A leitura aceita o legado numerico e normaliza. */
+  pairing?: { ownerUserId: string; ownerChatId: string; pairedAt: number } | undefined
   /**
    * Provedor de mensageria persistido (desacoplamento do bot, D3).
    *

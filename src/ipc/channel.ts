@@ -281,9 +281,14 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-/** Ids do Telegram sao INTEIROS. Um `from` fracionario nao designa ninguem. */
-function isId(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value)
+/** Ids de identidade (`from`/`chat`) — STRING em V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING). A politica minima espelha o `normalizeKey` do worker (`worker/surface/ids.ts`): trim + nao vazio. NAO se valida FORMATO de provedor nenhum (um snowflake do Discord nao e `[0-9]+` curto, um id de Matrix e uma url) — so se exige uma string utilizavel. A guarda de controlo impede ruido de terminal; o teto impede uma linha gigante. */
+function isId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim() !== '' &&
+    value.length <= MAX_ID_CHARS &&
+    !hasControlChar(value)
+  )
 }
 
 /**

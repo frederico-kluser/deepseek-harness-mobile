@@ -36,12 +36,12 @@ const ipc = bindWorkerIpcToProcess(process, {
     recebidas += 1
 
     ipc.send({
-      v: 1,
+      v: 2,
       type: 'intent',
       intent: 'tunnel.status',
       requestId: `eco-${String(recebidas)}`,
-      from: 111,
-      chat: 222,
+      from: '111',
+      chat: '222',
       nonce: 'nonce-opaco-que-o-worker-nao-le',
     })
   },

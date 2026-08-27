@@ -68,8 +68,9 @@ export interface RespondedorIpcDeps {
   /**
    * Re-verificacao de identidade contra o pareamento persistido (S6).
    * NUNCA lanca: a falha de leitura responde `false` (fail-closed).
+   * `from`/`chat` sao STRING (envelope IPC V2 — EMENDA ONDA-1-IPC-ENVELOPE-STRING).
    */
-  readonly pareado: (from: number, chat: number) => boolean
+  readonly pareado: (from: string, chat: string) => boolean
   /** Onde as recusas de identidade sao contadas (CTL-029). */
   readonly audit: Pick<AuditSink, 'append'>
   readonly log: GuardLogger
@@ -192,7 +193,7 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
 
   const controlIntentDe = (intent: IpcIntentMessage, action: ControlAction, nonce?: string): ControlIntent => ({
     action,
-    requestedBy: `telegram:${String(intent.from)}`,
+    requestedBy: `telegram:${intent.from}`,
     requestId: intent.requestId,
     ...(nonce === undefined ? {} : { nonce }),
     at: deps.agora(),
@@ -237,7 +238,7 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
     if (!deps.pareado(intent.from, intent.chat)) {
       try {
         deps.audit.append({
-          evento: `${EVENTO_NAO_PAREADO}:telegram:${String(intent.from)}`,
+          evento: `${EVENTO_NAO_PAREADO}:telegram:${intent.from}`,
           resultado: 'negado',
         })
       } catch (error) {
@@ -245,7 +246,7 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
           `falha ao registar a recusa de identidade no audit: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
-      log.warn(`intencao '${intent.intent}' de identidade nao pareada (from ${String(intent.from)}); recusada.`)
+      log.warn(`intencao '${intent.intent}' de identidade nao pareada (from ${intent.from}); recusada.`)
       return erro(intent, 'NOT_PAIRED', 'Este chat nao esta pareado com o dono do tunel.')
     }
 

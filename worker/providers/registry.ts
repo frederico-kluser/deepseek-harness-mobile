@@ -20,30 +20,30 @@
  * um bot a nascer com o token de OUTRO provedor).
  *
  * ===========================================================================
- * A PONTE DE INTENT — NUMERICO NA FONTE (D4 / fase-5-anotada)
+ * A PONTE DE INTENT — ENVELOPE STRING NA FONTE (D4 / EMENDA ONDA-1-IPC-ENVELOPE-STRING)
  * ===========================================================================
  * O contrato NEUTRO carrega `userKey`/`chatKey` como STRINGS
- * (`SurfaceIdentity`, D4). O envelope IPC V1 do host ainda tipa `from`/`chat`
- * como `number` (heranca Telegram — `src/contracts/ipc.ts`). ALGUEM tem de
- * converter na fronteira, e esse alguem e A PONTE (este ficheiro):
- * {@link montarEnvelopeDeIntent} recebe {@link IntencaoNeutra} e monta o
- * `IpcIntentMessage` completo (`v:1`, `type:'intent'`, `from:Number(userKey)`,
- * `chat:Number(chatKey)`). O `Number(...)` e fiel porque o alfabeto do id do
- * Telegram e `[0-9]+`; ids NAO-numericos de um provedor futuro sao resolvidos
- * quando a fase 5 neutralizar o corpo do canal (`src/ipc/channel.ts`) — ate la
- * este e o preco de coexistir com o envelope IPC V1 (mesmo raciocinio do
- * `idsParaIntencao` do nucleo, `worker/surface/core.ts`).
+ * (`SurfaceIdentity`, D4) e o envelope IPC V2 (`src/contracts/ipc.ts`) tipa
+ * `from`/`chat` como STRING tambem — a conversao numerica que vivia AQUI
+ * (V1, heranca Telegram) foi neutralizada: {@link montarEnvelopeDeIntent}
+ * recebe {@link IntencaoNeutra} e monta o `IpcIntentMessage` completo
+ * (`v:2`, `type:'intent'`, `from: userKey`, `chat: chatKey`) SEM `Number(...)`.
+ * O que outrora era o "preco de coexistir com o envelope V1" (ids
+ * nao-numericos quebravam o cast) deixou de existir: um snowflake do Discord
+ * atravessa a ponte byte a byte, sem truncar em Number.MAX_SAFE_INTEGER.
  *
  * E a falsa atribuicao `as unknown as IpcIntentMessage` que a Onda 2 deixou
  * como "pegada" em `worker/surface/commands.ts` DEIXA de ser o unico caminho:
  * o boot consome a ponte REAL daqui. NaO se alterou `commands.ts` (dono de
- * outra onda); a neutralizacao completa e trabalho futuro anotado no manual.
+ * outra onda); a neutralizacao completa do envelope era o trabalho futuro
+ * anotado no manual (docs/PROVIDERS.md §7) — esta onda o executa.
  */
 
-import type {
-  ControlAction,
-  IpcIntentMessage,
-  IpcMessageToWorker,
+import {
+  IPC_PROTOCOL_VERSION,
+  type ControlAction,
+  type IpcIntentMessage,
+  type IpcMessageToWorker,
 } from '../../src/contracts/ipc.ts'
 import type { TimeSource } from '../lib/clock.ts'
 import type { WorkerLogger } from '../lib/log.ts'
@@ -144,7 +144,7 @@ export function resolverProvedor(env: NodeJS.ProcessEnv): ProvedorDescrito {
 }
 
 /* ========================================================================== */
-/* 3. A PONTE DE INTENT — envelope numerico NA FONTE                           */
+/* 3. A PONTE DE INTENT — envelope STRING NA FONTE (V2)                        */
 /* ========================================================================== */
 
 /**
@@ -159,31 +159,35 @@ export type { IntencaoNeutra } from '../surface/contract.ts'
 /**
  * Monta o {@link IpcIntentMessage} COMPLETO a partir da intencao NEUTRA.
  *
- * PORQUE `Number(userKey)`/`Number(chatKey)` AQUI: o envelope IPC V1 tipa
- * `from`/`chat` como numeros (heranca Telegram); a fronteira neutra (D4)
- * entregou-os como strings. A conversao mora na PONTE (na fonte do envio), e
- * NAO espalhada pelos comandos — a falsa atribuicao da Onda 2 deixa de ser o
- * unico caminho. Neutralizacao completa do corpo do canal = fase 5 (manual).
+ * EM V2 NAO HA CONVERSAO: o envelope `from`/`chat` e STRING, como a fronteira
+ * neutra (D4) os entrega. O `userKey`/`chatKey` ja normalizados (trim +
+ * nao-vazio, `worker/surface/ids.ts`) viajam direto para o envelope — um id
+ * nao-numerico de um provedor futuro atravessa intacto, sem `Number(...)` nem
+ * truncagem em Number.MAX_SAFE_INTEGER. A montagem mora NA PONTE (na fonte do
+ * envio), e NAO espalhada pelos comandos — a falsa atribuicao da Onda 2 deixa
+ * de ser o unico caminho. (Neutralizacao completa do corpo do canal: EMENDA
+ * ONDA-1-IPC-ENVELOPE-STRING, docs/PROVIDERS.md §7.)
  */
 export function montarEnvelopeDeIntent(pedido: IntencaoNeutra): IpcIntentMessage {
   return {
-    v: 1,
+    v: IPC_PROTOCOL_VERSION,
     type: 'intent',
     intent: pedido.intent,
     requestId: pedido.requestId,
-    from: Number(pedido.userKey),
-    chat: Number(pedido.chatKey),
+    from: pedido.userKey,
+    chat: pedido.chatKey,
     ...(pedido.nonce === undefined ? {} : { nonce: pedido.nonce }),
   }
 }
 
 /**
  * A ponte de intent REAL que o NUCLEO consome como {@link SurfaceIpcBridge}:
- * `send(IntencaoNeutra)` -> monta o envelope numerico NA FONTE (a
+ * `send(IntencaoNeutra)` -> monta o envelope STRING NA FONTE (a
  * {@link montarEnvelopeDeIntent}) -> `WorkerIpc.send` (o canal `worker/ipc.ts`).
  *
- * A conversao `userKey`/`chatKey` -> `from`/`chat` numericos e responsabilidade
- * DESTA ponte, nunca do nucleo nem dos comandos (onda 5a).
+ * A montagem do envelope `from`/`chat` a partir de `userKey`/`chatKey` e
+ * responsabilidade DESTA ponte, nunca do nucleo nem dos comandos (onda 5a);
+ * em V2 os quatro campos sao todos STRING, e nao ha conversao.
  */
 export function criarSurfaceIpcBridge(ipc: WorkerIpc): SurfaceIpcBridge {
   return {
@@ -195,12 +199,13 @@ export function criarSurfaceIpcBridge(ipc: WorkerIpc): SurfaceIpcBridge {
      */
     pairingSuccess: (dono): void => {
       // Best-effort/fire-and-forget (S4): o retorno do send nao derruba o
-      // nucleo — quem re-pareia depois re-envia. O `pairedAt` viaja fiel.
+      // nucleo — quem re-pareia depois re-envia. O `pairedAt` viaja fiel; os
+      // dois eixos viajam STRING (V2), sem `Number(...)`.
       ipc.send({
-        v: 1,
+        v: IPC_PROTOCOL_VERSION,
         type: 'pairing.success',
-        from: Number(dono.userKey),
-        chat: Number(dono.chatKey),
+        from: dono.userKey,
+        chat: dono.chatKey,
         pairedAt: dono.pairedAt,
       })
     },
@@ -256,7 +261,7 @@ export function criarPonteDeNonce(deps: {
       return undefined
     }
     const requestId = gerarRequestId(deps.time.now())
-    const enviado = deps.ipc.send({ v: 1, type: 'nonce.request', acao: controlo, requestId })
+    const enviado = deps.ipc.send({ v: IPC_PROTOCOL_VERSION, type: 'nonce.request', acao: controlo, requestId })
     if (!enviado) {
       // Canal indisponivel: falha FECHADO ja, sem esperar o timeout.
       log.warn('emitirNonce sem canal para o host: confirmacao indisponivel (fail-closed, CTL-023)', {

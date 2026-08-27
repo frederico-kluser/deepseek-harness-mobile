@@ -109,7 +109,7 @@ const SEM_DONO: RetratoDoAmbiente = {
 
 const PRONTO: RetratoDoAmbiente = {
   ...SEM_DONO,
-  dono: { ownerUserId: 111, ownerChatId: 222, pairedAt: 1 },
+  dono: { ownerUserId: '111', ownerChatId: '222', pairedAt: 1 },
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1208,11 +1208,12 @@ describe('TG-063/065/066: o pareamento, de ponta a ponta pela CLI', () => {
       // `/start` que chegou antes (666) nem do codigo errado (777) nem do
       // segundo update com o codigo certo (999).
       const dono = bancada.estado()['pairing'] as
-        | { ownerUserId: number; ownerChatId: number; pairedAt: number }
+        | { ownerUserId: string; ownerChatId: string; pairedAt: number }
         | undefined
       assert.ok(dono !== undefined, 'o dono tinha de ficar gravado')
-      assert.equal(dono.ownerUserId, 111)
-      assert.equal(dono.ownerChatId, 222)
+      // V2: os ids do update cru (number) viram STRING na fronteira do parser.
+      assert.equal(dono.ownerUserId, '111')
+      assert.equal(dono.ownerChatId, '222')
       assert.ok(Number.isFinite(dono.pairedAt) && dono.pairedAt > 0)
       assert.ok(bancada.saida().includes('Pronto.'))
       // TG-072: os cinco avisos chegam antes de o tunel poder subir.
@@ -1296,7 +1297,7 @@ describe('TG-067: idempotencia depois de tudo ligado', () => {
       const h = createStateStore({ paths: statePathsAt(bancada.raiz) })
       h.store.update((estado) => ({
         ...estado,
-        pairing: { ownerUserId: 111, ownerChatId: 222, pairedAt: 5 },
+        pairing: { ownerUserId: '111', ownerChatId: '222', pairedAt: 5 },
       }))
       h.dispose()
 
@@ -1328,7 +1329,7 @@ function comDono(bancada: Bancada): void {
   const h = createStateStore({ paths: statePathsAt(bancada.raiz) })
   h.store.update((estado) => ({
     ...estado,
-    pairing: { ownerUserId: 111, ownerChatId: 222, pairedAt: 5 },
+    pairing: { ownerUserId: '111', ownerChatId: '222', pairedAt: 5 },
   }))
   h.dispose()
 }
@@ -1347,8 +1348,8 @@ describe('PAIR-008: `--reset-pairing`', () => {
       assert.equal(await principal(['--reset-pairing'], bancada.deps), 3)
       assert.ok(bancada.saida().includes('Nada foi alterado'))
       assert.deepEqual(bancada.estado()['pairing'], {
-        ownerUserId: 111,
-        ownerChatId: 222,
+        ownerUserId: '111',
+        ownerChatId: '222',
         pairedAt: 5,
       })
     } finally {
@@ -1512,9 +1513,9 @@ describe('A1: cinco `/parear` errados NAO podem trancar o onboarding', () => {
       escreverSecretsEnv(bancada.raiz)
       assert.equal(await principal(['--parear', '--sim'], espelho), 0, 'tinha de parear')
 
-      const dono = bancada.estado()['pairing'] as { ownerUserId: number } | undefined
+      const dono = bancada.estado()['pairing'] as { ownerUserId: string } | undefined
       assert.ok(dono !== undefined, 'o dono tinha de ficar gravado')
-      assert.equal(dono.ownerUserId, 111)
+      assert.equal(dono.ownerUserId, '111')
       // O ponto de A1: dois codigos, nao trinta e um.
       assert.ok(
         codigosVistos.size <= 2,
@@ -1684,8 +1685,8 @@ describe('M1: um `/parear` de grupo NÃO pareia', () => {
       )
     }
     assert.deepEqual(lerComandoDePareamento(update('/parear 123456', 1, 111, 222)), {
-      userId: 111,
-      chatId: 222,
+      userId: '111',
+      chatId: '222',
       codigo: '123456',
     })
   })
@@ -1749,8 +1750,8 @@ describe('M3: `stdin` fechado não pode publicar o $HOME do utilizador', () => {
       comDono(bancada)
       assert.equal(await principal(['--reset-pairing'], bancada.deps), 2)
       assert.deepEqual(bancada.estado()['pairing'], {
-        ownerUserId: 111,
-        ownerChatId: 222,
+        ownerUserId: '111',
+        ownerChatId: '222',
         pairedAt: 5,
       })
       const aviso = bancada.erros.join('\n')
@@ -1790,7 +1791,7 @@ describe('M3: `stdin` fechado não pode publicar o $HOME do utilizador', () => {
       const h = createStateStore({ paths: statePathsAt(raiz) })
       h.store.update((estado) => ({
         ...estado,
-        pairing: { ownerUserId: 111, ownerChatId: 222, pairedAt: 5 },
+        pairing: { ownerUserId: '111', ownerChatId: '222', pairedAt: 5 },
       }))
       h.dispose()
 
@@ -1817,8 +1818,8 @@ describe('M3: `stdin` fechado não pode publicar o $HOME do utilizador', () => {
       const depois = createStateStore({ paths: statePathsAt(raiz) })
       try {
         assert.deepEqual(depois.store.read().pairing, {
-          ownerUserId: 111,
-          ownerChatId: 222,
+          ownerUserId: '111',
+          ownerChatId: '222',
           pairedAt: 5,
         })
       } finally {

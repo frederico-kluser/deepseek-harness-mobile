@@ -32,12 +32,12 @@ class SupervisorDuble implements TunnelSupervisor {
 
 function intent(overrides: Partial<IpcIntentMessage> = {}): IpcIntentMessage {
   return {
-    v: 1,
+    v: 2,
     type: 'intent',
     intent: 'session.issue',
     requestId: 'req-item5',
-    from: 123,
-    chat: 456,
+    from: '123',
+    chat: '456',
     ...overrides,
   }
 }
@@ -239,7 +239,7 @@ describe('secret.rotate — nonce consumido no HOST, senha nunca pelo chat (item
     })
     const resposta = responder(intent({ intent: 'secret.rotate', requestId: 'req-sem-nonce' }))
     assert.equal(resposta.type, 'ack')
-    assert.deepEqual(resposta, { v: 1, type: 'ack', requestId: 'req-sem-nonce', result: 'rejected', state: 'STOPPED', code: 'NONCE_INVALID' })
+    assert.deepEqual(resposta, { v: 2, type: 'ack', requestId: 'req-sem-nonce', result: 'rejected', state: 'STOPPED', code: 'NONCE_INVALID' })
     assert.equal(rotacoes, 0, 'sem confirmacao nao ha rotacao')
   })
 })

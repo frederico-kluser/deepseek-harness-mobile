@@ -14,9 +14,12 @@
  * nem o grammY.
  *
  * O adaptador NORMALIZA NUMERICO NA FRONTEIRA (D4): `chatKey`/`userKey` sao
- * STRINGS neutras; `sender()` faz `Number(chatKey)` ao chegar a `ApiDoBot`. O
- * alfabeto do id do Telegram e `[0-9]+`, logo `Number(...)` e fiel; ids
- * NAO-numericos de um futuro provedor sao resolvidos na fase 5 do IPC.
+ * STRINGS neutras e o sender entrega-as AS MESMAS ao grammY — a Bot API aceita
+ * `chat_id` como string (`@username` ou numerico) e o id do update ja nasceu
+ * string no parse. O antigo `Number(chatKey)` da fronteira de saida (heranca
+ * do envelope IPC V1) foi removido na EMENDA ONDA-1-IPC-ENVELOPE-STRING: o
+ * `Number(...)` so resta onde a API exige inteiro (`message_id`), que e uma
+ * conversao de EDGE, nao de envelope.
  *
  * ===========================================================================
  * LIMITES — o que o nucleo usa para cortar e renderizar
@@ -147,13 +150,16 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
       async send(chatKey: string, texto: string, opcoes?: SurfaceSendOptions): Promise<string> {
         const api = botAtual().api as InlineKeyboardApi & {
           sendMessage(
-            chatId: number,
+            chatId: number | string,
             text: string,
             other?: Record<string, unknown>,
           ): Promise<{ message_id: number }>
         }
         const extra: Record<string, unknown> = { ...markupPara(opcoes) }
-        const r = await api.sendMessage(Number(chatKey), texto, extra)
+        // `chatKey` ja e string (D4 + V2): sem `Number(...)` — a Bot API aceita
+        // o id numerico em formato string, e um provedor futuro nao-numerico
+        // nao pode ser truncado aqui.
+        const r = await api.sendMessage(chatKey, texto, extra)
         // `sendMessage` devolve `message_id`; resolve com o id STRING (D4).
         return String(r.message_id)
       },
@@ -164,7 +170,11 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
         opcoes?: SurfaceSendOptions,
       ): Promise<SurfaceEditOutcome> {
         const api = botAtual().api as InlineKeyboardApi
-        const alvo = { chatId: Number(chatKey), messageId: Number(messageId) }
+        // `chatKey` em string (V2); `messageId` e o id da MENSAGEM (nao e eixo
+        // de identidade): a Bot API exige inteiro, logo o `Number(...)` fica —
+        // e conversao de EDGE para o formato da API, como o `String(...)` do
+        // parse na entrada.
+        const alvo = { chatId: chatKey, messageId: Number(messageId) }
         // CONTRATO §4 Regra 2 / §5 Regra 5: editar sem `actionRows` DESTROI o
         // teclado (anti duplo-toque; o resultado apos a accao fica sem botoes).
         // O Telegram PRESERVA o reply_markup se nao for passado, por isso um

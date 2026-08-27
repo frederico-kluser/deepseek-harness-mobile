@@ -146,7 +146,7 @@ describe('REPRODUÇÃO: caminho real do cartão (Ligar/Status) com comandos reai
     assert.equal(intent.nonce, nonce, 'o intent carrega o nonce opaco (S5)')
 
     // (3) ack aceite: o CARTÃO é actualizado com o estado novo.
-    banco.nucleo.onAck({ v: 1, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' })
+    banco.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STARTING' })
     await tick(6)
     const edicaoAposAck = banco.sender.edicoes.at(-1)
     assert.ok(edicaoAposAck !== undefined)
@@ -174,7 +174,7 @@ describe('REPRODUÇÃO: caminho real do cartão (Ligar/Status) com comandos reai
     assert.equal(Object.hasOwn(intent, 'nonce'), false, 'status é leitura pura, sem nonce')
 
     // ack com estado autoritativo -> o CARTÃO re-renderiza com o estado novo.
-    banco.nucleo.onAck({ v: 1, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'READY' })
+    banco.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'READY' })
     await tick(6)
     const edicao = banco.sender.edicoes.at(-1)
     assert.ok(edicao !== undefined, 'o ack renderiza uma edição')

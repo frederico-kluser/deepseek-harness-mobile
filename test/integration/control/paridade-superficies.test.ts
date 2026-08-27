@@ -112,12 +112,12 @@ function superficieTelegram(b: Bancada): Superficie {
     aposEmergencia: () => undefined,
   })
   const intent = (overrides: Partial<IpcIntentMessage>): IpcIntentMessage => ({
-    v: 1,
+    v: 2,
     type: 'intent',
     intent: 'tunnel.up',
     requestId: 'tg-' + b.clock.now().toString(36) + Math.floor(Math.random() * 1000).toString(36),
-    from: 123,
-    chat: 456,
+    from: '123',
+    chat: '456',
     ...overrides,
   })
   return {
