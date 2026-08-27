@@ -60,6 +60,8 @@ import { PLUGIN_NAME } from '../errors.ts'
 import { redact } from '../logging/redact.ts'
 import { EXPOSURE_MASK, STATE_FILE_MODE, type StatePaths } from '../state/paths.ts'
 import type { DonoPareado } from './pairing.ts'
+import type { ProviderId } from '../proc/env.ts'
+import type { RespostaGetMe } from '../onboarding/sonda.ts'
 // O TEXTO (registo de T4.1) foi extraido para `./texts.ts` pela costura da
 // Onda 5 (item 6). Este ficheiro fica com o detector; re-exporta o que moveu
 // para o CLI (`bin/`) e para os testes continuarem a encontrar a MESMA origem.
@@ -69,6 +71,8 @@ import {
   textoSemToken,
   textoPronto,
   textoTokenInvalido,
+  tituloSemToken,
+  tituloTokenInvalido,
   TITULO_PRONTO,
   TITULO_SEM_DONO,
   TITULO_SEM_TOKEN,
@@ -83,6 +87,8 @@ export {
   textoSemToken,
   textoPronto,
   textoTokenInvalido,
+  tituloSemToken,
+  tituloTokenInvalido,
   TITULO_PRONTO,
   TITULO_SEM_DONO,
   TITULO_SEM_TOKEN,
@@ -145,8 +151,16 @@ export type MotivoDeFormato =
   | 'caracteres-invalidos'
   | 'comprimento-excessivo'
 
+/**
+ * A forma de um token VALIDO, por provedor.
+ *
+ * `botId` e OPCIONAL de proposito: e o `bot_user_id` do TELEGRAM (a parte
+ * antes dos dois pontos do token). O token do DISCORD nao tem id numerico —
+ * a forma discord nao preenche o campo, e nenhum consumidor do retrato usa o
+ * `botId` (os textos so leem `valido`/`motivo`).
+ */
 export type FormatoDoToken =
-  | { readonly valido: true; readonly botId: number }
+  | { readonly valido: true; readonly botId?: number | undefined }
   | { readonly valido: false; readonly motivo: MotivoDeFormato }
 
 /**
@@ -193,109 +207,6 @@ function motivoDetalhado(token: string): MotivoDeFormato {
   if (!/^[A-Za-z0-9_-]*$/u.test(segredo)) return 'caracteres-invalidos'
   return 'segredo-curto'
 }
-
-/* ========================================================================== */
-/* `getMe`: a resposta, classificada                                          */
-/* ========================================================================== */
-
-/** O que interessa do `User` devolvido por `getMe` (`#getme`). */
-export interface IdentidadeDoBot {
-  readonly id: number
-  readonly username: string
-}
-
-/** Porque o `getMe` nao confirmou o token. Cada causa tem um texto proprio. */
-export type CausaDeFalha =
-  /** `401 Unauthorized: invalid token specified` — revogado ou errado. */
-  | 'recusado'
-  /** `404 Not Found` — o token nem chega a formar uma rota valida. */
-  | 'rota-inexistente'
-  /** `409 Conflict` — ja ha outra ligacao a usar este bot. */
-  | 'conflito'
-  /** `429` com `retry_after`. */
-  | 'limite-de-taxa'
-  /** Nao houve resposta: DNS, proxy, cabo. */
-  | 'rede'
-  /** Houve resposta e nao se percebeu — HTTP inesperado ou corpo nao-JSON. */
-  | 'resposta-ininteligivel'
-
-export interface FalhaDoGetMe {
-  readonly causa: CausaDeFalha
-  /** `0` quando nao houve resposta HTTP nenhuma. */
-  readonly httpStatus: number
-  readonly errorCode?: number | undefined
-  /** `description` da API. NAO e apresentada em cru: ver {@link diagnostico}. */
-  readonly description?: string | undefined
-  /** Segundos pedidos por um `429` (`ResponseParameters.retry_after`). */
-  readonly retryAfter?: number | undefined
-}
-
-export type RespostaGetMe =
-  | { readonly ok: true; readonly bot: IdentidadeDoBot }
-  | { readonly ok: false; readonly falha: FalhaDoGetMe }
-
-/**
- * Classifica um par (HTTP, corpo) da Bot API.
- *
- * Os valores vem MEDIDOS, nao presumidos (`docs/spikes/telegram.md` 2.1 e 6):
- *   - `401 {"ok":false,"error_code":401,"description":"Unauthorized: invalid
- *     token specified"}` — token bem formado sem conta por tras;
- *   - `404 {"ok":false,"error_code":404,"description":"Not Found"}` — token sem
- *     `:`, que cai fora da rota `/bot<token>/<metodo>`;
- *   - `409 Conflict: terminated by other getUpdates request...` — ha outra
- *     instancia a fazer long polling com o MESMO token.
- */
-export function classificarFalha(httpStatus: number, corpo: unknown): FalhaDoGetMe {
-  const errorCode = numeroDe(corpo, 'error_code')
-  const description = textoDe(corpo, 'description')
-  const retryAfter = numeroDe(propriedade(corpo, 'parameters'), 'retry_after')
-  const codigo = errorCode ?? httpStatus
-
-  const causa: CausaDeFalha =
-    codigo === 401
-      ? 'recusado'
-      : codigo === 404
-        ? 'rota-inexistente'
-        : codigo === 409
-          ? 'conflito'
-          : codigo === 429
-            ? 'limite-de-taxa'
-            : 'resposta-ininteligivel'
-
-  return {
-    causa,
-    httpStatus,
-    ...(errorCode === undefined ? {} : { errorCode }),
-    ...(description === undefined ? {} : { description }),
-    ...(retryAfter === undefined ? {} : { retryAfter }),
-  }
-}
-
-/** Le um `User` de `{"ok":true,"result":{...}}`, sem confiar na forma. */
-export function lerIdentidade(corpo: unknown): IdentidadeDoBot | undefined {
-  const result = propriedade(corpo, 'result')
-  const id = numeroDe(result, 'id')
-  const username = textoDe(result, 'username')
-  if (id === undefined || username === undefined) return undefined
-  return { id, username }
-}
-
-function propriedade(valor: unknown, chave: string): unknown {
-  if (typeof valor !== 'object' || valor === null) return undefined
-  return (valor as Record<string, unknown>)[chave]
-}
-
-function numeroDe(valor: unknown, chave: string): number | undefined {
-  const bruto = propriedade(valor, chave)
-  return typeof bruto === 'number' && Number.isFinite(bruto) ? bruto : undefined
-}
-
-function textoDe(valor: unknown, chave: string): string | undefined {
-  const bruto = propriedade(valor, chave)
-  return typeof bruto === 'string' && bruto.length > 0 ? bruto : undefined
-}
-
-/* ========================================================================== */
 /* O detector                                                                 */
 /* ========================================================================== */
 
@@ -370,11 +281,18 @@ export interface PassoDeOnboarding {
  */
 export function proximoPasso(retrato: RetratoDoAmbiente, opcoes: OpcoesDePasso): PassoDeOnboarding {
   const estado = detectarEstado(retrato)
+  // Os TITULOS e o TEXTO sao provider-aware (rotulos: @BotFather no telegram,
+  // portal de desenvolvimento no discord) — o provedor vem das opcoes, com o
+  // default fechado telegram (D1).
   switch (estado) {
     case 'SEM_TOKEN':
-      return { estado, titulo: TITULO_SEM_TOKEN, texto: textoSemToken(opcoes) }
+      return { estado, titulo: tituloSemToken(opcoes.provedor), texto: textoSemToken(opcoes) }
     case 'TOKEN_INVALIDO':
-      return { estado, titulo: TITULO_TOKEN_INVALIDO, texto: textoTokenInvalido(retrato) }
+      return {
+        estado,
+        titulo: tituloTokenInvalido(opcoes.provedor),
+        texto: textoTokenInvalido(retrato, opcoes),
+      }
     case 'TOKEN_OK_SEM_DONO':
       return {
         estado,
@@ -717,18 +635,24 @@ export function gravarSecretsEnv(ctx: EscritaDeSegredos, chave: string, valor: s
  * qualquer sem ninguem reparar. NUNCA o `.env` do projeto: ele esta DENTRO do
  * workspace que o agente le, e injecao de prompt e premissa operacional deste
  * plano, nao risco residual (`01-ARQUITETURA.md` 9.5).
+ *
+ * A `chave` e o NOME da variavel a ler nas DUAS fontes — a CHAVE do provedor
+ * ativo (`PROVIDER_ENV[provider].tokenVar`): `TELEGRAM_BOT_TOKEN` por omissao,
+ * `DISCORD_BOT_TOKEN` para o discord. O default e o telegram para que quem
+ * chama sem provedor continue a correr exatamente como antes (D1).
  */
 export function resolverToken(
   caminho: string,
   ambiente: Readonly<Record<string, string | undefined>> = process.env,
+  chave: string = CHAVE_DO_TOKEN,
 ): { readonly token: string; readonly origem: OrigemDoToken } | undefined {
   const texto = lerSecretsEnv(caminho)
-  const doFicheiro = texto === undefined ? undefined : analisarSecretsEnv(texto).get(CHAVE_DO_TOKEN)
+  const doFicheiro = texto === undefined ? undefined : analisarSecretsEnv(texto).get(chave)
   if (doFicheiro !== undefined && doFicheiro.trim().length > 0) {
     return { token: doFicheiro.trim(), origem: 'secrets.env' }
   }
 
-  const doAmbiente = ambiente[CHAVE_DO_TOKEN]?.trim()
+  const doAmbiente = ambiente[chave]?.trim()
   if (doAmbiente !== undefined && doAmbiente.length > 0) {
     return { token: doAmbiente, origem: 'ambiente' }
   }
@@ -760,166 +684,78 @@ export function caminhoApresentavel(caminho: string, casa: string = homedir()): 
 }
 
 /* ========================================================================== */
-/* A sonda: o unico I/O de rede deste modulo                                  */
+/* ========================================================================== */
+/* A SONDA (portada para `src/onboarding/sonda.ts` — a camada provider-aware)  */
 /* ========================================================================== */
 
-/** Raiz da Bot API. SEM barra final. */
-export const API_ROOT_PADRAO = 'https://api.telegram.org'
+// O TRANSPORTE de rede (`criarSondaHttp`, `SondaTelegram`, a classificacao de
+// falha e a sonda comum por provedor) foi portado para
+// `src/onboarding/sonda.ts`, onde vive ao lado da sonda discord — o probe
+// comum `criarSonda(provider, ...)` e a superficie provider-aware que o
+// painel de T5.3 consome. Este ficheiro re-exporta o que moveu para o CLI
+// (`bin/`), o `src/index.ts` e os testes continuarem a encontrar a MESMA
+// origem — o mesmo padrao da extracao de `texts.ts`. NAO se duplica a logica
+// do getMe: quem a quer importa de la (ou daqui, pelo re-export).
+export {
+  API_ROOT_PADRAO,
+  classificarFalha,
+  criarSondaHttp,
+  lerIdentidade,
+  LIMITE_DE_UPDATES,
+  TIMEOUT_DA_SONDA_MS,
+  type CausaDeFalha,
+  type FalhaDoGetMe,
+  type IdentidadeDoBot,
+  type OpcoesDaSonda,
+  type RespostaGetMe,
+  type ResultadoDeUpdates,
+  type SondaTelegram,
+} from '../onboarding/sonda.ts'
 
-/** Teto de espera de uma chamada. Curto: isto e um CLI, nao um servico. */
-export const TIMEOUT_DA_SONDA_MS = 10_000
+/* ========================================================================== */
+/* A forma do token, por provedor                                             */
+/* ========================================================================== */
 
 /**
- * Quantos updates uma sondagem pede. O teto da propria Bot API e 100
- * (`Client.cpp` clampa `limit` a 1-100).
+ * A forma minimamente exigida a um token do DISCORD pelo HOST.
  *
- * E EXPORTADO porque e um LIMITE OBSERVAVEL, nao um detalhe: com `offset: 0` a
- * fila nunca e confirmada, logo uma resposta com exatamente
- * `LIMITE_DE_UPDATES` elementos significa "ha pelo menos mais alguns que nunca
- * veremos". Quem espera pelo `/parear` tem de reconhecer esse caso e dize-lo —
- * ver A2 no cabecalho de `bin/dsh-guard-setup.ts`.
+ * DELIBERADAMENTE FROUXA, e por duas razoes:
+ *
+ *   1. o juiz real de um token e a API (`GET /users/@me`), nunca uma regex —
+ *      o mesmo principio do telegram, onde "o unico juiz de um token e o
+ *      `getMe`" (`worker/providers/telegram/token.ts`);
+ *   2. a gramatica do token discord (base64 do "Bot <id>:<segredo>", com
+ *      pontos e ate ~75 caracteres) e do ADAPTADOR — `worker/providers/
+ *      discord/token.ts` da Onda 3 — e nao se inventa aqui.
+ *
+ * O que esta checagem faz e impedir TG-061 de novo, por canal: recusar ANTES
+ * da rede o que obviamente nao e um token — vazio, longo demais, ou com
+ * espacos/controlo (uma linha inteira colada, ou um URL). Devolve a MESMA
+ * {@link FormatoDoToken} do telegram (sem `botId`), para o retrato do
+ * onboarding e os seus textos consumirem os dois provedores por igual.
  */
-export const LIMITE_DE_UPDATES = 100
-
-export type ResultadoDeUpdates =
-  | { readonly ok: true; readonly updates: readonly unknown[] }
-  | { readonly ok: false; readonly falha: FalhaDoGetMe }
+export function validarFormatoDoTokenDoDiscord(bruto: string): FormatoDoToken {
+  const token = bruto.trim()
+  if (token.length === 0) return { valido: false, motivo: 'vazio' }
+  if (token.length > COMPRIMENTO_MAXIMO_DO_TOKEN) {
+    return { valido: false, motivo: 'comprimento-excessivo' }
+  }
+  // Espacos ou controlo: o que se colou foi uma linha inteira, um URL, ou
+  // lixo da area de transferencia — recusa-se antes da rede (TG-061).
+  if (/[\s\u0000-\u001f]/u.test(token)) return { valido: false, motivo: 'caracteres-invalidos' }
+  // Valido SEM `botId`: o token do discord nao tem id numerico (ver
+  // {@link FormatoDoToken}).
+  return { valido: true }
+}
 
 /**
- * O transporte, injetavel.
+ * A checagem de formato do PROVEDOR ATIVO (a porta usada pelo painel).
  *
- * PORQUE E UMA INTERFACE E NAO UM `fetch` solto: e por aqui que o motor de
- * pareamento deixa de depender de rede nenhuma. Hoje o CLI passa
- * {@link criarSondaHttp}; no dia em que o IPC host<->worker (T4.3) existir, a
- * fonte dos updates passa a ser o WORKER e nada no pareamento muda. Ver o
- * comentario de {@link SondaTelegram.getUpdates} para a razao dura.
+ * Telegram: a forma estrita `\d{5,12}:[A-Za-z0-9_-]{20,}` (TG-061). Discord:
+ * a forma frouxa de {@link validarFormatoDoTokenDoDiscord}. Um provedor novo
+ * acrescenta o ramo aqui, nao nos chamadores.
  */
-export interface SondaTelegram {
-  getMe(token: string): Promise<RespostaGetMe>
-  /**
-   * Le updates SEM OS CONFIRMAR, e sem pendurar long poll.
-   *
-   * DUAS DECISOES, e as duas vem de medicao (`docs/spikes/telegram.md` 6 e 7):
-   *
-   *   1. `offset` NUNCA AVANCA. `getUpdates` com um `offset` maior que um
-   *      `update_id` CONFIRMA e APAGA esse update no servidor — para sempre,
-   *      para toda a gente. Se o onboarding confirmasse, os comandos que o
-   *      worker precisava de ver desapareciam antes de ele nascer. Com
-   *      `offset: 0` le-se a mesma fila as vezes que forem precisas e nao se
-   *      apaga nada: o custo e reler updates ja vistos, que se descartam por
-   *      `update_id` aqui dentro, e o beneficio e nao destruir a fila alheia.
-   *   2. `timeout: 0` — sondagem curta, nunca long poll. Assim ESTA ferramenta
-   *      nunca fica pendurada a espera, e nunca e ELA a vitima de um `409`
-   *      quando o worker chegar depois.
-   *
-   * >>> O QUE ESTA POR CONFIRMAR, e fica escrito como tal <<<
-   * Uma versao anterior deste comentario concluia que, por nao pendurar long
-   * poll, esta ferramenta nao derrubaria o worker. ISSO NAO SE SEGUE. Pela
-   * semantica do servidor oficial (`Client.cpp`, `abort_long_poll`), quem
-   * termina o long poll pendente e a CHEGADA de um `getUpdates` novo, nao a
-   * duracao dele — e esta ferramenta, chegando depois, e a que chega por
-   * ultimo. O efeito de ~150 sondagens curtas ao longo do TTL sobre um worker
-   * ja a fazer long polling NAO FOI MEDIDO: medi-lo exige trafego autenticado
-   * contra `api.telegram.org`, que este repositorio proibe.
-   *
-   * O QUE SUSTENTAMOS, e que e o essencial: com `offset: 0` esta ferramenta
-   * NUNCA CONFIRMA nada, logo nunca apaga do servidor um update de que o
-   * worker precise. Nenhuma mensagem se perde por causa dela.
-   *
-   * O QUE SE FAZ COM A PARTE POR CONFIRMAR: a saida do CLI DECLARA a
-   * pre-condicao ("o harness nao deve estar a correr com este mesmo bot") em
-   * vez de a presumir resolvida, e um `409` que apareca e detectado e explicado
-   * em portugues. `docs/spikes/telegram.md` 7 aponta a saida definitiva — o
-   * update chega pelo IPC do worker (T4.3) — e e para isso que a sonda entra
-   * por injecao.
-   */
-  getUpdates(token: string): Promise<ResultadoDeUpdates>
-}
-
-export interface OpcoesDaSonda {
-  /** Raiz da API. Os testes apontam-na para um servidor local. SEM barra final. */
-  readonly apiRoot?: string | undefined
-  /** `fetch` injetavel. Omitido: o global do Node 24. */
-  readonly buscar?: typeof fetch | undefined
-  readonly timeoutMs?: number | undefined
-}
-
-export function criarSondaHttp(opcoes: OpcoesDaSonda = {}): SondaTelegram {
-  const apiRoot = (opcoes.apiRoot ?? API_ROOT_PADRAO).replace(/\/+$/u, '')
-  const buscar = opcoes.buscar ?? fetch
-  const timeoutMs = opcoes.timeoutMs ?? TIMEOUT_DA_SONDA_MS
-
-  /**
-   * Uma chamada a Bot API.
-   *
-   * O TOKEN VIAJA NO CAMINHO DO URL — e a forma da API (`/bot<token>/<metodo>`)
-   * e nao ha alternativa. Por isso NADA do que sai daqui contem o URL: nem a
-   * mensagem de erro, nem o `description`. E tambem por isso que
-   * `src/logging/redact.ts` existe e tem uma forma para este token.
-   */
-  const chamar = async (
-    token: string,
-    metodo: string,
-    corpo: Readonly<Record<string, unknown>>,
-  ): Promise<{ readonly httpStatus: number; readonly corpo: unknown } | { readonly rede: true }> => {
-    try {
-      const resposta = await buscar(`${apiRoot}/bot${token}/${metodo}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(corpo),
-        signal: AbortSignal.timeout(timeoutMs),
-      })
-      const texto = await resposta.text()
-      let lido: unknown
-      try {
-        lido = JSON.parse(texto)
-      } catch (erroDeJson) {
-        // NAO se engole: um corpo nao-JSON e um proxy corporativo a devolver
-        // uma pagina de bloqueio, e a pessoa tem de saber que houve resposta.
-        void erroDeJson
-        lido = undefined
-      }
-      return { httpStatus: resposta.status, corpo: lido }
-    } catch (erroDeRede) {
-      // A mensagem de `fetch` traz o URL, e o URL traz o token. Ela e
-      // DELIBERADAMENTE descartada: a causa `rede` diz tudo o que a pessoa
-      // pode accionar, e nada do que ela pode vazar.
-      void erroDeRede
-      return { rede: true }
-    }
-  }
-
-  return {
-    async getMe(token: string): Promise<RespostaGetMe> {
-      const resposta = await chamar(token, 'getMe', {})
-      if ('rede' in resposta) {
-        return { ok: false, falha: { causa: 'rede', httpStatus: 0 } }
-      }
-      const identidade =
-        resposta.httpStatus === 200 && propriedade(resposta.corpo, 'ok') === true
-          ? lerIdentidade(resposta.corpo)
-          : undefined
-      if (identidade !== undefined) return { ok: true, bot: identidade }
-      return { ok: false, falha: classificarFalha(resposta.httpStatus, resposta.corpo) }
-    },
-
-    async getUpdates(token: string): Promise<ResultadoDeUpdates> {
-      // `offset: 0` e `timeout: 0`: ver o JSDoc da interface. Estes dois zeros
-      // sao a entrega, nao um valor por omissao esquecido.
-      const resposta = await chamar(token, 'getUpdates', {
-        offset: 0,
-        timeout: 0,
-        limit: LIMITE_DE_UPDATES,
-        allowed_updates: ['message'],
-      })
-      if ('rede' in resposta) {
-        return { ok: false, falha: { causa: 'rede', httpStatus: 0 } }
-      }
-      const resultado = propriedade(resposta.corpo, 'result')
-      if (resposta.httpStatus === 200 && Array.isArray(resultado)) {
-        return { ok: true, updates: resultado as readonly unknown[] }
-      }
-      return { ok: false, falha: classificarFalha(resposta.httpStatus, resposta.corpo) }
-    },
-  }
+export function validarFormatoDe(provedor: ProviderId, bruto: string): boolean {
+  if (provedor === 'discord') return validarFormatoDoTokenDoDiscord(bruto).valido
+  return validarFormatoDoToken(bruto).valido
 }

@@ -46,7 +46,6 @@ import { AUDIT_FILE_NAME, openAuditLog } from '../src/audit/log.ts'
 import { redact } from '../src/logging/redact.ts'
 import {
   AVISOS_ANTES_DO_TUNEL,
-  CHAVE_DO_TOKEN,
   COMANDO_CLI,
   LIMITE_DE_UPDATES,
   OnboardingError,
@@ -58,12 +57,15 @@ import {
   proximoPasso,
   resolverToken,
   validarFormatoDoToken,
+  validarFormatoDoTokenDoDiscord,
   type EscritaDeSegredos,
   type RespostaGetMe,
   type RetratoDoAmbiente,
   type SondaTelegram,
   type TokenConfigurado,
 } from '../src/telegram/onboarding.ts'
+import { apiRootDe, criarSonda, type SondaDeProvedor } from '../src/onboarding/sonda.ts'
+import { PROVIDER_ENV, resolverProvedorDoAmbiente, type ProviderId } from '../src/proc/env.ts'
 import {
   PairingError,
   TTL_DO_CODIGO_MS,
@@ -106,7 +108,17 @@ const RENOVACOES_MAXIMAS = 3
  * de T5.3 e a MESMA maquina com outra superficie.
  */
 export interface DependenciasDoSetup {
+  /**
+   * O provedor de mensageria ATIVO. Omitido: resolvido do ambiente
+   * (`DSH_GUARD_PROVIDER`, default fechado `telegram` — ver
+   * `resolverProvedorDoAmbiente`). O provedor decide a CHAVE lida/gravada no
+   * `secrets.env`, os rotulos do texto (@BotFather vs portal de
+   * desenvolvimento) e a sonda usada.
+   */
+  readonly provedor?: ProviderId | undefined
   readonly sonda?: SondaTelegram | undefined
+  /** O probe comum do provedor (usado pelo discord). Omitido: `criarSonda`. */
+  readonly probe?: SondaDeProvedor | undefined
   readonly escrever?: ((texto: string) => void) | undefined
   readonly avisar?: ((texto: string) => void) | undefined
   readonly agora?: (() => number) | undefined
@@ -173,7 +185,18 @@ export { gravarSecretsEnv } from '../src/telegram/onboarding.ts'
 interface Contexto extends EscritaDeSegredos {
   readonly store: StateStore
   readonly apresentavel: string
-  readonly sonda: SondaTelegram
+  /** O provedor ATIVO (default fechado `telegram`, D1). */
+  readonly provedor: ProviderId
+  /** A CHAVE do provedor no `secrets.env`/ambiente (`PROVIDER_ENV[provedor].tokenVar`). */
+  readonly chave: string
+  /**
+   * A sonda telegram COMPLETA (getMe + getUpdates) — so existe para o
+   * telegram, e e ela que alimenta o ciclo de sondagens do `--parear`
+   * (o getUpdates nao tem equivalente fora do telegram).
+   */
+  readonly sonda: SondaTelegram | undefined
+  /** O probe comum do provedor ATIVO (confirma o token, devolve o nome). */
+  readonly probe: SondaDeProvedor
   readonly escrever: (texto: string) => void
   readonly avisar: (texto: string) => void
   readonly agora: () => number
@@ -196,19 +219,68 @@ async function recolherRetrato(
   ambiente: Readonly<Record<string, string | undefined>>,
 ): Promise<{ readonly retrato: RetratoDoAmbiente; readonly token: string | undefined }> {
   const dono = ctx.store.read().pairing
-  const encontrado = resolverToken(ctx.caminhoSecrets, ambiente)
+  // A CHAVE e a do provedor ativo: `TELEGRAM_BOT_TOKEN` ou `DISCORD_BOT_TOKEN`
+  // — as duas fontes (secrets.env e ambiente) usam o MESMO nome.
+  const encontrado = resolverToken(ctx.caminhoSecrets, ambiente, ctx.chave)
   if (encontrado === undefined) {
     return { retrato: { token: undefined, getMe: undefined, dono }, token: undefined }
   }
 
-  const formato = validarFormatoDoToken(encontrado.token)
+  // FORMATO ANTES DE REDE (TG-061), com a forma do provedor ativo.
+  const formato =
+    ctx.provedor === 'discord'
+      ? validarFormatoDoTokenDoDiscord(encontrado.token)
+      : validarFormatoDoToken(encontrado.token)
   const configurado: TokenConfigurado = { origem: encontrado.origem, formato }
   if (!formato.valido) {
     return { retrato: { token: configurado, getMe: undefined, dono }, token: encontrado.token }
   }
 
-  const getMe: RespostaGetMe = await ctx.sonda.getMe(encontrado.token)
+  const getMe: RespostaGetMe = await getMeDoProvedor(ctx, encontrado.token)
   return { retrato: { token: configurado, getMe, dono }, token: encontrado.token }
+}
+
+/**
+ * O `getMe` do provedor ativo, na forma que o retrato espera.
+ *
+ * Telegram: a sonda completa (`ctx.sonda.getMe`) — comportamento historico,
+ * byte a byte. Discord: o probe comum (`GET /users/@me` com Bearer), MAPEADO
+ * para `RespostaGetMe` — o retrato so consome `ok`/`falha.causa`/
+ * `httpStatus` para ESCOLHER TEXTO, e o mapa conserva exatamente o que os
+ * textos distinguem:
+ *
+ *   probe ok+botNome        -> getMe ok (bot com nome publico);
+ *   probe ok sem botNome    -> HTTP 200 sem username (bot existe, sem nome);
+ *   probe token-invalido    -> 401 recusado;
+ *   probe rede              -> rede, sem resposta;
+ *   probe indisponivel      -> 500 ininteligivel.
+ */
+async function getMeDoProvedor(ctx: Contexto, token: string): Promise<RespostaGetMe> {
+  if (ctx.provedor === 'discord') {
+    const prova = await ctx.probe.verificar(token)
+    if (prova.ok) {
+      if (prova.botNome !== undefined) {
+        // `id: 0` e artefacto do retrato: o token do discord nao carrega id
+        // numerico, e nenhum texto usa `getMe.bot.id` (so o `username`).
+        return { ok: true, bot: { id: 0, username: prova.botNome } }
+      }
+      return { ok: false, falha: { causa: 'resposta-ininteligivel', httpStatus: 200 } }
+    }
+    if (prova.erro === 'token-invalido') {
+      return { ok: false, falha: { causa: 'recusado', httpStatus: 401 } }
+    }
+    if (prova.erro === 'rede') {
+      return { ok: false, falha: { causa: 'rede', httpStatus: 0 } }
+    }
+    return { ok: false, falha: { causa: 'resposta-ininteligivel', httpStatus: 500 } }
+  }
+  const sonda = ctx.sonda
+  if (sonda === undefined) {
+    // Inalcancavel: o default do telegram cria a sonda em `principal`. A
+    // guarda existe para o compilador e para quem injetar deps erradas.
+    throw new Error('a sonda telegram nao esta disponivel para o provedor telegram')
+  }
+  return sonda.getMe(token)
 }
 
 /* ========================================================================== */
@@ -272,6 +344,7 @@ async function pedirLinha(rotulo: string): Promise<string | undefined> {
 /** Imprime o passo em falta. NAO escreve nada em lado nenhum. */
 function mostrarPasso(retrato: RetratoDoAmbiente, ctx: Contexto, codigo?: string): number {
   const passo = proximoPasso(retrato, {
+    provedor: ctx.provedor,
     caminhoSecretsEnv: ctx.apresentavel,
     ...(codigo === undefined ? {} : { codigo }),
     minutosDoCodigo: Math.round(TTL_DO_CODIGO_MS / 60_000),
@@ -289,8 +362,10 @@ function mostrarPasso(retrato: RetratoDoAmbiente, ctx: Contexto, codigo?: string
  * ser enviada.
  */
 async function comandoPedirToken(ctx: Contexto, ambiente: NodeJS.ProcessEnv): Promise<number> {
+  const origemDaChave =
+    ctx.provedor === 'discord' ? 'no portal de desenvolvimento do Discord' : 'que o @BotFather lhe deu'
   ctx.escrever(
-    `\nCole a chave que o @BotFather lhe deu. Ela não aparece no ecrã enquanto a escreve,\n` +
+    `\nCole a chave ${origemDaChave}. Ela não aparece no ecrã enquanto a escreve,\n` +
       `e fica guardada em ${ctx.apresentavel} (só a sua conta lê).\n`,
   )
   const bruto = await ctx.pedirSegredo('chave: ')
@@ -307,7 +382,11 @@ async function comandoPedirToken(ctx: Contexto, ambiente: NodeJS.ProcessEnv): Pr
     return 2
   }
 
-  const formato = validarFormatoDoToken(bruto)
+  // FORMATO ANTES DE REDE (TG-061), com a forma do provedor ativo.
+  const formato =
+    ctx.provedor === 'discord'
+      ? validarFormatoDoTokenDoDiscord(bruto)
+      : validarFormatoDoToken(bruto)
   if (!formato.valido) {
     // Nada saiu para a rede. O texto do estado explica O QUE esta errado na
     // forma, sem repetir a chave nem parte dela.
@@ -317,7 +396,10 @@ async function comandoPedirToken(ctx: Contexto, ambiente: NodeJS.ProcessEnv): Pr
     )
   }
 
-  gravarSecretsEnv(ctx, CHAVE_DO_TOKEN, bruto)
+  // A CHAVE gravada e a do provedor ativo (`ctx.chave`): um mesmo
+  // `secrets.env` partilhado guarda `TELEGRAM_BOT_TOKEN` e `DISCORD_BOT_TOKEN`
+  // lado a lado, e o worker de cada provedor le a sua.
+  gravarSecretsEnv(ctx, ctx.chave, bruto)
   ctx.escrever(`\nChave guardada em ${ctx.apresentavel}, com permissão 0600.`)
 
   const { retrato } = await recolherRetrato(ctx, ambiente)
@@ -350,6 +432,27 @@ async function comandoParear(
     return 0
   }
 
+  // O DISCORD NAO TEM `getUpdates`: a confirmacao do `/parear` chega pelo
+  // WORKER (adaptador discord, Onda 3) via IPC, nao por sondagem HTTP como o
+  // telegram. Este CLI mostra o codigo e as instrucoes e encerra — o par fica
+  // por confirmar ate o harness correr com o worker discord. Nao ha sonda a
+  // pendurar e nao se inventa um transporte que o canal nao tem.
+  if (ctx.provedor === 'discord') {
+    const sessao = criarSessaoDePareamento({ clock: { now: ctx.agora } })
+    mostrarPasso(retrato, ctx, sessao.revelarCodigo())
+    ctx.escrever(
+      '\nA confirmação chega pelo harness: com o worker do Discord ligado, envie\n' +
+        `/parear <código> onde o bot esteja. O dono fica gravado quando a mensagem\n` +
+        `for recebida (adaptador do Discord). Enquanto o harness não estiver a\n` +
+        'correr, o código fica válido apenas nesta execução.\n',
+    )
+    return 3
+  }
+
+  const sonda = ctx.sonda
+  if (sonda === undefined) {
+    throw new Error('a sonda telegram nao esta disponivel para o provedor telegram')
+  }
   const relogio = { now: ctx.agora }
   let sessao = criarSessaoDePareamento({ clock: relogio })
 
@@ -384,7 +487,7 @@ async function comandoParear(
         'desligam-se uma à outra. Se isso acontecer, esta ferramenta avisa e para.\n',
     )
 
-    const resultado = await esperarPareamento(ctx, token, sessao, vistos)
+    const resultado = await esperarPareamento(ctx, sonda, token, sessao, vistos)
     if (resultado === 'pareado') return 0
     if (resultado === 'conflito') return 1
 
@@ -445,6 +548,7 @@ type FimDaEspera = 'pareado' | 'expirado' | 'esgotado' | 'conflito'
  */
 async function esperarPareamento(
   ctx: Contexto,
+  sonda: SondaTelegram,
   token: string,
   sessao: SessaoDePareamento,
   vistos: Set<number>,
@@ -467,7 +571,7 @@ async function esperarPareamento(
   let avisouDaFilaCheia = false
 
   while (sessao.estado() === 'aberto') {
-    const lote = await ctx.sonda.getUpdates(token)
+    const lote = await sonda.getUpdates(token)
 
     if (!lote.ok) {
       if (lote.falha.causa === 'conflito') {
@@ -703,11 +807,12 @@ function registarAuditoria(
 /* Ajuda                                                                      */
 /* ========================================================================== */
 
-function mostrarAjuda(escrever: (texto: string) => void): void {
-  escrever(`${COMANDO_CLI} — liga este computador ao seu bot do Telegram.
+function mostrarAjuda(escrever: (texto: string) => void, provedor: ProviderId): void {
+  const canal = provedor === 'discord' ? 'Discord' : 'Telegram'
+  escrever(`${COMANDO_CLI} — liga este computador ao seu bot do ${canal}.
 
 Sem opções, a ferramenta mostra a sua senha de acesso (uma única vez, em texto
-e em QR — a senha do portão HTTP não depende do Telegram) e depois o passo que
+e em QR — a senha do portão HTTP não depende do ${canal}) e depois o passo que
 falta. Correr outra vez quando já está tudo pronto não muda nada.
 
   --pedir-token     pede a chave do bot aqui no terminal e guarda-a com
@@ -741,8 +846,12 @@ export async function principal(
   const avisar = deps.avisar ?? ((texto: string): void => void process.stderr.write(`${texto}\n`))
 
   const argumentos = analisarArgumentos(argv)
+  // O provedor ATIVO: injetado nos testes, ou resolvido do ambiente
+  // (`DSH_GUARD_PROVIDER`, fail-closed no default telegram — D1). Um valor
+  // desconhecido LANCARIA aqui, antes de qualquer leitura de chave.
+  const provedor = deps.provedor ?? resolverProvedorDoAmbiente(process.env)
   if (argumentos.comando === 'ajuda') {
-    mostrarAjuda(escrever)
+    mostrarAjuda(escrever, provedor)
     return 0
   }
 
@@ -750,12 +859,25 @@ export async function principal(
   ensureStateDir(paths)
   const handle = createStateStore({ paths })
   const caminhoSecrets = caminhoDoSecretsEnv(paths)
+  // A CHAVE do provedor ativo — a MESMA tabela que o host usa para injetar o
+  // token no worker (`PROVIDER_ENV`): o `secrets.env` e partilhado, e cada
+  // provedor tem a sua linha (`TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN`).
+  const chave = PROVIDER_ENV[provedor].tokenVar
+  const apiRoot = apiRootDe(provedor)
   const ctx: Contexto = {
     paths,
     store: handle.store,
     caminhoSecrets,
     apresentavel: caminhoApresentavel(caminhoSecrets, homedir()),
-    sonda: deps.sonda ?? criarSondaHttp(),
+    provedor,
+    chave,
+    // A sonda telegram so existe para o telegram: o discord nao tem
+    // `getUpdates`, e criar a sonda telegram para ele mandaria o token do
+    // discord no caminho do URL do telegram — nunca.
+    sonda: provedor === 'discord' ? undefined : (deps.sonda ?? criarSondaHttp()),
+    // O probe comum do provedor ativo (o `--parear` do discord usa-o via
+    // `getMeDoProvedor`; a raiz da API segue `DISCORD_API_ROOT`, se definida).
+    probe: deps.probe ?? criarSonda(provedor, apiRoot === undefined ? {} : { apiRoot }),
     escrever,
     avisar,
     agora: deps.agora ?? Date.now,

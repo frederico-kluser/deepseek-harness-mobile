@@ -73,13 +73,19 @@ export const WORKER_IPC_ENV_MARK = 'DSH_GUARD_IPC'
 /**
  * Identificador do provedor de mensageria ATIVO (desacoplamento do bot, D1).
  *
- * FECHADO e paralelo ao enum de `Config.worker.provider` e de
- * `PersistedState.provider`: o host so conhece `telegram` hoje. Um provedor
- * futuro ACRESCENTA um literal AQUI e a sua linha em {@link PROVIDER_ENV} —
- * nunca reescreve uma variavel existente, para que nenhuma mudanca mude
- * silenciosamente o token de um bot ja emparelhado.
+ * FECHADO e paralelo ao enum de `Config.worker.provider` (o `PersistedState`
+ * vive no contrato congelado e ainda so admite `telegram` — a ausencia le-se
+ * como o default fechado). `'discord'` e uma entrada REGISTRADA neste host
+ * desde ja: o adaptador do worker chega na Onda 3, mas o host precisa de estar
+ * pronto para rotular o filho com `DSH_GUARD_PROVIDER=discord` e injetar o
+ * `DISCORD_BOT_TOKEN` no mesmo dia. Ate la, `provider: 'discord'` na config
+ * faz o worker falhar-closed no registry (provedor desconhecido) — o contrario
+ * de degradar em silencio para o telegram, que nasceria com o token de outro
+ * provedor. Um provedor futuro ACRESCENTA um literal AQUI e a sua linha em
+ * {@link PROVIDER_ENV} — nunca reescreve uma variavel existente, para que
+ * nenhuma mudanca mude silenciosamente o token de um bot ja emparelhado.
  */
-export type ProviderId = 'telegram'
+export type ProviderId = 'telegram' | 'discord'
 
 /** O default fechado do provedor (D1): ausente em config/estado = telegram. */
 export const DEFAULT_PROVIDER: ProviderId = 'telegram'
@@ -99,6 +105,11 @@ export const DEFAULT_PROVIDER: ProviderId = 'telegram'
  */
 export const PROVIDER_ENV: Readonly<Record<ProviderId, { readonly tokenVar: string }>> = {
   telegram: { tokenVar: 'TELEGRAM_BOT_TOKEN' },
+  // REGISTRADA (Onda 2 do host): o adaptador discord do worker (Onda 3) le
+  // `DISCORD_BOT_TOKEN` como `TOKEN_ENV_VAR` proprio. A paridade e um teste
+  // (`test/unit/proc/env.test.ts`), nao um import — o worker so pode importar
+  // `src/contracts/ipc.ts` de `src/` (cone de import).
+  discord: { tokenVar: 'DISCORD_BOT_TOKEN' },
 }
 
 /**
@@ -122,13 +133,41 @@ export const WORKER_PROVIDER_ENV_VAR = 'DSH_GUARD_PROVIDER'
  *
  * O `provider` e OPCIONAL com default fechado `telegram` (D1): quem chama sem
  * provider e quem corre hoje, e o alvo da variavel e o MESMO —
- * `TELEGRAM_BOT_TOKEN`. Para telegram o token vai para
- * `PROVIDER_ENV.telegram.tokenVar`; a assinatura e feita para um provedor
- * futuro mudar apenas o `tokenVar` de destino, nunca o parametro `token`.
+ * `TELEGRAM_BOT_TOKEN`. O token vai para `PROVIDER_ENV[provider].tokenVar`
+ * (`TELEGRAM_BOT_TOKEN` para telegram, `DISCORD_BOT_TOKEN` para discord); a
+ * assinatura faz um provedor futuro mudar apenas o `tokenVar` de destino,
+ * nunca o parametro `token`.
  *
  * As chaves sao comparadas em maiusculas porque o Windows trata os nomes de
  * variaveis de forma insensivel a caixa (`SystemRoot` == `SYSTEMROOT`).
  */
+/**
+ * Resolve o PROVEDOR ATIVO a partir do ambiente (fail-closed, D1).
+ *
+ * Le `DSH_GUARD_PROVIDER` — a MESMA variavel que rotula o worker. O host a
+ * injeta no filho via `buildWorkerEnv`; o CLI de onboarding (`dsh-guard-setup`)
+ * le-a para saber com que provedor esta a falar (chave do `secrets.env`,
+ * rotulos do texto, sonda). Ausente/vazio = default fechado `telegram`.
+ *
+ * VALOR DESCONHECIDO = ERRO, nao default. Degradar em silencio para o
+ * telegram quando alguem pediu discord leria a CHAVE ERRADA do `secrets.env`
+ * e mostraria os rotulos errados — a mesma razao do `resolverProvedor`
+ * fail-closed do registry do worker (`worker/providers/registry.ts`).
+ */
+export function resolverProvedorDoAmbiente(
+  ambiente: Readonly<Record<string, string | undefined>> = process.env,
+): ProviderId {
+  const bruto = ambiente[WORKER_PROVIDER_ENV_VAR]?.trim()
+  if (bruto === undefined || bruto === '') return DEFAULT_PROVIDER
+  if (!(bruto in PROVIDER_ENV)) {
+    throw new Error(
+      `${WORKER_PROVIDER_ENV_VAR}='${bruto}' nao e um provedor conhecido ` +
+        `(${Object.keys(PROVIDER_ENV).join(' | ')}). Corrija a variavel e repita.`,
+    )
+  }
+  return bruto as ProviderId
+}
+
 export function buildWorkerEnv(
   source: NodeJS.ProcessEnv,
   token: string,

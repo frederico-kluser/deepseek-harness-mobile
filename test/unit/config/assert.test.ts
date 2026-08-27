@@ -45,6 +45,33 @@ describe('fail loud at load', () => {
   })
 })
 
+describe('worker.provider -- fail loud no literal (registro do host)', () => {
+  it('aceita `telegram` e `discord` (os dois literais de PROVIDER_ENV)', () => {
+    const comTelegram = makeConfig()
+    comTelegram.worker.provider = 'telegram'
+    assert.doesNotThrow(() => assertValidConfig(comTelegram))
+
+    const comDiscord = makeConfig()
+    comDiscord.worker.provider = 'discord'
+    assert.doesNotThrow(() => assertValidConfig(comDiscord))
+  })
+
+  it('rejeita um literal desconhecido com erro accionavel (nunca degrada em silencio)', () => {
+    // Sem esta rede, um `provider: whatsapp` no YAML rebentaria com um
+    // TypeError obscuro no PROVIDER_ENV[provider] — ou, pior, leria o
+    // tokenVar do provedor errado. Recusa-se no arranque (Q-3).
+    const comWhatsapp = makeConfig()
+    comWhatsapp.worker.provider = 'whatsapp' as never
+    assert.throws(() => assertValidConfig(comWhatsapp), /provider/u)
+    assert.throws(() => assertValidConfig(comWhatsapp), /whatsapp/u)
+    assert.throws(() => assertValidConfig(comWhatsapp), /telegram \| discord/u)
+  })
+
+  it('ausente continua a ser valido (o default fechado e do schema, nao do assert)', () => {
+    assert.doesNotThrow(() => assertValidConfig(makeConfig()))
+  })
+})
+
 describe('validacao do par descodificado de encodedAuthString (achado B-CRITICAL)', () => {
   it('recusa dW5kZWZpbmVkOnVuZGVmaW5lZA== (= undefined:undefined)', () => {
     const universal = Buffer.from('undefined:undefined').toString('base64')

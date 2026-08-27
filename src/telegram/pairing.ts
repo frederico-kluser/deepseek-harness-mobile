@@ -199,6 +199,12 @@ export type MotivoDeDescarte =
    * num canal publico. E nao e hipotetico: o sufixo `@nome_do_bot` que este
    * ficheiro aceita de proposito e precisamente a forma que o cliente do
    * Telegram usa EM GRUPOS, logo este caminho e alcancavel a partir de um.
+   *
+   * POLITICA DO PROVEDOR TELEGRAM: a sessao de pareamento e provider-agnostica
+   * nos tipos (os dois eixos do dono sao STRING desde o V2); e o PARSER deste
+   * ficheiro que conhece a gramatica do canal — um adaptador discord leria os
+   * seus proprios updates e aplicaria a sua propria politica de "onde o
+   * pareamento pode acontecer", sem herdar `chat.type === 'private'`.
    */
   | 'conversa-nao-privada'
   /** Chegou um codigo, e nao era este. */

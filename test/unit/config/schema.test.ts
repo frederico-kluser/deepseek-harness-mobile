@@ -285,6 +285,14 @@ describe('worker.provider (D1) -- contrato de tipo, enum FECHADO', () => {
     assert.equal(config.worker.provider, 'telegram')
   })
 
+  it('aceita o literal REGISTRADO `discord` no `worker` (Onda 2 do host)', () => {
+    // O host esta pronto para o discord: o literal compila no tipo (a entrada
+    // em `PROVIDER_ENV` decide o tokenVar) — o adaptador do worker chega na
+    // Onda 3, e ate la o filho falha-closed no registry.
+    const config = makeConfig({ worker: { provider: 'discord' } } as never)
+    assert.equal(config.worker.provider, 'discord')
+  })
+
   it('sem `provider`, o default fechado e o telegram -- nenhuma chave obrigatoria nova', () => {
     // `makeConfig()` nao declara `provider`, e isso continua a ser um `Config`
     // valido: a adicao nao obriga nenhum chamador a mudar (D1, aditivo).

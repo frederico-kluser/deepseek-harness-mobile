@@ -1089,6 +1089,7 @@ import { principal, type DependenciasDoSetup } from '../../../bin/dsh-guard-setu
 import { createStateStore } from '../../../src/state/store.ts'
 import { TTL_DO_CODIGO_MS } from '../../../src/telegram/pairing.ts'
 import { type SondaTelegram } from '../../../src/telegram/onboarding.ts'
+import type { SondaDeProvedor } from '../../../src/onboarding/sonda.ts'
 
 /** Update de mensagem privada com `from.id` e `chat.id` DISTINTOS. */
 function update(texto: string, updateId: number, fromId: number, chatId: number): unknown {
@@ -1976,5 +1977,124 @@ describe('o relato de erro não publica o $HOME nem a `stack`', () => {
     assert.ok(saida.startsWith('não conheço'), saida)
     assert.ok(saida.includes('código: SETUP_UNKNOWN_ARGUMENT'))
     assert.ok(!saida.includes('[dsh-guard-messenger]'), 'o prefixo é ruído para quem lê')
+  })
+})
+
+/* ========================================================================== */
+/* CLI com o provedor DISCORD (Onda 2 do host): chave, rotulos e parear       */
+/* ========================================================================== */
+
+/** Semeia um `secrets.env` com a CHAVE do discord (`DISCORD_BOT_TOKEN`). */
+function escreverSecretsEnvDiscord(raiz: string): void {
+  mkdirSync(raiz, { recursive: true, mode: 0o700 })
+  writeFileSync(join(raiz, 'secrets.env'), `DISCORD_BOT_TOKEN=${TOKEN_VALIDO}\n`, { mode: 0o600 })
+}
+
+/** Um probe discord de memoria: confirma o token e devolve o nome do bot. */
+function probeDiscordOk(): SondaDeProvedor {
+  return { verificar: async (token) => ({ ok: true, botNome: token.length > 0 ? 'meu_painel_bot' : undefined }) }
+}
+
+describe('CLI provider-aware -- discord registado no host', () => {
+  it('--pedir-token grava na CHAVE do discord e mostra o rotulo do portal de desenvolvimento', async () => {
+    const bancada = montarBancada({
+      getMe: async () => ({ ok: true, bot: BOT }),
+      getUpdates: async () => ({ ok: true, updates: [] }),
+    } satisfies SondaTelegram, {
+      provedor: 'discord',
+      probe: probeDiscordOk(),
+      pedirSegredo: async (): Promise<string> => TOKEN_VALIDO,
+    })
+    try {
+      // SEM token configurado: o primeiro `--pedir-token` e o passo SEM_TOKEN.
+      assert.equal(await principal(['--pedir-token'], bancada.deps), 3)
+      const saida = bancada.saida()
+      // Com o token ja valido, o passo e TOKEN_OK_SEM_DONO (textoSemDono
+      // discord): o convite por URL do portal — e o rotulo telegram ausente.
+      assert.ok(saida.includes('portal de desenvolvimento'), 'o rotulo discord aparece')
+      assert.ok(saida.includes('URL Generator'))
+      assert.ok(!saida.includes('@BotFather'), 'o rotulo telegram nao vaza')
+      const conteudo = readFileSync(join(bancada.raiz, 'secrets.env'), 'utf8')
+      assert.ok(conteudo.includes('DISCORD_BOT_TOKEN='), 'a CHAVE gravada e a do discord')
+      assert.ok(!conteudo.includes('TELEGRAM_BOT_TOKEN='), 'nada e gravado na chave do telegram')
+    } finally {
+      bancada.limpar()
+    }
+  })
+
+  it('--parear com discord: mostra o codigo, NAO sonda getUpdates e devolve "falta um passo"', async () => {
+    let sondagens = 0
+    const bancada = montarBancada({
+      getMe: async () => {
+        sondagens += 1
+        return { ok: true, bot: BOT }
+      },
+      getUpdates: async () => {
+        sondagens += 1
+        return { ok: true, updates: [] }
+      },
+    } satisfies SondaTelegram, {
+      provedor: 'discord',
+      probe: probeDiscordOk(),
+    })
+    try {
+      escreverSecretsEnvDiscord(bancada.raiz)
+      // Estado TOKEN_OK_SEM_DONO (sem dono): `--parear` e o passo certo.
+      assert.equal(await principal(['--parear'], bancada.deps), 3)
+      const saida = bancada.saida()
+      assert.ok(/código de pareamento:\s+\d{6}/u.test(saida), 'o codigo aparece no terminal')
+      assert.ok(saida.includes('/parear'), 'a instrucao do comando aparece')
+      assert.ok(saida.includes('worker do Discord'), 'explica que a confirmacao chega pelo harness')
+      // O DISCORD NAO TEM getUpdates: a sonda telegram NAO pode ser chamada —
+      // um polling contra api.telegram.org com o token do discord nunca.
+      assert.equal(sondagens, 0, 'nenhuma chamada de rede da sonda telegram')
+      assert.equal(bancada.estado()['pairing'], undefined, 'nada e gravado sem confirmacao')
+    } finally {
+      bancada.limpar()
+    }
+  })
+
+  it('recolhe o retrato do discord pelo PROBE (o getMe nao e chamado)', async () => {
+    let chamadasDeGetMe = 0
+    const bancada = montarBancada({
+      getMe: async () => {
+        chamadasDeGetMe += 1
+        return { ok: true, bot: BOT }
+      },
+      getUpdates: async () => ({ ok: true, updates: [] }),
+    } satisfies SondaTelegram, {
+      provedor: 'discord',
+      probe: probeDiscordOk(),
+    })
+    try {
+      escreverSecretsEnvDiscord(bancada.raiz)
+      // Dono pareado + token ok -> PRONTO (exit 0). O probe confirma o bot;
+      // a sonda telegram fica intocada (nao ha getMe para o discord).
+      const h = createStateStore({ paths: statePathsAt(bancada.raiz) })
+      h.store.update((estado) => ({
+        ...estado,
+        pairing: { ownerUserId: '111', ownerChatId: '222', pairedAt: 5 },
+      }))
+      h.dispose()
+
+      assert.equal(await principal([], bancada.deps), 0)
+      assert.ok(bancada.saida().includes('Está tudo ligado.'))
+      assert.equal(chamadasDeGetMe, 0)
+    } finally {
+      bancada.limpar()
+    }
+  })
+
+  it('resolverToken com a CHAVE do discord le a linha DISCORD_BOT_TOKEN do secrets.env', () => {
+    const temp = makeTempStateDir()
+    try {
+      escreverSecretsEnvDiscord(temp.path)
+      const encontrado = resolverToken(join(temp.path, 'secrets.env'), {}, 'DISCORD_BOT_TOKEN')
+      assert.deepEqual(encontrado, { token: TOKEN_VALIDO, origem: 'secrets.env' })
+      // E a chave do telegram, na mesma fonte, nao engana: nao ha linha dela.
+      assert.equal(resolverToken(join(temp.path, 'secrets.env'), {}, 'TELEGRAM_BOT_TOKEN'), undefined)
+    } finally {
+      temp.cleanup()
+    }
   })
 })

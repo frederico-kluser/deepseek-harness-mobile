@@ -157,16 +157,19 @@ export interface Config {
      * comportamento atual muda e o manifesto de Camada 1 NAO ganha a chave na
      * MESMA onda (a adicao sincronizada ao `cordis.patch.yml` cabe a onda 5,
      * dona do contrato host provider-aware). Ausente = `telegram`, o default
-     * fechado (D1). O enum e FECHADO porque o host ainda so fala telegram; um
-     * provedor futuro ACRESCENTA um literal aqui (e a linha propria em
-     * `src/proc/env.ts`), nunca o reescreve no ar.
+     * fechado (D1). O enum e FECHADO por desenho: um provedor futuro
+     * ACRESCENTA um literal aqui (e a linha propria em `src/proc/env.ts`),
+     * nunca o reescreve no ar. `'discord'` ja e uma entrada REGISTRADA — o
+     * host esta pronto para a aceitar (tokenVar, rotulo do worker, sonda do
+     * painel); o adaptador do worker chega na Onda 3 e, ate la, o filho
+     * falha-closed no registry por provedor desconhecido.
      *
-     * `worker.token` e o token do PROVEDOR ATIVO — hoje o do Telegram. Quando
-     * houver mais de um provedor, esta chave decide de quem o `token` e e para
-     * qual `TOKEN_ENV_VAR` de `src/proc/env.ts` ele vai parar no ambiente do
+     * `worker.token` e o token do PROVEDOR ATIVO — hoje o do Telegram. Com
+     * mais de um provedor, esta chave decide de quem o `token` e e para qual
+     * `TOKEN_ENV_VAR` de `src/proc/env.ts` ele vai parar no ambiente do
      * worker (D1/D5).
      */
-    provider?: 'telegram'
+    provider?: 'telegram' | 'discord'
     token: string
     /**
      * Janela de cortesia, em milissegundos, da escalada

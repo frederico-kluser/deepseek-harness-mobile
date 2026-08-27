@@ -19,7 +19,7 @@ import type { TunnelSnapshot } from '../../src/contracts/tunnel.ts'
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
 import { WORKER_PROVIDER_ENV_VAR } from '../../src/proc/env.ts'
 import { apply, criarFanoutDeEstado, inject, name, type Config } from '../../src/index.ts'
-import { UI_PATH_TELEGRAM } from '../../src/ui-contrib/routes.ts'
+import { UI_PATH_PRIVACIDADE, UI_PATH_TELEGRAM } from '../../src/ui-contrib/routes.ts'
 import {
   createFakeLogger,
   FakeContext,
@@ -194,6 +194,86 @@ describe('ciclo de vida sob ctx.effect', () => {
     assert.equal(res.statusCode, 200)
     return JSON.parse(res.body) as { online: boolean; motivo?: string }
   }
+
+  describe('provider=discord REGISTRADO no host (Onda 2): spawn e sonda do painel', () => {
+    it('(c) o spawn rotula DSH_GUARD_PROVIDER=discord e injeta DISCORD_BOT_TOKEN, e a privacidade usa a sonda discord', async () => {
+      // O token do secrets.env e a CHAVE do DISCORD (sem dois-pontos — a forma
+      // do telegram rejeitava-o; o registro discord aceita a forma frouxa).
+      const casa = join(tmpdir(), 'dsh-guard-discord-' + process.pid + '-' + Math.random().toString(36).slice(2))
+      const dir = join(casa, 'guarded-bot')
+      mkdirSync(dir, { recursive: true })
+      chmodSync(dir, 0o700)
+      writeFileSync(join(dir, 'secrets.env'), 'DISCORD_BOT_TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto\n', {
+        mode: 0o600,
+      })
+      writeFileSync(
+        join(dir, 'state.json'),
+        JSON.stringify({
+          version: 1,
+          desiredState: 'STOPPED',
+          pairing: { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 },
+        }),
+        { mode: 0o600 },
+      )
+      process.env.DSH_HOME = casa
+      const limpar = (): void => {
+        delete process.env.DSH_HOME
+        rmSync(casa, { recursive: true, force: true })
+      }
+      let ctx: FakeContext | undefined
+      const fetchOriginal = globalThis.fetch
+      const pedidos: Array<{ url: string; authorization: string | null }> = []
+      globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+        pedidos.push({
+          url: String(url),
+          authorization: new Headers(init?.headers).get('authorization'),
+        })
+        return new Response(JSON.stringify({ id: '123', username: 'meu_bot_discord' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }) as typeof fetch
+      try {
+        const config = makeConfig()
+        config.worker.token = ''
+        config.worker.provider = 'discord'
+        config.tunnel = { mode: 'quick', ttlMinutes: 60 } // para o surface da UI montar
+        ctx = new FakeContext()
+        apply(ctx.asContext(), config)
+
+        // O worker SPAWNA com o token resolvido do secrets.env (chave DISCORD)
+        // e o rotulo do provedor ativo.
+        assert.equal(ctx.subprocess.calls.length, 1)
+        const spec = ctx.subprocess.calls[0]
+        assert.equal(spec?.env?.['DISCORD_BOT_TOKEN'], 'MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto')
+        assert.equal(spec?.env?.[WORKER_PROVIDER_ENV_VAR], 'discord')
+        assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], undefined)
+
+        // A sonda do painel e a DISCORD: a privacidade (GET sem CSRF) bate em
+        // /users/@me com Bearer — nunca em api.telegram.org — e devolve o nome.
+        const rota = ctx.webServer.routes.find((r) => r.path === UI_PATH_PRIVACIDADE)
+        assert.ok(rota !== undefined, `rota da privacidade nao registada: ${UI_PATH_PRIVACIDADE}`)
+        const handler = rota.handler as (req: IncomingMessage, res: FakeResponse) => void
+        const res = new FakeResponse()
+        handler(makeRequest({ url: UI_PATH_PRIVACIDADE, method: 'GET' }), res)
+        // O handler da privacidade e async: a resposta chega numa promessa.
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        assert.equal(res.statusCode, 200)
+        assert.deepEqual(JSON.parse(res.body), {
+          ok: true,
+          handle: 'meu_bot_discord',
+          fonte: 'secrets',
+        })
+        assert.equal(pedidos.length, 1)
+        assert.equal(pedidos[0]?.url, 'https://discord.com/api/v10/users/@me')
+        assert.equal(pedidos[0]?.authorization, 'Bearer MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto')
+      } finally {
+        for (const disposer of ctx?.effects ?? []) disposer()
+        limpar()
+        globalThis.fetch = fetchOriginal
+      }
+    })
+  })
 
   describe('o resolvedor do token (config OU secrets.env) ligou a UI ao spawn do worker', () => {
     it('(a) config.worker.token vazio + secrets.env com token -> o WORKER SPAWNA com o token resolvido e a UI mostra ONLINE', () => {

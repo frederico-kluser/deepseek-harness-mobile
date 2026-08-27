@@ -89,11 +89,11 @@ import type { WebRoute } from './dsh/adapter.ts'
 import {
   analisarSecretsEnv,
   caminhoDoSecretsEnv,
-  criarSondaHttp,
   gravarSecretsEnv,
   lerSecretsEnv,
-  validarFormatoDoToken,
+  validarFormatoDe,
 } from './telegram/onboarding.ts'
+import { apiRootDe, criarSonda } from './onboarding/sonda.ts'
 import { arrivedViaTunnel } from './http/host-header.ts'
 import { normalizeRemoteAddress } from './http/origin.ts'
 import { EDGE_CLIENT_IP_HEADER } from './http/session-auth.ts'
@@ -1133,10 +1133,13 @@ export function apply(
     // costura (que detem `config`, `statePaths` e o supervisor do worker); a
     // superficie so orquestra o HTTP. O token NUNCA sai daqui para a UI.
     const tokenOps = (() => {
-      // A raiz do getMe e a MESMA variavel que o worker le (`TELEGRAM_API_ROOT`
-      // em worker/providers/telegram/token.ts); omitida = `api.telegram.org`.
-      const apiRoot = process.env.TELEGRAM_API_ROOT?.trim()
-      const sonda = criarSondaHttp(apiRoot === undefined || apiRoot === '' ? {} : { apiRoot })
+      // A SONDA DO PROVEDOR ATIVO: o probe comum (`criarSonda`) confirma o
+      // token e devolve o nome do bot — telegram por `getMe`, discord por
+      // `GET /users/@me` com Bearer (sem SDK). A raiz da API segue a variavel
+      // do provedor (`TELEGRAM_API_ROOT` / `DISCORD_API_ROOT`, o MESMO nome
+      // que o worker le); omitida = a raiz publica do provedor.
+      const apiRoot = apiRootDe(provider)
+      const sonda = criarSonda(provider, apiRoot === undefined ? {} : { apiRoot })
       // O handle lembrado da ultima GRAVACAO bem-sucedida por ESTA rota. So e
       // setado em `gravar` (sob sucesso): um `getMe` que nao grava NAO deixa
       // aqui um handle estale que o token-state depois mostraria como se fosse
@@ -1170,14 +1173,21 @@ export function apply(
         return temSecrets ? 'secrets' : 'nenhum'
       }
       return {
-        validarFormato: (bruto: string): boolean => validarFormatoDoToken(bruto).valido,
+        // A checagem de formato do PROVEDOR ATIVO: estrita para o telegram
+        // (TG-061), frouxa para o discord (a gramatica real do token e do
+        // adaptador, Onda 3) — um token discord legitimo nao pode ser
+        // recusado pela forma do telegram.
+        validarFormato: (bruto: string): boolean => validarFormatoDe(provider, bruto),
         fonte: fonteEfetiva,
         sondar: async (
           token: string,
         ): Promise<{ readonly ok: true; readonly handle: string } | { readonly ok: false; readonly erro: string }> => {
-          const resposta = await sonda.getMe(token)
-          if (!resposta.ok) return { ok: false, erro: 'token-invalido' }
-          return { ok: true, handle: resposta.bot.username }
+          const prova = await sonda.verificar(token)
+          // So se aceita o token quando o bot CONFIRMA com nome publico: o
+          // caso "bot existe sem @username" (HTTP 200 sem username) continua
+          // a ser recusado aqui, como era com o getMe.
+          if (!prova.ok || prova.botNome === undefined) return { ok: false, erro: 'token-invalido' }
+          return { ok: true, handle: prova.botNome }
         },
         gravar: (token: string, handle: string): void => {
           // 1) Persistir em secrets.env (0600, atomico). Na falha, a excecao
@@ -1213,18 +1223,13 @@ export function apply(
           const token = resolverTokenDoBot()
           const calcular = async (): Promise<UiPrivacidade> => {
             if (token === undefined) return { ok: true, handle: null, fonte: 'nenhum' }
-            const resposta = await sonda.getMe(token)
-            // `ok:true` = ha @username; `ok:false` com HTTP 200 = o bot EXISTE
-            // e nao tem @username (o contrato do getMe colapsa o "sem username"
-            // em `falha.httpStatus === 200` — um bot valido sem `username`). So
-            // com esse 200 e que reportamos `handle:null` (verde legitimo);
-            // qualquer outra falha e "indisponivel" (nunca inventa estado).
-            if (resposta.ok) {
-              return { ok: true, handle: resposta.bot.username, fonte }
-            }
-            if (resposta.falha.httpStatus === 200) {
-              return { ok: true, handle: null, fonte }
-            }
+            const prova = await sonda.verificar(token)
+            // `ok:true` com `botNome` = ha nome publico; `ok:true` sem
+            // `botNome` = o bot EXISTE sem nome publico (o probe colapsa esse
+            // caso — o espelho do HTTP 200 sem `username` do getMe telegram) —
+            // verde legitimo; qualquer `ok:false` e "indisponivel" (nunca
+            // inventa estado).
+            if (prova.ok) return { ok: true, handle: prova.botNome ?? null, fonte }
             return { ok: false, erro: 'indisponivel' }
           }
           const resultado = await calcular()

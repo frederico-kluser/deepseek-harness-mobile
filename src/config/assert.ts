@@ -33,6 +33,7 @@ import { statSync } from 'node:fs'
 
 import type { ExposureConfig, TunnelConfig, TunnelMode } from '../contracts/tunnel.ts'
 import { PLUGIN_NAME } from '../errors.ts'
+import { PROVIDER_ENV } from '../proc/env.ts'
 import { resolveWorkerCwd, type Config, type ControlConfig } from './schema.ts'
 
 /**
@@ -380,6 +381,21 @@ export function assertValidConfig(config: Config): void {
       `[${PLUGIN_NAME}] config.worker.token tem de ser uma string (recebido: ${typeof token}). ` +
         'Vazio ou ausente e o estado legitimo "telegram nao configurado".',
     )
+  }
+
+  // `worker.provider` e OPCIONAL (ausente = default fechado `telegram`, D1),
+  // mas PRESENTE tem de ser um dos literais da tabela do host — fail loud,
+  // como tudo aqui. A alternativa seria o `PROVIDER_ENV[provider]` de
+  // `src/index.ts` rebentar com um `TypeError` obscuro na primeira corrida,
+  // ou — pior — degradar em silencio e ler o tokenVar do provedor errado.
+  if (config.worker.provider !== undefined) {
+    if (!(config.worker.provider in PROVIDER_ENV)) {
+      throw new Error(
+        `[${PLUGIN_NAME}] config.worker.provider = '${String(config.worker.provider)}' nao e um ` +
+          `provedor conhecido (${Object.keys(PROVIDER_ENV).join(' | ')}). Nao ha default ` +
+          'silencioso: um provedor desconhecido nasceria com o token de outro bot.',
+      )
+    }
   }
 
   // `graceMs` e obrigatorio em `SubprocessSpawnSpec` e o assento NAO aplica

@@ -43,6 +43,8 @@ import {
   textoSemToken,
   textoPronto,
   textoTokenInvalido,
+  tituloSemToken,
+  tituloTokenInvalido,
 } from '../../../src/telegram/texts.ts'
 
 const CAMINHO_APRESENTAVEL = '~/.dsh/guarded-bot/secrets.env'
@@ -330,5 +332,65 @@ describe('textoPronto — idempotencia e avisos', () => {
     for (const texto of comAvisos) {
       assert.ok(!texto.includes('cinco coisas mudam'), 'os avisos so aparecem quando o tunel vai subir')
     }
+  })
+})
+
+/* ========================================================================== */
+/* Rotulos provider-aware (Onda 2 do host): @BotFather vs portal do Discord   */
+/* ========================================================================== */
+
+describe('textos provider-aware (rotulos discord)', () => {
+  it('os titulos discord trocam o nome do canal, os telegram continuam intactos', () => {
+    assert.equal(tituloSemToken(), TITULO_SEM_TOKEN)
+    assert.equal(tituloSemToken('telegram'), TITULO_SEM_TOKEN)
+    assert.equal(tituloSemToken('discord'), 'Falta criar o bot no Discord.')
+    assert.equal(tituloTokenInvalido(), TITULO_TOKEN_INVALIDO)
+    assert.equal(tituloTokenInvalido('discord'), 'A chave do bot não foi aceite pelo Discord.')
+  })
+
+  it('textoSemToken discord: portal de desenvolvimento, sem @BotFather nem /newbot', () => {
+    const texto = textoSemToken({ provedor: 'discord', caminhoSecretsEnv: CAMINHO_APRESENTAVEL })
+    assert.ok(texto.includes('portal de desenvolvimento do Discord'))
+    assert.ok(texto.includes('discord.com/developers/applications'))
+    assert.ok(texto.includes('Reset Token'))
+    assert.ok(texto.includes(COMANDO_CLI))
+    assert.ok(!texto.includes('@BotFather'), 'o rotulo do telegram nao pode vazar para o discord')
+    assert.ok(!texto.includes('/newbot'))
+    // O caminho apresentavel (~) pode aparecer; um caminho ABSOLUTO de casa, nao.
+    assert.ok(!texto.includes('/home/'), 'sem caminho absoluto que identifique o utilizador (TG-070)')
+  })
+
+  it('textoTokenInvalido discord: o diagnostico nomeia o Discord e o passo e o portal', () => {
+    const texto = textoTokenInvalido(retratoBase(), { provedor: 'discord' })
+    assert.ok(texto.startsWith('O Discord respondeu que esta chave não vale'))
+    assert.ok(texto.includes('discord.com/developers/applications'))
+    assert.ok(texto.includes('Reset Token'))
+    assert.ok(!texto.includes('@BotFather'))
+    assert.ok(!texto.includes('/token'), 'o passo do telegram nao pode vazar')
+  })
+
+  it('textoTokenInvalido discord com falha de rede: o canal certo no diagnostico', () => {
+    const texto = textoTokenInvalido(falhaDeGetMe('rede'), { provedor: 'discord' })
+    assert.ok(texto.startsWith('Não foi possível falar com o Discord a partir desta máquina'))
+  })
+
+  it('textoSemDono discord: convite por URL e o comando de pareamento no servidor', () => {
+    const texto = textoSemDono(BOT, {
+      provedor: 'discord',
+      caminhoSecretsEnv: CAMINHO_APRESENTAVEL,
+      codigo: CODIGO,
+      minutosDoCodigo: 5,
+    })
+    assert.ok(texto.includes('URL Generator'))
+    assert.ok(texto.includes('OAuth2'))
+    assert.ok(texto.includes(`${'/'}parear ${CODIGO}`))
+    assert.ok(texto.includes(CODIGO))
+    assert.ok(!texto.includes('Iniciar'), 'o passo "toque em Iniciar" e do telegram')
+  })
+
+  it('sem `provedor`, o texto discord NAO aparece (default fechado telegram, D1)', () => {
+    const texto = textoSemToken({ caminhoSecretsEnv: CAMINHO_APRESENTAVEL })
+    assert.ok(texto.includes('@BotFather'))
+    assert.ok(!texto.includes('discord.com'))
   })
 })

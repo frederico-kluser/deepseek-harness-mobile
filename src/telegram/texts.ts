@@ -14,6 +14,7 @@
  */
 
 import { COMANDO_DE_PAREAMENTO, DIGITOS_DO_CODIGO } from './pairing.ts'
+import type { ProviderId } from '../proc/env.ts'
 import type { MotivoDeFormato, RetratoDoAmbiente } from './onboarding.ts'
 
 /** Comando publicado no `PATH` pelo pacote. Aparece em todas as instrucoes. */
@@ -63,7 +64,37 @@ export const TITULO_TOKEN_INVALIDO = 'A chave do bot não foi aceite pelo Telegr
 export const TITULO_SEM_DONO = 'O bot já responde. Falta dizer-lhe quem é o dono.'
 export const TITULO_PRONTO = 'Está tudo ligado.'
 
+/** Nome do canal que a pessoa ve, por provedor (rotulos provider-aware). */
+function nomeDoCanal(provedor: ProviderId): string {
+  return provedor === 'discord' ? 'Discord' : 'Telegram'
+}
+
+/**
+ * Titulo do estado SEM_TOKEN, por provedor.
+ *
+ * As constantes {@link TITULO_SEM_TOKEN} continuam a ser o titulo do telegram
+ * (o que os testes e o CLI historico asseram); a funcao e o ponto unico de
+ * escolha por provedor, usado por `proximoPasso` (`onboarding.ts`).
+ */
+export function tituloSemToken(provedor: ProviderId = 'telegram'): string {
+  return provedor === 'discord' ? 'Falta criar o bot no Discord.' : TITULO_SEM_TOKEN
+}
+
+/** Titulo do estado TOKEN_INVALIDO, por provedor. Ver {@link tituloSemToken}. */
+export function tituloTokenInvalido(provedor: ProviderId = 'telegram'): string {
+  return provedor === 'discord' ? 'A chave do bot não foi aceite pelo Discord.' : TITULO_TOKEN_INVALIDO
+}
+
 export interface OpcoesDePasso {
+  /**
+   * O PROVEDOR de mensageria a que o texto se dirige.
+   *
+   * Omissa = `telegram` (D1): quem chama sem provedor le hoje os mesmos
+   * rotulos de sempre (@BotFather). `'discord'` troca os rotulos para o
+   * portal de desenvolvimento do Discord — o texto e artefacto revisavel
+   * (TG-070), e os rotulos sao parte do texto.
+   */
+  readonly provedor?: ProviderId | undefined
   /**
    * Caminho do `secrets.env`, JA tornado apresentavel. Ver
    * {@link caminhoApresentavel} — o texto nunca leva `/home/<nome>`.
@@ -91,6 +122,7 @@ export interface OpcoesDePasso {
  * `bots/features` e sao a causa numero um de a pessoa ficar presa neste passo.
  */
 export function textoSemToken(opcoes: OpcoesDePasso): string {
+  if (opcoes.provedor === 'discord') return textoSemTokenDiscord(opcoes)
   return `Ainda não há nenhum bot do Telegram ligado a esta máquina. Criar um leva um
 minuto e faz-se todo dentro da aplicação do Telegram:
 
@@ -140,8 +172,33 @@ minuto e faz-se todo dentro da aplicação do Telegram:
  * DIAGNOSTICO em portugues e o passo seguinte; a `description` original fica na
  * mesma acessivel a quem chama, dentro de {@link FalhaDoGetMe}.
  */
-export function textoTokenInvalido(retrato: RetratoDoAmbiente): string {
-  return `${diagnostico(retrato)}
+export function textoTokenInvalido(
+  retrato: RetratoDoAmbiente,
+  opcoes: { readonly provedor?: ProviderId | undefined } = {},
+): string {
+  const canal = nomeDoCanal(opcoes.provedor ?? 'telegram')
+  const diagnosticoAtual = diagnostico(retrato, canal)
+  if (canal === 'Discord') {
+    return `${diagnosticoAtual}
+
+O que fazer:
+
+  1. Abra o portal de desenvolvimento do Discord e escolha a sua aplicação:
+
+         https://discord.com/developers/applications
+
+  2. Na secção "Bot", clique em "Reset Token".
+
+  3. Ele responde com uma chave nova. A antiga deixa de funcionar nesse
+     instante — é isso que a torna segura de substituir.
+
+  4. Volte a este terminal e escreva:
+
+         ${COMANDO_CLI} --pedir-token
+
+Enquanto a chave não for aceite, o bot não recebe nem envia nada.`
+  }
+  return `${diagnosticoAtual}
 
 O que fazer:
 
@@ -167,41 +224,41 @@ Enquanto a chave não for aceite, o bot não recebe nem envia nada.`
  * Sem esta separacao, todas as falhas dariam a mesma frase e a pessoa cuja
  * internet caiu iria pedir uma chave nova ao BotFather sem precisar.
  */
-function diagnostico(retrato: RetratoDoAmbiente): string {
+function diagnostico(retrato: RetratoDoAmbiente, canal: string): string {
   const formato = retrato.token?.formato
   if (formato !== undefined && !formato.valido) {
-    return `A chave nem chegou a ser enviada ao Telegram: ${explicarFormato(formato.motivo)}
+    return `A chave nem chegou a ser enviada ao ${canal}: ${explicarFormato(formato.motivo)}
 Nada saiu desta máquina.`
   }
 
   const falha = retrato.getMe?.ok === false ? retrato.getMe.falha : undefined
   if (falha === undefined) {
-    return `A chave existe, mas ainda não foi confirmada com o Telegram nesta execução.`
+    return `A chave existe, mas ainda não foi confirmada com o ${canal} nesta execução.`
   }
 
   switch (falha.causa) {
     case 'recusado':
-      return `O Telegram respondeu que esta chave não vale. Isso costuma ser uma de duas
+      return `O ${canal} respondeu que esta chave não vale. Isso costuma ser uma de duas
 coisas: ou a chave foi substituída (pedir uma nova ao BotFather revoga a
 anterior no mesmo instante), ou ficou mal copiada — falta um pedaço no fim,
 ou veio um espaço junto.`
     case 'rota-inexistente':
-      return `O Telegram não reconheceu o endereço formado com esta chave, o que acontece
+      return `O ${canal} não reconheceu o endereço formado com esta chave, o que acontece
 quando ela vem partida ao meio ou lhe falta o pedaço antes dos dois pontos.`
     case 'conflito':
       return `Já existe outra ligação a usar este mesmo bot. Duas ligações não podem
-escutar o mesmo bot ao mesmo tempo: o Telegram desliga a mais antiga. Pare o
+escutar o mesmo bot ao mesmo tempo: o ${canal} desliga a mais antiga. Pare o
 harness (ou o plugin) e volte a executar este comando.`
     case 'limite-de-taxa':
-      return `O Telegram está a pedir para abrandar${falha.retryAfter === undefined ? '' : ` (${String(falha.retryAfter)} segundos)`}. Espere um pouco e repita — não é
+      return `O ${canal} está a pedir para abrandar${falha.retryAfter === undefined ? '' : ` (${String(falha.retryAfter)} segundos)`}. Espere um pouco e repita — não é
 preciso mudar nada.`
     case 'rede':
-      return `Não foi possível falar com o Telegram a partir desta máquina. Verifique a
+      return `Não foi possível falar com o ${canal} a partir desta máquina. Verifique a
 ligação à internet, e se usa proxy verifique-o também. A chave em si não foi
 posta em causa.`
     case 'resposta-ininteligivel':
-      return `O Telegram respondeu de uma forma que não foi possível interpretar${falha.httpStatus === 0 ? '' : ` (HTTP ${String(falha.httpStatus)})`}.
-Repita daqui a um minuto; se continuar, é do lado do Telegram.`
+      return `O ${canal} respondeu de uma forma que não foi possível interpretar${falha.httpStatus === 0 ? '' : ` (HTTP ${String(falha.httpStatus)})`}.
+Repita daqui a um minuto; se continuar, é do lado do ${canal}.`
   }
 }
 
@@ -243,6 +300,7 @@ colada junto.`
 export function textoSemDono(bot: string, opcoes: OpcoesDePasso): string {
   const codigo = opcoes.codigo ?? '·'.repeat(DIGITOS_DO_CODIGO)
   const minutos = opcoes.minutosDoCodigo ?? 5
+  if (opcoes.provedor === 'discord') return textoSemDonoDiscord(bot, codigo, minutos, opcoes)
   return `O bot ${bot} está a funcionar. Falta ligá-lo a si — e só a si.
 
     O seu código de pareamento:   ${codigo}
@@ -294,4 +352,81 @@ Para trocar de dono é preciso estar nesta máquina e escrever:
          ${COMANDO_CLI} --reset-pairing
 
 ${AVISOS_ANTES_DO_TUNEL}`
+}
+/* ========================================================================== */
+/* Variantes DISCORD — rotulos do portal de desenvolvimento                   */
+/* ========================================================================== */
+
+/**
+ * O passo do BotFather do DISCORD: criar a aplicacao e copiar o token no
+ * portal de desenvolvimento (https://discord.com/developers/applications).
+ *
+ * Mesmas regras de todo o texto: portugues sem jargao, sem segredo, com o
+ * passo seguinte a vista. O "Reset Token" e o caminho canonico para obter o
+ * token do bot — o portal nao mostra o token de outra forma.
+ */
+function textoSemTokenDiscord(opcoes: OpcoesDePasso): string {
+  return `Ainda não há nenhum bot do Discord ligado a esta máquina. Criar um leva
+alguns minutos e faz-se no navegador, no portal de desenvolvimento do Discord:
+
+  1. Abra  https://discord.com/developers/applications  e entre com a sua conta.
+
+  2. Clique em "New Application", dê um nome e confirme a criação.
+
+  3. Abra a secção "Bot" (menu do lado esquerdo) e clique em "Reset Token".
+     Copie o token que aparece — uma linha longa de letras, números e pontos.
+
+     Essa linha é a chave do seu bot: quem a tiver comanda o bot inteiro.
+     Não a cole em conversa nenhuma.
+
+  4. Volte a este terminal e escreva:
+
+         ${COMANDO_CLI} --pedir-token
+
+     A chave é pedida aqui, não aparece no ecrã enquanto a escreve, e fica
+     guardada em ${opcoes.caminhoSecretsEnv}, que só a sua conta consegue ler.
+     Nunca a passe na própria linha de comando: o que se escreve na linha de
+     comando fica à vista de qualquer programa desta máquina.`
+}
+
+/**
+ * O codigo de pareamento no DISCORD: adicionar o bot ao servidor (URL de
+ * convite do portal) e enviar o comando numa conversa onde o bot esteja.
+ *
+ * Ao contrario do Telegram, um bot do Discord nao espera uma mensagem
+ * privada: ele recebe comandos onde estiver adicionado. O convite passa pelo
+ * "OAuth2" -> "URL Generator" do portal, com o escopo "bot".
+ */
+function textoSemDonoDiscord(
+  bot: string,
+  codigo: string,
+  minutos: number,
+  opcoes: OpcoesDePasso,
+): string {
+  return `O bot ${bot} está a funcionar. Falta ligá-lo a si — e só a si.
+
+    O seu código de pareamento:   ${codigo}
+
+Ele vale ${String(minutos)} minutos, serve uma única vez, e existe apenas aqui, neste
+terminal. Não o reencaminhe a ninguém.
+
+  1. Se o bot ainda não está num servidor seu, adicione-o: no portal de
+     desenvolvimento, abra a sua aplicação → "OAuth2" → "URL Generator",
+     marque "bot" e a permissão de enviar mensagens, e abra o URL gerado.
+
+  2. Numa conversa onde o bot esteja, envie exatamente isto:
+
+         ${COMANDO_DE_PAREAMENTO} ${codigo}
+
+  3. Volte a este terminal. Assim que a mensagem chegar, fica gravado que o
+     dono é você, e esta janela fecha-se de vez.
+
+Porquê um código, e não simplesmente a primeira pessoa que escrever ao bot:
+o nome de um bot é fácil de adivinhar, e quem escrevesse primeiro ficaria dono
+do seu computador sem nunca ter visto a sua senha. O código só existe neste
+terminal, e ter este terminal é a prova de que a máquina é sua.
+
+Se os ${String(minutos)} minutos passarem, não fica nada trancado: peça outro código com
+
+         ${COMANDO_CLI} --parear`
 }
