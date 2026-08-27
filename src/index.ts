@@ -318,7 +318,7 @@ function recuperarBoot(
   readonly intencao: 'READY' | 'STOPPED'
   readonly restrito: boolean
   /** O pareamento persistido, para o worker o reaprender no boot (8c). */
-  readonly pareamento: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+  readonly pareamento: { readonly ownerUserId: string; readonly ownerChatId: string; readonly pairedAt: number } | undefined
 } {
   const persistido = store.read()
   const intencao = persistido.desiredState
@@ -842,7 +842,7 @@ export function apply(
   /** O ConfirmService partilhado (controlador + responder de nonce + rotate). */
   let confirmService: ReturnType<typeof createConfirmService> | undefined
   /** O dono persistido lido no boot (8c) e o MagicStore partilhado (item 5). */
-  let pareamentoDoBoot: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+  let pareamentoDoBoot: { readonly ownerUserId: string; readonly ownerChatId: string; readonly pairedAt: number } | undefined
   let magicStoreAtual: ReturnType<typeof createMagicStore> | undefined
   /** A chave no link do portao (onda 1), criada com o controlador (item 5). */
   let linkStoreAtual: ReturnType<typeof createLinkTokenStore> | undefined
@@ -913,7 +913,7 @@ export function apply(
    * e a primeira a cair se ele for comprometido. A pilha nasce no primeiro
    * pedido que precisa de decidir; a falha de leitura fecha (CTL-029).
    */
-  const pareado = (from: number, chat: number): boolean => {
+  const pareado = (from: string, chat: string): boolean => {
     try {
       const pareamento = authStack().state.read().pairing
       return pareamento !== undefined && pareamento.ownerUserId === from && pareamento.ownerChatId === chat
@@ -1249,7 +1249,7 @@ export function apply(
       // `state.json`. Falha de leitura fecha para OFFLINE (fail-closed).
       botState: () => {
         const tokenConfigurado = resolverTokenDoBot() !== undefined
-        let pairing: { readonly ownerUserId: number; readonly ownerChatId: number; readonly pairedAt: number } | undefined
+        let pairing: { readonly ownerUserId: string; readonly ownerChatId: string; readonly pairedAt: number } | undefined
         try {
           pairing = authStack().state.read().pairing
         } catch (error) {
