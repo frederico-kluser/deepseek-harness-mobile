@@ -42,6 +42,26 @@ O modelo novo: o DSH abre **direto em `127.0.0.1`** (sem login); a autenticaçã
 | `429` com `retry_after` | Rate limit da Bot API | O worker lê `retry_after` e recua sozinho. Se insistires, espera. |
 | O comando confirmado gera "expirado/já usado" | O nonce/confirmação foi consumido | É o esperado: cada confirmação serve uma vez. Ação que aumenta exposição exige confirmação em duas etapas. |
 
+## 4b. O bot do Discord
+
+| Sintoma | Causa provável | O que fazer |
+| --- | --- | --- |
+| O bot não responde a nada; o log do worker mostra o gateway a fechar com **close 4014** ("disallowed intents") e o processo sai (exit 12, `GATEWAY_UNAUTHORIZED`) | O intent privilegiado **MESSAGE CONTENT** está desativado no Developer Portal | Abre https://discord.com/developers/applications → a tua aplicação → **Bot** → liga **MESSAGE CONTENT INTENT**. O identify deste plugin declara `MESSAGE_CONTENT` (intents 37376) porque lê o texto dos comandos — sem ele o Discord recusa a sessão. Reinicia o DSH. Ver `docs/ONBOARDING-DISCORD.md` Passo 1 (item 4). |
+| O processo sai logo no arranque com **401** (exit 12, `GATEWAY_UNAUTHORIZED`) | Token errado/revogado — o `GET /gateway/bot` (REST) recusa; no identify, o close 4004 | Grava o token de novo no Developer Portal (aba Bot → **Reset Token** — o anterior é revogado) e configura `DISCORD_BOT_TOKEN` (`dsh-guard-setup --pedir-token` com o provedor `discord` ativo). O token nunca deve ir em `argv` (recusado fail-closed). |
+| O gateway cai com **close 1006** e reconecta sozinho | Rede — o close anómalo permite **resume** (o mesmo do 4009 session timed out) | É recuperação automática com backoff (1 s → 30 s). Se ficar em loop, verifica a rede; o resume só falha se o `seq` ficar inválido (close 4007 → identify novo). |
+| O bot não aparece na lista de comandos do Discord | **É o esperado** — o adaptador não registra slash commands | Não é defeito: `publishCommands` é no-op documentado (o id da aplicação não é derivável do token) e o núcleo entende texto livre. Digita os comandos como mensagens de texto (`/menu`, `/ligar`, …). |
+| O bot lê mensagens de estranhos no servidor e não responde | **É o esperado** — estranhos são descartados em silêncio (TG-089) | A allowlist de dois eixos (`userKey`+`chatKey`) nega e a auditoria conta. Pareia por DM (Passo 3 do onboarding) para um eixo estável. |
+
+## 4c. Agentes (dispatcher)
+
+| Sintoma | Causa provável | O que fazer |
+| --- | --- | --- |
+| `/agente` responde `A skill "<skill>" nao esta autorizada neste plugin (config agents.skills).` | A skill não está na allowlist `config.agents.skills` — ou o eixo `agents` está **ausente** (fail-closed: skills vazio = nenhum agente disparável) | Declara o eixo `agents` na config (Camada 2/Home do `cordis.patch.yml`) com a skill em **kebab-case** e reinicia o DSH. O arranque emite um `warn` ruidoso quando `config.agents` está ausente. Ver `docs/AGENTS.md` §3/§7. |
+| `/agente` responde `Ja ha agentes a correr ate o limite (config agents.maxRuns). Espera um terminar ou cancela um.` | O teto de runs **concorrentes** (`agents.maxRuns`, 1..32) foi atingido | Espera um run terminar (o resultado chega por notificação), cancela um com `/parar-agente <id>`, ou sobe o teto na config (≤ 32). Não há fila de espera: acima do teto o dispatch é recusado. |
+| `/agente` responde `O harness nao esta disponivel para disparar agentes.` | Os serviços do harness (`ctx.subagents`/`ctx.agents`/`ctx.skills`) não estão todos disponíveis no momento do despacho — ou **nenhum agente do harness está vivo** (`roots()` vazio) | Verifica que o DSH está a correr com o harness saudável (o dispatcher exige um agente-racaiz vivo para derivar workspace — fail-closed, não inventa pai). Repete depois; o run que nasce sem pai termina `failed` com o motivo no relatório. |
+| O agente disparou mas terminou `failed` com `A skill "<skill>" nao existe nesta instalacao do harness.` | A skill está na allowlist mas **não existe** no catálogo do agente-pai | Confere o catálogo de skills da instalação do harness; a allowlist é do plugin, o catálogo é do harness — os dois têm de casar. |
+| Reiniciei o DSH e os agentes sumiram | **É o esperado** — os runs são efémeros (memória) | Não é defeito: o disposer cancela tudo em LIFO no desligamento e a lista recomeça vazia. Persistência de runs é contrato futuro. |
+
 ## 5. Segurança / acessos estranhos
 
 | Sintoma | Causa provável | O que fazer |

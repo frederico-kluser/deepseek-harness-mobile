@@ -59,7 +59,27 @@
 | Parear sem código (dono pendente) | `Envia /parear seguido do código de 6 dígitos, assim: /parear 123456` |
 | Confirmação destrutiva | `🔴 Desligar o túnel derruba o acesso remoto. Continuar?` |
 | Cancelar confirmação | `OK` (answer) + volta à anterior |
-| Enquanto processa | `Ligando…`, `Desligando…`, `Gerando chave nova…`, `A conectar ao Telegram…` |
+| Enquanto processa | `Ligando…`, `Desligando…`, `Gerando chave nova…`, `A conectar ao Telegram…`, `A consultar…` (botão `🤖 Agentes`) |
+| `/agente` sem skill | `Uso: /agente <skill> <o que o agente deve fazer>` |
+| `/agente` skill fora de kebab-case | `Skill inválida (kebab-case). Uso: /agente <skill> <o que o agente deve fazer>` |
+| `/agente` sem prompt | `Falta o prompt. Uso: /agente <skill> <o que o agente deve fazer>` |
+| Confirmação de dispatch (a mais sensível — executa código) | `🤖 Disparar o agente "<skill>?"` + `Ele executa código na tua máquina com este prompt:` + `"<prompt>"` — botões `✅ Sim, disparar` e `✕ Não` |
+| Sem nonce do host (fail-closed) | `Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.` |
+| Dispatch aceite | `Agente disparado. O resultado chega aqui quando terminar.` |
+| Skill fora da allowlist | `A skill "<skill>" nao esta autorizada neste plugin (config agents.skills).` |
+| Teto de runs atingido | `Ja ha agentes a correr ate o limite (config agents.maxRuns). Espera um terminar ou cancela um.` |
+| Confirmação expirada (clique tardio) | `Confirmação expirada ou inválida. Mande /agente de novo.` |
+| `/agentes` com runs | `🤖 Agentes:` + `• <id> — <skill> — <estado> <há quanto>` (+ `   💬 <summary>`) |
+| `/agentes` sem runs (vazio ensina) | `Nenhum agente rodando.` |
+| Difusão proativa de fim de runs | `🤖 Atualização de agentes:` + linhas |
+| `/parar-agente` cancelado | `Agente <id> cancelado.` |
+| `/parar-agente` não encontrado (noop) | `Agente <id> não encontrado.` |
+| `/parar-agente` id inválido | `Id inválido. Uso: /parar-agente <id> — os ids aparecem em /agentes.` |
+
+> **A tabela completa com o porquê de cada frase está no §10 de
+> [`01-CONTRATO-BOT.md`](01-CONTRATO-BOT.md)** — os textos acima são os EXATOS
+> do código (`worker/surface/commands.ts`, `worker/surface/text.ts` e
+> `src/control/surface-ipc.ts`), congelados aqui como banco de referência.
 
 ---
 
@@ -87,10 +107,16 @@
 | **Bot (do Telegram)** | O assistente/contato no Telegram com quem mandas os comandos (ex. `/menu`, `/status`) — na prática, é o "porta-voz" do teu Harness na conversa. |
 | **Parear** | Ligar o teu bot a um dono de verdade: tu geres um código só teu no painel, envias `/parear <código>` no bot, e a partir daí só esse chat comanda o bot. Sem parear, ninguém (nem tu) usa o bot. |
 | **Link de acesso / chave de acesso** | O endereço que o túnel gera para a tua máquina aparecer na internet; quem tem o link entra "direto". "Nova chave" revoga a anterior e emite outra. |
+| **Agente (do harness)** | Um assistente de IA que o teu Harness dispara para executar uma tarefa na tua máquina — com o que a skill mandar e o prompt que escreveres. Disparar um agente **executa código na tua máquina** (por isso pede confirmação). |
+| **Skill** | Um "kit de instruções" instalado no Harness que diz ao agente como fazer uma tarefa (ex.: revisar código). O nome é curto, em kebab-case — só as skills da allowlist podem ser disparadas. |
+| **Run (de agente)** | Um agente que está a correr (ou correu). Cada run tem um **id curto** (8 caracteres) que aparece no `/agentes` e serve para o `/parar-agente`. |
 
 > **Regra:** estes termos, quando aparecerem no texto do usuário, usam sempre a
 > definição acima. Nunca "exposure.mode", "callback_data", "nonce", "allowlist",
-> "seq" (jargão interno) no texto que o usuário vê.
+> "seq" (jargão interno) no texto que o usuário vê. Nos textos de agentes, o
+> jargão de config (`agents.skills`, `agents.maxRuns`) só aparece nas **recusas
+> do host** — de propósito: é o texto que guia o DONO à correção (regra 9), e o
+> dono é quem edita o `cordis.patch.yml`.
 
 ---
 

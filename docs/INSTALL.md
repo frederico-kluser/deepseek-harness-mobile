@@ -9,10 +9,12 @@ Este guia instala o plugin `dsh-guard-messenger` num DeepSeek Harness (DSH) e ve
 
 > **Compatibilidade:** a faixa suportada é `@deepseek-ai/dsh` `0.1.0-rc.7 .. 0.1.1-rc.1` (política N/N-1). Veja a tabela em `docs/COMPATIBILITY.md` — que é **gerado** de `dsh-compat.yml`, nunca editado à mão.
 
-> **Compat (arquitetura de provedores):** o worker é neutro ao provedor e o Telegram é o único
-> fornecedor hoje (`config.worker.provider`, default `telegram`). **Nada muda para si**:
-> o token continua na variável `TELEGRAM_BOT_TOKEN` (via `dsh-guard-setup`), o pareamento é o mesmo
-> e os comandos do bot não mudam. Detalhe em [`docs/PROVIDERS.md`](PROVIDERS.md).
+> **Compat (arquitetura de provedores):** o worker é neutro ao provedor e suporta **dois
+> fornecedores: Telegram e Discord** (`config.worker.provider`, default `telegram`). Para o
+> Telegram nada muda: token na variável `TELEGRAM_BOT_TOKEN` (via `dsh-guard-setup`), pareamento
+> e comandos iguais. Para o Discord, ver o Passo 4b abaixo. Os comandos do bot são os **MESMOS**
+> nos dois provedores (incluindo os de agentes — ver o Passo 4c). Detalhe em
+> [`docs/PROVIDERS.md`](PROVIDERS.md) e [`docs/AGENTS.md`](AGENTS.md).
 
 ---
 
@@ -102,6 +104,77 @@ nenhum.**
 > (`/__guard-ui`), o botão do Telegram mostra o estado OFFLINE/ONLINE fiel ao runtime: ao
 > clicar em OFFLINE aparecem as instruções `--pedir-token` / `--parear`, e quem as segue
 > de facto coloca o bot **online**.
+
+## Passo 4b — Configurar o Discord (opcional, no lugar do Telegram)
+
+O Discord é o segundo provedor suportado (`config.worker.provider: 'discord'`).
+O guia do usuário completo — criar a aplicação, convidar o bot para um servidor
+com permissão de mensagens e parear — está em
+[`docs/ONBOARDING-DISCORD.md`](ONBOARDING-DISCORD.md); aqui está o essencial do
+lado da máquina:
+
+1. **Criar o bot no Developer Portal** — https://discord.com/developers/applications →
+   **New Application** (dá-lhe um nome) → aba **Bot** → **Reset Token** (mostra o
+   token; guarda-o — só aparece uma vez).
+2. **ATIVAR o intent de conteúdo de mensagens** — no Developer Portal, aba
+   **Bot**, liga **MESSAGE CONTENT INTENT** (é um intent **privilegiado**).
+   Sem ele o gateway fecha a ligação com o close **4014** ("disallowed intents")
+   e o bot não responde a nada: este plugin declara `MESSAGE_CONTENT` no
+   identify porque lê o texto dos comandos (`INTENTS_DO_BOT` = 37376 —
+   `GUILD_MESSAGES` + `DIRECT_MESSAGES` + `MESSAGE_CONTENT`).
+3. **Configurar o token** — a variável do provedor discord é
+   **`DISCORD_BOT_TOKEN`** (não `TELEGRAM_BOT_TOKEN`). Grava-a com
+   `dsh-guard-setup --pedir-token` (ele usa a chave do provedor ativo no
+   `secrets.env` partilhado — o ficheiro guarda as duas linhas, cada provedor
+   com a sua) ou diretamente no ambiente.
+4. **Trocar o provedor na config** — no `config` do `cordis.patch.yml`
+   (Camada 2/Home — o Bundle declara `telegram`), muda:
+   ```yaml
+   worker:
+     token: !!js "process.env.DISCORD_BOT_TOKEN ?? ''"
+     provider: discord
+   ```
+   O host rotula o filho com `DSH_GUARD_PROVIDER=discord` e injeta o
+   `DISCORD_BOT_TOKEN` (tabela `PROVIDER_ENV` de `src/proc/env.ts`); o boot
+   genérico resolve o adaptador discord. Um `DSH_GUARD_PROVIDER` desconhecido
+   recusa arrancar — nunca degrada em silêncio para outro provedor.
+5. **Convidar o bot para o teu servidor** com permissão de **Enviar Mensagens**
+   (e ler mensagens), depois **parear**: mesmo fluxo do Telegram — código de
+   6 dígitos do painel/CLI + `/parear <código>` no bot (o pareamento é do
+   núcleo neutro e o dono é gravado por `pairing.owner`, igual nos dois).
+6. **Reinicia o DSH** se já estiver a correr (o worker só arranca no boot).
+
+> **Raiz da API opcional:** `DISCORD_API_ROOT` (default
+> `https://discord.com/api/v10`) — só para ambientes de teste com duble.
+
+> **Limites do canal (o núcleo corta por eles):** mensagem de texto 2000
+> caracteres, teclado 5 linhas × 5 botões, `custom_id` 1..100 bytes, edição
+> in-place suportada. Ver a tabela em [`docs/PROVIDERS.md`](PROVIDERS.md) §2.1.
+
+## Passo 4c — Disparar agentes do harness (opcional)
+
+O dispatcher de agentes (`docs/AGENTS.md` — manual completo) fica **desligado
+por omissão**: sem o eixo `agents` na config, nenhum agente é disparável
+(fail-closed). Para o ligar, declara a allowlist de skills e o teto de runs
+concorrentes no `config` do `cordis.patch.yml` (Camada 2/Home — o Bundle não o
+declara de propósito):
+
+```yaml
+config:
+  # ... as tuas chaves existentes
+  agents:
+    skills: ['code-review', 'surf-research-agent']   # allowlist default deny
+    maxRuns: 4                                       # 1..32
+```
+
+- `skills` vazio/ausente = **nenhum agente disparável**; cada nome é
+  kebab-case e é validado no arranque.
+- `maxRuns` é o teto de runs concorrentes (inteiro 1..32, validado no arranque);
+  acima dele, `/agente` é recusado com mensagem acionável.
+- No bot: `/agente <skill> <o que o agente deve fazer>` (confirmação em 2
+  etapas), `/agentes` (lista os runs) e `/parar-agente <id>` (cancela). O
+  agente roda com as permissões do harness e **nunca** recebe o token do bot.
+- Reinicia o DSH depois de alterar a config.
 
 ## Passo 5 — Expor (opcional) e desmontar
 

@@ -54,6 +54,11 @@ FONTES DE PESQUISA citadas aqui:
   `/start` ganha **botões** (mas só o de /menu resolve para o dono).
 - O botão **`🏠 Início` é REMOVIDO** do cartão e o cartão passa a UMA ação por
   linha (coluna única). Rebrand: o cartão de controle chama-se **`🎛 Remote Access`**.
+- **Onda 5 — agentes:** o cartão ganha o botão **`🤖 Agentes`** (toast
+  `A consultar…`), e o roteador ganha três comandos digitados — `/agente`,
+  `/agentes`, `/parar-agente` — que falam com o dispatcher de agentes do host
+  (ver §10). Os comandos de agentes são do núcleo neutro e **funcionam igual no
+  Telegram e no Discord**.
 
 ---
 
@@ -200,6 +205,7 @@ Túnel: ✅ Ligado · link no ar há 3 h
 [🟢 Ligar]
 [🔴 Desligar]
 [📶 Status]
+[🤖 Agentes]
 [🔗 Link de acesso]
 [⇄ Nova chave]
 [🚨 Emergência]
@@ -216,6 +222,7 @@ Túnel: ✅ Ligado · link no ar há 3 h
 | Ligar | `🟢 Ligar` | `tunnel.up` (2 etapas: tela de confirmação) | toast "Ligando…" |
 | Desligar | `🔴 Desligar` | `tunnel.down` (2 etapas: tela de confirmação destrutiva) | toast "Desligando…" |
 | Estado | `📶 Status` | `tunnel.status` (edita o cartão com o estado) | toast "Verificando…" (a edição mostra) |
+| Agentes | `🤖 Agentes` | `agent.status` (a resposta é o `agent.report` — o mesmo padrão do Status) | toast "A consultar…" |
 | Link de acesso | `🔗 Link de acesso` | `session.issue` (vem por notify) | toast "A enviar o link…" |
 | Nova chave | `⇄ Nova chave` | `secret.rotate` (2 etapas: confirmação) | toast "Gerando chave nova…" |
 | Emergência | `🚨 Emergência` | `emergency` (2 etapas: confirmação destrutiva) | toast "A derrubar tudo…" |
@@ -469,3 +476,115 @@ Envia /parear seguido do código de 6 dígitos que aparece no painel, assim:
 - `worker/providers/telegram/adapter.ts` / `teclado.ts` — suporte a destruir
   teclado (editMessageReplyMarkup) e a `setMyCommands` com escopo (§2).
 - `test/unit/worker/surface/commands.test.ts` — atualizar lista (5) e ordem.
+
+---
+
+## 10. Onda 5 — AGENTES: `/agente`, `/agentes`, `/parar-agente` (textos EXATOS)
+
+> **Implementação de referência:** `worker/surface/commands.ts`
+> (`criarAgentes`), `worker/surface/text.ts` (rótulos, tempos, relatório),
+> `worker/surface/core.ts` (acks de `agent.status`/`agent.cancel`, botão do
+> cartão, difusão proativa), `src/agents/registry.ts` (o dispatcher no host) e
+> `src/control/surface-ipc.ts` (as recusas acionáveis). O manual do dispatcher
+> está em `docs/AGENTS.md` — aqui congela-se só o texto EXATO final (PT-BR).
+>
+> **Neutro ao provedor:** os comandos de agentes são do núcleo neutro —
+> funcionam byte a byte iguais no Telegram e no Discord.
+
+### 10.1 `/agente <skill> <o que o agente deve fazer>` — validações e confirmação
+
+**Decisão → Porquê → Texto exato.** O dispatch executa código na máquina do
+dono (a ação que mais AUMENTA a exposição do bot) — por isso a forma é
+validada antes de qualquer nonce, e a confirmação em 2 etapas mostra o **prompt
+que vai correr** (sanado para uma linha e cortado em 4096 — o que se confirma é
+o que corre).
+
+| Situação | Texto EXATO final |
+|---|---|
+| Sem skill (ou sem nada) | `Uso: /agente <skill> <o que o agente deve fazer>` |
+| Skill fora de kebab-case (a grammar do harness `^[a-z0-9]+(?:-[a-z0-9]+)*$`) | `Skill inválida (kebab-case). Uso: /agente <skill> <o que o agente deve fazer>` |
+| Sem prompt | `Falta o prompt. Uso: /agente <skill> <o que o agente deve fazer>` |
+| Host sem nonce (fail-closed, CTL-023) | `Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.` |
+| Tela de confirmação (2 etapas) | `🤖 Disparar o agente "<skill>?"` + `Ele executa código na tua máquina com este prompt:` + `"<prompt>"` |
+| Botões da confirmação | `✅ Sim, disparar` e `✕ Não` (o cancelamento é navegação local — `Ok, cancelado.` + teclado destruído, §4 Regra 4; não consome nonce, não envia intent) |
+| Clique confirmado mas token local expirado/trocado (TTL 60 s, espelho do nonce do host) | `Confirmação expirada ou inválida. Mande /agente de novo.` |
+| Ack do dispatch (o run nasceu) | `Agente disparado. O resultado chega aqui quando terminar.` |
+
+**Recusas de política** (do host, `src/control/surface-ipc.ts`) — erro com
+mensagem acionável, nunca um código de erro opaco:
+
+| Motivo | Texto EXATO final |
+|---|---|
+| Skill fora da allowlist `config.agents.skills` | `A skill "<skill>" nao esta autorizada neste plugin (config agents.skills).` |
+| Teto de runs concorrentes atingido (`config.agents.maxRuns`) | `Ja ha agentes a correr ate o limite (config agents.maxRuns). Espera um terminar ou cancela um.` |
+| Serviços do harness indisponíveis | `O harness nao esta disponivel para disparar agentes.` |
+
+### 10.2 `/agentes` — o relatório (resposta a `agent.status`)
+
+**Decisão → Porquê → Texto exato.** A resposta de `/agentes` é a difusão
+`agent.report` que o host envia ANTES do ack (o ack `noop` só retira o pendente
+— renderizar "Já estava assim." por cima da lista seria destrocar a resposta).
+Sem runs, o vazio ensina o próximo passo (regra 13 da microcopy):
+
+```
+Nenhum agente rodando.
+```
+
+Com runs:
+
+```
+🤖 Agentes:
+• <id> — <skill> — <estado> <há quanto>
+   💬 <summary>
+```
+
+- **Uma linha por run:** `• <id> — <skill> — <rótulo> <há quanto>`; o
+  `summary` (quando o run terminou e há texto) numa linha própria indentada com
+  `   💬 <summary>`.
+- **Rótulos de estado** (PT-BR; o payload usa o enum `AgentRunStatus`):
+  `rodando` · `concluído` · `falhou` · `cancelado`.
+- **Tempos** (`haQuantoTempo`, o mesmo relógio do `formatarDuracao`):
+  `agora mesmo` · `há menos de 1 min` · `há 2 min` · `há 1 h 30 min`. Um run
+  acabado de nascer/terminar nunca pode ler "há agora".
+- **O `summary` é texto do MODELO** (1 linha, ≤ 300 caracteres) — não é segredo
+  (S3): o request do agente nunca recebe token deste plugin.
+
+**O botão `🤖 Agentes` do cartão** faz a mesma coisa; o toast de answer no
+clique é `A consultar…` (o padrão do "Link de acesso" — evita o botão morto).
+
+### 10.3 Difusão proativa — runs que terminam
+
+Quando um ou mais runs terminam SEM `agent.status` pendente, o host difunde
+`agent.report` e o bot notifica — o título distingue a notificação da resposta
+a `/agentes`:
+
+```
+🤖 Atualização de agentes:
+• <id> — <skill> — <estado> <há quanto>
+   💬 <summary>
+```
+
+### 10.4 `/parar-agente <id>` — cancelar
+
+**Decisão → Porquê → Texto exato.** REDUZ exposição → dispensa nonce
+(CTL-024, como o `/desligar`): cancelar um agente em fuga tem de funcionar à
+primeira. O id viaja no `params` do intent; o ack decide a resposta (o id veio
+no pendente, porque o ack só traz o requestId):
+
+| Situação | Texto EXATO final |
+|---|---|
+| Id válido e cancelado | `Agente <id> cancelado.` |
+| Id válido mas run já não existe/terminou (noop idempotente) | `Agente <id> não encontrado.` |
+| Id fora da forma (8 caracteres do alfabeto do ULID) | `Id inválido. Uso: /parar-agente <id> — os ids aparecem em /agentes.` |
+
+### 10.5 Regras herdadas (valem aqui também)
+
+- **TG-027** — o clique em `✅ Sim, disparar` responde SEMPRE (inclusive nas
+  recusas locais: token desconhecido → resposta vazia que fecha o girador).
+- **TG-024** — o token local da confirmação revalida `userKey` + `chatKey`
+  antes de aceitar o clique.
+- **TG-089** — estranhos: descarte silencioso e contado; nenhum destes textos
+  chega a quem não é dono.
+- **S5** — o nonce viaja opaco no botão; o worker não o lê, valida nem loga.
+- **S3** — nenhum destes textos carrega token, credencial ou caminho absoluto;
+  o `summary` é texto do modelo.

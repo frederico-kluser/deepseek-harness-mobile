@@ -18,6 +18,13 @@ pnpm test:security && pnpm test:contract && pnpm test:e2e
 > **Nota:** o script `test` corre `unit/**` e `integration/**`. Os scripts
 > `test:security`, `test:contract` e `test:e2e` são corridos separadamente. O
 > `test:live` **nunca** é gate: exige `DSH_GUARD_LIVE_TESTS=1` e rede real.
+>
+> **As suítes novas entram no gate sem comando extra** — os testes do adaptador
+> discord e do registry de agentes vivem em `test/unit/**` e correm no `pnpm
+> test` normal; o e2e do discord entra no `pnpm test:e2e`. Roteiro rápido da
+> onda: `pnpm test -- --test-name-pattern "providers/discord"`,
+> `pnpm test -- --test-name-pattern "agents"` e
+> `pnpm test:e2e -- --test-name-pattern "discord"`.
 
 ## 2. Os níveis, o que cada um prova e como correr
 
@@ -29,7 +36,7 @@ pnpm test:security && pnpm test:contract && pnpm test:e2e
 | Unit+Integration | `pnpm test` | `node --test test/unit/** test/integration/**` | núcleo puro e fiação Cordis com servidor real em `:0` |
 | Security | `pnpm test:security` | `test/security/**` (137 testes, adversarial) | tenta burlar o portão e falha se puder |
 | Contract | `pnpm test:contract` | `test/contract/**` (precisa de rede) | os `types/` batem com os `.d.ts` reais do npm |
-| E2E offline | `pnpm test:e2e` | `test/e2e/**`, processos/sockets reais | ciclo de vida, túnel com fake-cloudflared, worker |
+| E2E offline | `pnpm test:e2e` | `test/e2e/**`, processos/sockets reais | ciclo de vida, túnel com fake-cloudflared, worker (telegram **e** discord: `discord-boot.test.ts` spawna o processo real com `DSH_GUARD_PROVIDER=discord` contra um gateway falso — boot feliz, comando→resposta, clique→intent, token em argv recusado, 401 no boot) |
 | Live | `pnpm test:live` | `test/live/**` com `DSH_GUARD_LIVE_TESTS=1` | túnel real; **nunca** em CI/PR |
 | Coverage | `pnpm test:cov` | unit+integration+security | piso 90/85/95 |
 | Mutation | `pnpm test:mutation` | `stryker run` | informativo (noturno, break desligado) |
@@ -46,15 +53,35 @@ próprios em `test/unit/worker/`:
 - `test/unit/worker/surface/**` — o contrato e o **núcleo neutro**: `contract.test.ts` (tipo-a-tipo),
   `contract.structural.test.ts` (o **cone de import**: prova que `worker/surface/**` só importa
   `src/contracts/ipc.ts` de `src/`, e nada de grammY/`worker/lib`), e os testes de `core`, `auth`,
-  `commands`, `ids`, `outbox`, `text`, `actions`;
-- `test/unit/worker/providers/**` — os **adaptadores** e o registry: `registry.test.ts` e
-  `providers/telegram/**` (parse, teclado, token, transporte, cliente, polling, adapter) contra o
-  **duble local** em `test/support/`;
+  `commands`, `ids`, `outbox`, `text`, `actions` (incluindo os comandos de agentes: `/agente`,
+  `/agentes`, `/parar-agente`, a confirmação em 2 etapas e os textos EXATOS da Onda 5);
+- `test/unit/worker/providers/**` — os **adaptadores** e o registry: `registry.test.ts` (inclui a
+  linha do discord e o `ProvedorDesconhecidoError`), `providers/telegram/**` (parse, teclado,
+  token, transporte, cliente, polling, adapter) e `providers/discord/**` — parse, teclado, token,
+  transporte, cliente, `gateway.test.ts` + `gateway-extra.test.ts` (close codes individuais,
+  zombie, backoff, resume), `adapter.test.ts` + `adapter-extra.test.ts` e `interno.test.ts` —
+  contra o **duble local** (telegram: `test/support/`; discord: o `apoio.ts` com REST+WS falsos
+  em `:0`);
+- `test/unit/agents/registry.test.ts` — o **dispatcher de agentes** do host com o harness FALSO
+  injetado: allowlist default deny, teto de runs, cancelar, disposer LIFO, caminhos de falha
+  pós-ack (skill inexistente, sem agente-pai, start rejeitado) e o relatório capado em 64
+  (serializa sem lançar no codec real);
 - `test/unit/worker/{ipc,telegram-bot}.test.ts` — o canal JSONL do worker e o boot genérico
   (com `WorkerRuntime` injectável, sem subprocesso).
 
 O teste estrutural do cone é o guardião da fronteira de `§5.5`: se um ficheiro da superfície passar
 a importar algo fora de `src/contracts/ipc.ts`, o `contract.structural.test.ts` falha vermelho.
+
+> **Nota do `gateway.test.ts` em lote grande:** o `gateway.test.ts` e o `gateway-extra.test.ts`
+> usam o **tempo real do WebSocket** (intervalos pequenos + esperas por `aguardar`; só o `sleep`
+> do backoff é injetável, num teste próprio com FakeTime). Com muitos ficheiros de teste a correr
+> em paralelo no mesmo batch, o runner fica carregado e estes dois **penduram** — é o motivo de
+> terem sido partidos em duas levas (o `gateway-extra.test.ts` cobre o que o irmão não cobre).
+> Rode-os **sozinhos ou com poucos ficheiros**:
+>
+> ```sh
+> node --test test/unit/worker/providers/discord/gateway.test.ts test/unit/worker/providers/discord/gateway-extra.test.ts
+> ```
 
 ## 3. A suíte de segurança (porquê é separada)
 
@@ -85,9 +112,11 @@ veredito do spike de `@stryker-mutator/core@10` com `tap-runner`:
 
 ## 5. Manual / pré-release
 
-O que **só** dá para testar à mão: Telegram real (BotFather), Cloudflare real, streaming de
-token ponta a ponta, celular na rede móvel. São os roteiros M1..M7 em
-`docs/manual-runs/`, corridos antes de cada release com registo por passo.
+O que **só** dá para testar à mão: Telegram real (BotFather), Discord real (Developer Portal,
+convite com permissão de mensagens, intent MESSAGE CONTENT), Cloudflare real, streaming de
+token ponta a ponta, celular na rede móvel, e o ciclo de agentes contra um harness real
+(allowlist declarada, dispatch, cancel, reinício do DSH a derrubar os runs). São os roteiros
+M1..M7 em `docs/manual-runs/`, corridos antes de cada release com registo por passo.
 
 ## 6. Notas operacionais (T6.3)
 
