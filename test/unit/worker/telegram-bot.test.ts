@@ -12,13 +12,14 @@
  */
 
 import assert from 'node:assert/strict'
+import { PassThrough } from 'node:stream'
 import { after, describe, it } from 'node:test'
 
 import { GrammyError } from 'grammy'
 
 import type { IpcMessageFromWorker } from '../../../src/contracts/ipc.ts'
 import { WORKER_EXIT } from '../../../worker/lib/errors.ts'
-import type { WorkerIpc } from '../../../worker/ipc.ts'
+import { WORKER_IPC_ENV_VAR, type WorkerIpc } from '../../../worker/ipc.ts'
 import type { ProvedorDescrito } from '../../../worker/providers/registry.ts'
 import { ProviderError } from '../../../worker/providers/telegram/interno.ts'
 import { TOKEN_ENV_VAR } from '../../../worker/providers/telegram/token.ts'
@@ -35,6 +36,7 @@ import {
   captureLog,
   chamadasDe,
   FakeTime,
+  fakeMessageUpdate,
   startFakeBotApi,
   TOKEN_DE_TESTE,
   type FakeBotApi,
@@ -650,5 +652,351 @@ describe('worker/telegram-bot — o boot generico com o provedor discord REAL (r
     assert.notEqual(code, WORKER_EXIT.POLLING, 'NAO pode cair em 13 (o debito da Onda 3)')
     assert.match(log.all(), /GATEWAY_UNAUTHORIZED/u)
     assert.equal(log.all().includes(TOKEN_DE_TESTE_DISCORD), false)
+  })
+})
+
+/* ========================================================================== */
+/* Onda 5 — o despacho do canal roteia `agent.report` para o nucleo (case do  */
+/* `despachar` de telegram-bot.ts:247). O canal e REAL (bindWorkerIpcToProcess */
+/* sobre um `proc` falso com streams), para a mensagem do host atravessar o    */
+/* decoder JSONL e cair no case certo; o que se observa e a saida do nucleo    */
+/* (sendMessage no duble) e o stdout do canal (os intents do worker).          */
+/* ========================================================================== */
+
+/** Um run terminal pronto a viajar pelo canal, na forma do contrato. */
+function runDeAgente(id: string, skill: string, status: 'done' | 'failed' | 'cancelled' | 'running'): object {
+  return { id, skill, status, startedAt: 0 }
+}
+
+/**
+ * Cede o turno ate a condicao, devolvendo `false` no prazo — para asserir
+ * NEGATIVOS (ex.: «nenhuma mensagem a mais») sem o `aguardar` que lanca.
+ */
+async function aguardarPorPrazo(condicao: () => boolean, prazoMs: number): Promise<boolean> {
+  const fim = Date.now() + prazoMs
+  while (!condicao()) {
+    if (Date.now() > fim) return false
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  return true
+}
+
+/** O `proc` falso: streams reais + exit espiado — o canal arma-se sobre ele. */
+function procFalso(): {
+  readonly proc: NodeJS.Process
+  readonly entrada: PassThrough
+  readonly stdout: PassThrough
+  readonly saidas: number[]
+} {
+  const entrada = new PassThrough()
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  const saidas: number[] = []
+  const proc = {
+    stdin: entrada,
+    stdout,
+    stderr,
+    env: { [WORKER_IPC_ENV_VAR]: '1' },
+    exit: (code: number): void => {
+      saidas.push(code)
+    },
+  } as unknown as NodeJS.Process
+  return { proc, entrada, stdout, saidas }
+}
+
+describe('Onda 5: telegram-bot — `agent.report` roteia para o nucleo (difusao proativa)', () => {
+  it('sem dono o report e silencio; com dono, notifica SO os terminais novos, sem repetir', async () => {
+    const srv = await startFakeBotApi()
+    abertos.push(srv)
+    const log = captureLog()
+    const { proc, entrada, saidas } = procFalso()
+    let parar: (() => Promise<void>) | undefined
+
+    const corrida = runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      proc,
+      onBooted: (boot) => {
+        parar = boot.parar
+      },
+    })
+
+    let code: number | undefined
+    try {
+      await aguardar(() => chamadasDe(srv, 'getUpdates').length >= 1, 'primeiro getUpdates')
+      await aguardar(() => parar !== undefined, 'onBooted fornece o handle de paragem', 2000)
+
+      // 1. O report ANTES de existir dono: o canal roteia (case agent.report),
+      //    mas o nucleo nao tem para onde notificar — silencio. O report ainda
+      //    assim actualiza o `ultimoRelatorioDeAgentes` (a base do diff).
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'agent.report', runs: [runDeAgente('01HZAAAA', 'eco', 'done')] })}\n`,
+      )
+      // 2. O dono persistido chega (pairing.owner -> auth.semearDono).
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'pairing.owner', from: '111', chat: '111', pairedAt: 1_000 })}\n`,
+      )
+      // 3. Difusao proativa: o run B terminou desde o report anterior — o A ja
+      //    era terminal no report de trás (nao repete).
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'agent.report',
+          runs: [
+            runDeAgente('01HZAAAA', 'eco', 'done'),
+            runDeAgente('01HZBBBB', 'dataviz', 'done'),
+          ],
+        })}\n`,
+      )
+
+      // A notificacao chega ao Telegram (sendMessage) com SO o B.
+      const notificacao = await aguardarPorPrazo(() => chamadasDe(srv, 'sendMessage').length >= 1, 5000)
+      assert.equal(notificacao, true, 'a difusao proativa notifica o dono')
+      const primeira = chamadasDe(srv, 'sendMessage').at(-1)?.payload
+      assert.match(String(primeira?.['text'] ?? ''), /🤖 Atualização de agentes:/u)
+      assert.match(String(primeira?.['text'] ?? ''), /01HZBBBB — dataviz/u)
+      assert.ok(!String(primeira?.['text'] ?? '').includes('01HZAAAA'), 'o terminal antigo nao repete')
+
+      // 4. Outro report proativo: o run C terminou — notificacao SO do C.
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'agent.report',
+          runs: [
+            runDeAgente('01HZAAAA', 'eco', 'done'),
+            runDeAgente('01HZBBBB', 'dataviz', 'done'),
+            runDeAgente('01HZCCCC', 'eco', 'failed'),
+          ],
+        })}\n`,
+      )
+      const segunda = await aguardarPorPrazo(() => chamadasDe(srv, 'sendMessage').length >= 2, 5000)
+      assert.equal(segunda, true, 'a segunda difusao notifica o novo terminal')
+      const textoDaSegunda = String(chamadasDe(srv, 'sendMessage').at(-1)?.payload?.['text'] ?? '')
+      assert.match(textoDaSegunda, /01HZCCCC — eco — falhou/u)
+      assert.ok(!textoDaSegunda.includes('01HZAAAA'), 'nao repete o primeiro terminal')
+      assert.ok(!textoDaSegunda.includes('01HZBBBB'), 'nao repete o segundo terminal')
+
+      // 5. Um report SEM mudanca terminal: nenhuma mensagem a mais.
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'agent.report',
+          runs: [runDeAgente('01HZAAAA', 'eco', 'done'), runDeAgente('01HZBBBB', 'dataviz', 'done')],
+        })}\n`,
+      )
+      const ficouParado = await aguardarPorPrazo(() => chamadasDe(srv, 'sendMessage').length >= 3, 200)
+      assert.equal(ficouParado, false, 'sem mudanca terminal, nada e notificado')
+    } finally {
+      await parar?.()
+      code = await corrida
+    }
+    assert.equal(code, WORKER_EXIT.OK)
+
+    assert.equal(saidas.length, 0, 'a paragem limpa nao dispara o dead-man')
+  })
+
+  it('resposta a /agentes: o intent agent.status sai no canal, o report vazio vira «Nenhum agente rodando.» e o ack e silencioso', async () => {
+    const update = await fakeMessageUpdate({ updateId: 1, fromId: 111, chatId: 111, text: '/agentes' })
+    const srv = await startFakeBotApi([update])
+    abertos.push(srv)
+    const log = captureLog()
+    const { proc, entrada, stdout } = procFalso()
+    let buffer = ''
+    stdout.on('data', (pedaco: Buffer) => {
+      buffer += String(pedaco)
+    })
+    let parar: (() => Promise<void>) | undefined
+
+    const corrida = runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      proc,
+      onBooted: (boot) => {
+        parar = boot.parar
+      },
+    })
+
+    let code2: number | undefined
+    try {
+      await aguardar(() => parar !== undefined, 'onBooted fornece o handle de paragem', 2000)
+
+      // O dono persistido; a partir daqui o update /agentes passa o guard.
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'pairing.owner', from: '111', chat: '111', pairedAt: 1_000 })}\n`,
+      )
+
+      // O /agentes do update (servido pelo duble no polling) sai como intent
+      // `agent.status` no stdout do canal — SEM nonce e SEM params (leitura pura).
+      const chegouOIntent = await aguardarPorPrazo(() => buffer.includes('"intent":"agent.status"'), 5000)
+      assert.equal(chegouOIntent, true, 'o update /agentes vira um intent agent.status no canal')
+      const linha = buffer.split('\n').find((l) => l.includes('"intent":"agent.status"'))
+      assert.ok(linha !== undefined)
+      const intent = JSON.parse(linha) as { requestId: string; nonce?: unknown; params?: unknown }
+      assert.equal('nonce' in intent, false, 'agent.status nao carrega nonce')
+      assert.equal(intent.params, undefined, 'agent.status nao carrega params')
+
+      // O host responde com o report VAZIO: a lista renderiza «Nenhum agente rodando.».
+      entrada.write(`${JSON.stringify({ v: 2, type: 'agent.report', runs: [] })}\n`)
+      const resposta = await aguardarPorPrazo(
+        () => chamadasDe(srv, 'sendMessage').some((c) => String(c.payload['text'] ?? '').includes('Nenhum agente rodando.')),
+        5000,
+      )
+      assert.equal(resposta, true, 'a resposta a /agentes e a lista (vazia aqui)')
+
+      // O ack noop de agent.status retira o pendente e NAO renderiza nada por
+      // cima da lista (o carve-out silencioso — o texto «Já estava assim.» nao sai).
+      const antesDoAck = chamadasDe(srv, 'sendMessage').length
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' })}\n`,
+      )
+      const silencioso = await aguardarPorPrazo(() => chamadasDe(srv, 'sendMessage').length > antesDoAck, 200)
+      assert.equal(silencioso, false, 'o ack de agent.status e silencioso')
+    } finally {
+      await parar?.()
+      code2 = await corrida
+    }
+    assert.equal(code2, WORKER_EXIT.OK)
+
+  })
+})
+
+describe('Onda 5: telegram-bot — os restantes cases do despachar convivem com o agent.report', () => {
+  it('state, error, notify, pairing.challenge e nonce.issued roteiam sem engolir o agent.report', async () => {
+    const srv = await startFakeBotApi()
+    abertos.push(srv)
+    const log = captureLog()
+    const { proc, entrada } = procFalso()
+    let parar: (() => Promise<void>) | undefined
+
+    const corrida = runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: srv.apiRoot },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      proc,
+      onBooted: (boot) => {
+        parar = boot.parar
+      },
+    })
+
+    // O `finally` para o boot MESMO quando um assert falha — sem ele, o polling
+    // com relogio falso gira para sempre e a suite pendura.
+    let code: number | undefined
+    try {
+      await aguardar(() => parar !== undefined, 'onBooted fornece o handle de paragem', 2000)
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'pairing.owner', from: '111', chat: '111', pairedAt: 1_000 })}\n`,
+      )
+
+      // case 'state' -> n.onState: a difusao de READY chega ao dono como
+      // mensagem (o texto CURTO do §5, com o link).
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'state',
+          state: 'READY',
+          seq: 1,
+          url: 'https://exemplo.trycloudflare.com',
+          expiresAt: 9_000,
+        })}\n`,
+      )
+      const estado = await aguardarPorPrazo(
+        () =>
+          chamadasDe(srv, 'sendMessage').some(
+            (c) =>
+              String(c.payload['text'] ?? '').includes('📶 Túnel *online*') &&
+              String(c.payload['text'] ?? '').includes('Link: https://exemplo.trycloudflare.com'),
+          ),
+        5000,
+      )
+      assert.equal(estado, true, 'o case state roteia para o nucleo e a difusao sai')
+
+      // case 'notify' -> n.onNotify: o corpo do alerta chega ao dono.
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'notify', texto: 'alerta:link-magico\nhttps://exemplo.link/magico' })}\n`,
+      )
+      const notificacao = await aguardarPorPrazo(
+        () =>
+          chamadasDe(srv, 'sendMessage').some((c) =>
+            String(c.payload['text'] ?? '').includes('https://exemplo.link/magico'),
+          ),
+        5000,
+      )
+      assert.equal(notificacao, true, 'o case notify roteia para o nucleo')
+
+      // case 'error' (SEM requestId) -> n.onError: a mensagem accionavel vai ao
+      // dono — por mensagem propria ou edita a de estado in-place (a corrida
+      // com o registo da difusao decide o destino; o ROTEAMENTO e o mesmo).
+      entrada.write(
+        `${JSON.stringify({ v: 2, type: 'error', code: 'TUNNEL_FAILED', message: 'o tunel caiu, verifica o painel' })}\n`,
+      )
+      const erro = await aguardarPorPrazo(
+        () =>
+          chamadasDe(srv, 'sendMessage').some((c) =>
+            String(c.payload['text'] ?? '').includes('o tunel caiu, verifica o painel'),
+          ) ||
+          chamadasDe(srv, 'editMessageText').some((c) =>
+            String(c.payload['text'] ?? '').includes('o tunel caiu, verifica o painel'),
+          ),
+        5000,
+      )
+      assert.equal(erro, true, 'o case error roteia para o nucleo e o aviso chega ao dono')
+
+      // case 'pairing.challenge' -> n.onPairingChallenge: NAO renderiza nada (so auth).
+      const antesDoDesafio = chamadasDe(srv, 'sendMessage').length
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'pairing.challenge',
+          digest: 'ab'.repeat(32),
+          expiresAt: 1_000,
+        })}\n`,
+      )
+      const desafioSilencioso = await aguardarPorPrazo(
+        () => chamadasDe(srv, 'sendMessage').length > antesDoDesafio,
+        200,
+      )
+      assert.equal(desafioSilencioso, false, 'pairing.challenge e interno (auth), nada de mensagens')
+
+      // case 'nonce.issued' -> a ponte de nonce consome (sem pendente): nada sai.
+      const antesDoNonce = chamadasDe(srv, 'sendMessage').length
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'nonce.issued',
+          acao: 'reset',
+          requestId: '01HZ9999999999999999999999',
+          nonce: 'opaco',
+          expiresAt: 9_999,
+        })}\n`,
+      )
+      const nonceSilencioso = await aguardarPorPrazo(() => chamadasDe(srv, 'sendMessage').length > antesDoNonce, 200)
+      assert.equal(nonceSilencioso, false, 'nonce.issued sem pedido pendente e consumido em silencio')
+
+      // O agent.report CONTINUA a rotear depois de todos eles (nada engoliu o case).
+      entrada.write(
+        `${JSON.stringify({
+          v: 2,
+          type: 'agent.report',
+          runs: [runDeAgente('01HZAAAA', 'eco', 'failed')],
+        })}\n`,
+      )
+      const report = await aguardarPorPrazo(
+        () =>
+          chamadasDe(srv, 'sendMessage').some((c) =>
+            String(c.payload['text'] ?? '').includes('01HZAAAA — eco — falhou'),
+          ),
+        5000,
+      )
+      assert.equal(report, true, 'o case agent.report segue vivo apos os demais')
+    } finally {
+      await parar?.()
+      code = await corrida
+    }
+    assert.equal(code, WORKER_EXIT.OK)
   })
 })

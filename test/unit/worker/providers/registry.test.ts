@@ -322,6 +322,37 @@ describe('worker/providers/registry — a ponte de nonce (EMENDA-COSTURA-5)', ()
     void ponte.emitir('agent.dispatch')
     assert.equal(enviados[0]?.acao, 'reset', 'o host consome o nonce do dispatch com reset')
   })
+
+  it('EMENDA ONDA-5: `agent.cancel` NAO pede nonce (CTL-024 — cancela REDUZ exposicao)', async () => {
+    const enviados: Array<{ acao?: string }> = []
+    const linhas: string[] = []
+    const ipc: WorkerIpc = {
+      send: (m) => {
+        enviados.push(m as { acao?: string })
+        return true
+      },
+      log: () => undefined,
+      dispose: () => undefined,
+    }
+    const ponte = criarPonteDeNonce({
+      log: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: (mensagem) => {
+          linhas.push(mensagem)
+        },
+        error: () => undefined,
+      },
+      time: new RelogioVazio(),
+      ipc,
+    })
+
+    const nonce = await ponte.emitir('agent.cancel')
+
+    assert.equal(nonce, undefined, 'sem nonce, a confirmacao do cancel nao existe')
+    assert.equal(enviados.length, 0, 'nenhum `nonce.request` para a acao que reduz')
+    assert.match(linhas.join('\n'), /acao sem nonce: agent.cancel/u)
+  })
 })
 /* ========================================================================== */
 /* EMENDA ONDA-1-IPC-ENVELOPE-STRING: `pairingSuccess` da ponte monta o       */

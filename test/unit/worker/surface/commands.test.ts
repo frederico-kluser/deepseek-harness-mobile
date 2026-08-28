@@ -417,6 +417,92 @@ describe('Onda 5: /agente — 1a etapa: forma + nonce do host + confirmacao', ()
     const prompt = bancada.canal.intents[0]?.params?.prompt
     assert.equal(prompt, 'primeira segunda', 'o \n virou espaco antes do intent')
   })
+
+  it('prompt de EXATAMENTE 4096 caracteres NAO e cortado; 4097 e cortado para 4096 com marcador', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+
+    // Borda inferior do corte: 4096 cabe inteiro (sem marcador) — o teto do codec.
+    await comandos.agente(DM, `eco ${'a'.repeat(4096)}`)
+    const botaoNoTeto = bancada.emissor.botao(0)
+    assert.ok(botaoNoTeto !== undefined)
+    await comandos.confirmarDispatch(DM, botaoNoTeto.token, 'clique-1', 'msg-1')
+    const promptNoTeto = bancada.canal.intents.at(-1)?.params?.prompt
+    assert.ok(promptNoTeto !== undefined)
+    assert.equal(promptNoTeto.length, 4096)
+    assert.ok(!promptNoTeto.includes('…'), 'no teto exato nada e cortado')
+
+    // Borda superior: 4097 perde UM caracter e ganha o marcador (4096 no total).
+    await comandos.agente(DM, `eco ${'b'.repeat(4097)}`)
+    const botaoAcima = bancada.emissor.botao(1)
+    assert.ok(botaoAcima !== undefined)
+    await comandos.confirmarDispatch(DM, botaoAcima.token, 'clique-2', 'msg-2')
+    const promptAcima = bancada.canal.intents.at(-1)?.params?.prompt
+    assert.ok(promptAcima !== undefined)
+    assert.equal(promptAcima.length, 4096, 'o intent nunca ultrapassa o teto do codec (TG-048)')
+    assert.equal(promptAcima.slice(0, -1), 'b'.repeat(4095))
+    assert.equal(promptAcima.at(-1), '…')
+  })
+
+  it('o prompt da CONFIRMACAO mostra o que VAI: sanado e cortado, sem controlos', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, `eco ${'x'.repeat(5000)}`)
+
+    const texto = bancada.emissor.ultimaMensagem()?.texto ?? ''
+    assert.ok(!texto.includes('\n'.repeat(2)), 'a confirmacao nao mostra quebras de controlo')
+    assert.ok(texto.endsWith('…"'), 'o prompt mostrado termina no marcador de corte')
+    const entreAspas = texto.match(/"([^"]*)"$/u)?.[1]
+    assert.ok(entreAspas !== undefined)
+    assert.equal(entreAspas.length, 4096, 'o que se confirma e o que corre (sanado + cortado)')
+  })
+
+  it('grammar de skill: kebab-case simples aceito; hifen duplo, underscore, maiusculas e ponto recusados', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+
+    // O kebab-case com hifen UNICO aceita.
+    await comandos.agente(DM, 'faz-eco diz oi')
+    assert.equal(bancada.canal.intents.length, 0, '1a etapa: so confirmacao')
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Disparar o agente "faz-eco"\?/u)
+
+    for (const invalida of ['eco--x', 'eco_faz', 'ECO', 'eco.', '-eco', 'eco-', 'e_co', 'e.c-o']) {
+      const antes = bancada.emissor.mensagens.length
+      await comandos.agente(DM, `${invalida} faz isto`)
+      assert.equal(
+        bancada.emissor.mensagens.length,
+        antes + 1,
+        `skill "${invalida}" devia ser recusada com a mensagem de uso`,
+      )
+      assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Skill inválida \(kebab-case\)/u)
+    }
+    assert.equal(bancada.canal.intents.length, 0, 'nenhuma forma invalida chega ao host')
+  })
+
+  it('teto do mapa de despachos (8): o NONO /agente expulsa o primeiro — o clique antigo morre', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+
+    const botoes: Array<{ token: string }> = []
+    for (let i = 0; i < 9; i += 1) {
+      await comandos.agente(DM, `eco pedido-${i}`)
+      const botao = bancada.emissor.botao(i)
+      assert.ok(botao !== undefined, `botao ${i} da confirmacao`)
+      botoes.push(botao)
+    }
+
+    // O primeiro despacho foi expulso pelo teto: o clique no token antigo NAO
+    // executa (silencioso — TG-025; o mapa nunca cresce sem limite).
+    await comandos.confirmarDispatch(DM, botoes[0]?.token ?? '', 'clique-velho', 'msg-velha')
+    assert.equal(bancada.canal.intents.length, 0, 'o primeiro foi evictado pelo teto (FIFO)')
+
+    // O nono (o mais novo) ainda vive e executa com os PARAMS da 9a confirmacao.
+    await comandos.confirmarDispatch(DM, botoes[8]?.token ?? '', 'clique-9', 'msg-9')
+    assert.equal(bancada.canal.intents.length, 1)
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.deepEqual(intent.params, { skill: 'eco', prompt: 'pedido-8' })
+  })
 })
 
 describe('Onda 5: confirmarDispatch — o clique no botao da confirmacao', () => {
@@ -527,6 +613,36 @@ describe('Onda 5: /parar-agente — valida a forma (8 chars) e cancela', () => {
     assert.equal(bancada.canal.intents.length, 0)
     assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Id inválido/u)
     assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /\/agentes/u)
+  })
+
+  it('grammar do id: Crockford 8 chars SEM I/L/O/U — minusculas, vogais proibidas e comprimentos errados recusados', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+
+    // O alfabeto Crockford do ULID: 0-9 e A-Z menos I/L/O/U.
+    const invalidos = [
+      '01hzabcd', // minusculas
+      '01HZABCI', // contem I
+      '01HZABCL', // contem L
+      '01HZABCO', // contem O
+      '01HZABCU', // contem U
+      '01HZABC', // 7 chars
+      '01HZABCDE', // 9 chars
+      '01HZ ABC', // espaco interno
+      '01HZAB-D', // hifen
+      '', // vazio
+    ]
+    for (const invalido of invalidos) {
+      const antes = bancada.canal.intents.length
+      await comandos.pararAgente(DM, invalido)
+      assert.equal(bancada.canal.intents.length, antes, `id "${invalido}" nao pode gerar intent`)
+      assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Id inválido/u)
+    }
+
+    // So digitos: dentro da grammar (0-9 e Crockford) — o cancel viaja.
+    await comandos.pararAgente(DM, '12345678')
+    assert.equal(bancada.canal.intents.length, 1)
+    assert.deepEqual(bancada.canal.intents[0]?.params, { agentId: '12345678' })
   })
 })
 

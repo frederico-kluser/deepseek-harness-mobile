@@ -955,6 +955,18 @@ describe('runsTerminadosDesde — quais runs contam como «terminados»', () => 
     )
     assert.equal(terminados.length, 0)
   })
+
+  it('relatorio VAZIO devolve vazio, mesmo com historico cheio (nada novo, nada a notificar)', () => {
+    assert.deepEqual(runsTerminadosDesde([corrido('A', 'running'), corrido('B', 'done')], []), [])
+    assert.deepEqual(runsTerminadosDesde(undefined, []), [])
+  })
+
+  it('um run que ESTAVA no historico e SUMIU do report atual nao e notificado (a lista atual e a fonte)', () => {
+    // O host pode podar runs de memoria entre difusoes: o que desapareceu nao
+    // pode ser anunciado como «terminado agora» — a lista ATUAL e a verdade.
+    const terminados = runsTerminadosDesde([corrido('A', 'running'), corrido('B', 'done')], [corrido('B', 'done')])
+    assert.deepEqual(terminados.map((r) => r.id), [])
+  })
 })
 
 /* ========================================================================== */
@@ -1046,6 +1058,28 @@ describe('Onda 5: /agente — 2 etapas com nonce, dispatch com params, ack final
 
     assert.equal(bancada.ipc.intents.length, 0)
     assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Não foi possível obter a confirmação/u)
+  })
+
+  it('ack noop do agent.dispatch cobre o tipo: «Já estava assim.» (o host nunca o envia — defesa)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agente eco diz oi'))
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    await bancada.tratar(accaoDoDono('agent.dispatch', botao.token, confirmacao.id))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' })
+    await tick()
+
+    const edicao = bancada.sender.edicoes.at(-1)
+    assert.ok(edicao !== undefined)
+    assert.equal(edicao.messageId, confirmacao.id)
+    assert.equal(edicao.texto, 'Já estava assim.')
   })
 })
 
@@ -1187,6 +1221,106 @@ describe('Onda 5: difusao proativa — um run termina e o dono e avisado', () =>
     await tick()
 
     assert.equal(bancada.sender.mensagens.length, antes, 'solo runs vivos: sem notificacao')
+  })
+
+  it('VARIOS runs terminam no MESMO report: UMA notificacao com as linhas de TODOS', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+    const depoisDoPareamento = bancada.sender.mensagens.length
+
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: agora - 60_000, summary: 'feito' },
+        { id: '01HZBBBB', skill: 'dataviz', status: 'failed', startedAt: agora - 2 * 60_000 },
+        { id: '01HZCCCC', skill: 'eco', status: 'cancelled', startedAt: agora - 3 * 60_000 },
+      ],
+    })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.length, depoisDoPareamento + 1, 'uma unica notificacao proativa')
+    const notificacao = bancada.sender.mensagens.at(-1)
+    assert.ok(notificacao !== undefined)
+    assert.match(notificacao.texto, /🤖 Atualização de agentes:/u)
+    assert.match(notificacao.texto, /01HZAAAA — eco — concluído há 1 min/u)
+    assert.match(notificacao.texto, /01HZBBBB — dataviz — falhou há 2 min/u)
+    assert.match(notificacao.texto, /01HZCCCC — eco — cancelado há 3 min/u)
+  })
+
+  it('EM SEQUENCIA: a segunda difusao proativa notifica so o NOVO terminal, sem repetir o anterior', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+
+    // 1a difusao: o run A terminou (notificado).
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: agora - 60_000, summary: 'feito' },
+        { id: '01HZBBBB', skill: 'dataviz', status: 'running', startedAt: agora },
+      ],
+    })
+    await tick()
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /01HZAAAA/u)
+
+    // 2a difusao: agora o B terminou; o A ja era terminal no report anterior.
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: agora - 60_000, summary: 'feito' },
+        { id: '01HZBBBB', skill: 'dataviz', status: 'failed', startedAt: agora, summary: 'erro' },
+      ],
+    })
+    await tick()
+
+    const notificacao = bancada.sender.mensagens.at(-1)
+    assert.ok(notificacao !== undefined)
+    assert.match(notificacao.texto, /01HZBBBB — dataviz — falhou agora mesmo/u)
+    assert.ok(!notificacao.texto.includes('01HZAAAA'), 'o run ja terminal nao repete a notificacao')
+  })
+
+  it('SEM DONO (worker sem pareamento): o report proativo e silencio total', async () => {
+    const bancada = montarBancada()
+    // Sem `paired()`: o nucleo nao tem dono — a difusao nao tem para onde ir.
+    const antes = bancada.sender.mensagens.length
+
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: 1_000 }],
+    })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.length, antes, 'sem dono nada e enviado')
+  })
+
+  it('best-effort (S4): a falha de envio da notificacao NAO derruba o canal', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    bancada.sender.falharEnvio = true
+
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: 1_000 }],
+    })
+    await tick()
+
+    // A falha foi registada (emSegundoPlano), nao propagada: o nucleo segue vivo.
+    assert.match(bancada.log.all(), /falha ao renderizar para o chat/u)
+    // E o canal continua a servir os proximos eventos sem rebentar.
+    bancada.sender.falharEnvio = false
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZBBBB', skill: 'eco', status: 'cancelled', startedAt: 1_000 }],
+    })
+    await tick()
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto.includes('01HZBBBB'), true, 'o canal seguiu vivo')
   })
 })
 

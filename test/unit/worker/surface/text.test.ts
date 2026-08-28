@@ -18,6 +18,8 @@ import {
   formatarHora,
   haQuantoTempo,
   linhaDeRun,
+  MAX_PROMPT_CHARS,
+  MAX_TEXTO_MENSAGEM,
   ROTULOS_DE_STATUS_DE_AGENTE,
   sanearUmaLinha,
   textoDeEstado,
@@ -240,6 +242,92 @@ describe('Onda 5: sanearUmaLinha — controlos viram espaco (o codec recusa no p
     assert.equal(sanearUmaLinha('primeira\nsegunda'), 'primeira segunda')
     assert.equal(sanearUmaLinha('a\tb'), 'a b')
     assert.equal(sanearUmaLinha('sem controlos'), 'sem controlos')
+  })
+
+  it('TODOS os controlos C0 (0x00-0x1F) e o DEL (0x7F) viram espaco, um a um', () => {
+    for (let codigo = 0x00; codigo <= 0x1f; codigo += 1) {
+      assert.equal(
+        sanearUmaLinha(`a${String.fromCharCode(codigo)}b`),
+        'a b',
+        `controlo 0x${codigo.toString(16).padStart(2, '0')} devia virar espaco`,
+      )
+    }
+    assert.equal(sanearUmaLinha(`a${String.fromCharCode(0x7f)}b`), 'a b', 'o DEL (0x7F) vira espaco')
+  })
+
+  it('o retorno de carro \r vira espaco (um \r\n nao parte a linha em duas)', () => {
+    assert.equal(sanearUmaLinha('primeira\r\nsegunda'), 'primeira  segunda')
+  })
+
+  it('acentos e espacos NORMAIS ficam intactos (so controlos sao trocados)', () => {
+    assert.equal(sanearUmaLinha('faz café com 3  espaços'), 'faz café com 3  espaços')
+    assert.equal(sanearUmaLinha('ação ≠  '), 'ação ≠  ')
+  })
+})
+
+describe('Onda 5: MAX_PROMPT_CHARS — o teto do prompt e o MESMO do codec do canal', () => {
+  it('vale 4096, o MAX_TEXTO_MENSAGEM (o teto do codec — um prompt acima seria recusado na forma)', () => {
+    assert.equal(MAX_PROMPT_CHARS, 4096)
+    assert.equal(MAX_PROMPT_CHARS, MAX_TEXTO_MENSAGEM)
+  })
+
+  it('cortarTexto no EXATO limite nao corta; um caracter acima corta com marcador (borda TG-048)', () => {
+    const noTeto = 'a'.repeat(MAX_PROMPT_CHARS)
+    assert.equal(cortarTexto(noTeto, MAX_PROMPT_CHARS), noTeto, '4096 = intacto, sem marcador')
+
+    const acima = 'a'.repeat(MAX_PROMPT_CHARS + 1)
+    const cortado = cortarTexto(acima, MAX_PROMPT_CHARS)
+    assert.equal(cortado.length, MAX_PROMPT_CHARS, '4097 -> 4096 por construcao (slice + marcador)')
+    assert.equal(cortado.slice(0, -1), 'a'.repeat(MAX_PROMPT_CHARS - 1))
+    assert.equal(cortado.at(-1), '…')
+  })
+})
+
+describe('Onda 5: haQuantoTempo — as bordas do relogio do /agentes', () => {
+  it('as bordas de 1 min e de 1 h sao exactas (59.999 vs 60.000, 3.599.999 vs 3.600.000)', () => {
+    assert.equal(haQuantoTempo(59_999), 'há menos de 1 min')
+    assert.equal(haQuantoTempo(60_000), 'há 1 min')
+    assert.equal(haQuantoTempo(3_599_999), 'há 59 min')
+    assert.equal(haQuantoTempo(3_600_000), 'há 1 h')
+    assert.equal(haQuantoTempo(7_200_000), 'há 2 h')
+    assert.equal(haQuantoTempo(5_400_000), 'há 1 h 30 min')
+  })
+})
+
+describe('Onda 5: linhaDeRun — bordas do resumo e do nascimento', () => {
+  const run = {
+    id: '01HZABCD',
+    skill: 'eco',
+    status: 'done' as const,
+    startedAt: 1_000,
+  }
+
+  it('summary VAZIO e tratado como ausente: so a linha base', () => {
+    assert.equal(linhaDeRun({ ...run, summary: '' }, 121_000), '• 01HZABCD — eco — concluído há 2 min')
+  })
+
+  it('run acabado de nascer (startedAt == agora): «agora mesmo», nunca «há agora»', () => {
+    assert.equal(linhaDeRun({ ...run, status: 'running' }, 1_000), '• 01HZABCD — eco — rodando agora mesmo')
+  })
+})
+
+describe('Onda 5: textoDeFimDeRuns — a notificacao proativa com VARIOS runs', () => {
+  it('uma linha por run terminado, na ordem, sob o titulo proprio', () => {
+    const agora = 10 * 60_000
+    const texto = textoDeFimDeRuns(
+      [
+        { id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: agora - 2 * 60_000, summary: 'oi' },
+        { id: '01HZBBBB', skill: 'dataviz', status: 'failed', startedAt: agora - 60_000 },
+      ],
+      agora,
+    )
+    assert.equal(
+      texto,
+      '🤖 Atualização de agentes:\n' +
+        '• 01HZAAAA — eco — concluído há 2 min\n' +
+        '   💬 oi\n' +
+        '• 01HZBBBB — dataviz — falhou há 1 min',
+    )
   })
 })
 
