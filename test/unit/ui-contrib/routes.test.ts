@@ -41,6 +41,7 @@ import {
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
   UI_PATH_STOP,
+  projetarEstadoTelegrama,
 } from '../../../src/ui-contrib/routes.ts'
 import { UI_CSRF_BINDING } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
@@ -490,5 +491,75 @@ describe('o estado do pareamento (GET /pair-state)', () => {
     const resposta = await bancada.enviar(UI_PATH_PAIR_STATE, { metodo: 'POST', pedacos: ['{}'] })
     assert.equal(resposta.status, 405)
     assert.equal(resposta.cabecalhos.allow, 'GET')
+  })
+})
+
+
+/* ========================================================================== */
+/* A projecao do estado do bot (Onda 2 — provider-aware)                      */
+/* ========================================================================== */
+
+/**
+ * `projetarEstadoTelegrama(estado, provider)` — a funcao PURA que molda o corpo
+ * do GET /__guard-ui/api/telegram. As perguntas falsificaveis desta suite:
+ *  - offline devolve EXATAMENTE `{online:false, provider, motivo}` (a chave
+ *    `handle` nunca sai num estado offline);
+ *  - online SEM handle devolve `{online:true, provider}` SEM a chave `handle`
+ *    (ausencia = ausente — o codigo usa o spread condicional, linha 638);
+ *  - online COM handle devolve `{online:true, provider, handle}`;
+ *  - o provider 'discord' sai TANTO em offline quanto em online (o contrato da
+ *    Onda 2: o corpo sempre carrega o provedor ativo);
+ *  - o corpo tem EXATAMENTE as chaves do contrato — o token nunca entra aqui
+ *    (deepEqual de forma exata + a enumeracao de chaves).
+ */
+describe('projetarEstadoTelegrama (funcao pura)', () => {
+  it('offline devolve {online:false, provider, motivo} — sem a chave handle', () => {
+    assert.deepEqual(projetarEstadoTelegrama({ online: false, motivo: 'sem-chave' }, 'telegram'), {
+      online: false,
+      provider: 'telegram',
+      motivo: 'sem-chave',
+    })
+    assert.deepEqual(projetarEstadoTelegrama({ online: false, motivo: 'sem-pareamento' }, 'telegram'), {
+      online: false,
+      provider: 'telegram',
+      motivo: 'sem-pareamento',
+    })
+  })
+
+  it('online SEM handle nao inclui a chave handle no corpo (ausencia = ausente)', () => {
+    const projeto = projetarEstadoTelegrama({ online: true }, 'telegram')
+    assert.deepEqual(projeto, { online: true, provider: 'telegram' })
+    assert.equal(Object.hasOwn(projeto, 'handle'), false, 'sem handle no estado, o corpo nao pode inventar a chave')
+  })
+
+  it('online COM handle inclui o handle no corpo', () => {
+    assert.deepEqual(projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'telegram'), {
+      online: true,
+      provider: 'telegram',
+      handle: 'meu_bot',
+    })
+  })
+
+  it('o provider discord sai TANTO em offline quanto em online', () => {
+    assert.deepEqual(projetarEstadoTelegrama({ online: false, motivo: 'sem-chave' }, 'discord'), {
+      online: false,
+      provider: 'discord',
+      motivo: 'sem-chave',
+    })
+    assert.deepEqual(projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'discord'), {
+      online: true,
+      provider: 'discord',
+      handle: 'meu_bot',
+    })
+  })
+
+  it('o corpo tem EXATAMENTE as chaves do contrato — o token nunca sai', () => {
+    const offline = projetarEstadoTelegrama({ online: false, motivo: 'sem-chave' }, 'telegram')
+    assert.deepEqual(Object.keys(offline).toSorted(), ['motivo', 'online', 'provider'])
+    const onlineSemHandle = projetarEstadoTelegrama({ online: true }, 'discord')
+    assert.deepEqual(Object.keys(onlineSemHandle).toSorted(), ['online', 'provider'])
+    const onlineComHandle = projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'discord')
+    assert.deepEqual(Object.keys(onlineComHandle).toSorted(), ['handle', 'online', 'provider'])
+    assert.ok(!JSON.stringify([offline, onlineSemHandle, onlineComHandle]).includes('AA'), 'nenhum padrao de chave real no corpo')
   })
 })

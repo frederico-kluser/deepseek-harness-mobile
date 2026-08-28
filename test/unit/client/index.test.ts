@@ -776,3 +776,134 @@ test('bundle: os rótulos do discord estão no bundle (mapa provider-aware)', { 
   assert.ok(codigo.includes('No Telegram, envia'), 'o bundle deve continuar a conter a instrução do telegram')
 })
 
+/**
+ * Onda 2 — fonte `'env'` com token CONFIGURADO: o chip e decidido pelo
+ * TELEGRAMA, nunca pelo env (o env so decide quando o token NAO esta
+ * configurado — 'Env manda'). O ramo "Configurado via env" de `chipDoEstado`
+ * (o unico que cita a variavel do provider, `rotulosDoProvider(provider)
+ * .tokenVar`) e INALCANCAVEL pela porta publica: o `chipDoBot` so delega a
+ * `chipDoEstado` quando `!token.configurado` (client/index.ts:292). O teste
+ * PINANDO o comportamento observado — como o repo ja faz para o motivo vazio:
+ * configurado+env em cada estado do telegrama (null/online/offline), com e sem
+ * o 3.º argumento.
+ */
+test('bundle: chipDoBot — env+configurado: o chip e decidido pelo telegrama (ramo "Configurado via env" inalcancavel)', { skip: BUNDLE_AUSENTE }, () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const chip = modulo.chipDoBot as (
+    token: unknown,
+    telegrama: unknown,
+    provider?: unknown,
+  ) => { tom: string; rotulo: string; detalhe?: string }
+
+  // configurado+env e o /telegram ainda a carregar -> 'verificando…' (o env NAO
+  // decide com o token configurado), com e sem provider.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'env' }, null, 'discord'),
+    { tom: 'neutro', rotulo: 'verificando…' },
+  )
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'env' }, null),
+    { tom: 'neutro', rotulo: 'verificando…' },
+    '2 args (sem provider): o mesmo estado — regressao zero',
+  )
+
+  // configurado+env e ONLINE -> 'Online' com o detalhe = a fonte do token.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'env' }, { online: true }, 'discord'),
+    { tom: 'ok', rotulo: 'Online', detalhe: 'env' },
+  )
+
+  // configurado+env e OFFLINE -> 'Offline' com o motivo da rota.
+  assert.deepEqual(
+    chip({ configurado: true, fonte: 'env' }, { online: false, motivo: 'sem-pareamento' }, 'discord'),
+    { tom: 'aviso', rotulo: 'Offline', detalhe: 'sem-pareamento' },
+  )
+  void chamadas
+})
+
+/**
+ * Onda 2 — o CONSUMO do campo `provider` do GET /telegram esta fiado no bundle
+ * (o esbuild do repo roda com `minify:false`, logo os nomes do fonte aparecem
+ * verbatim no artefacto): a rota normaliza o campo e alimenta o estado React
+ * (`setProvider(normalizarProvider(dados.provider))`), o painel passa o
+ * provedor ao chip (`chipDoBot(token, telegrama, provider)`) e aos rotulos
+ * (`rotulosDoProvider(provider)`, incluindo o detalhe de env). Falsifica a
+ * aceitacao "o campo provider chega do servidor ao estado React" ao nivel do
+ * artefacto compilado.
+ */
+test('bundle: o campo provider do GET /telegram esta fiado ao estado e ao render', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  assert.ok(
+    codigo.includes('setProvider(normalizarProvider(dados.provider))'),
+    'a GET /telegram deve normalizar o campo provider e alimentar o estado React',
+  )
+  assert.ok(codigo.includes('chipDoBot(token, telegrama, provider)'), 'o painel deve passar o provedor ativo ao chip do cabecalho')
+  assert.ok(codigo.includes('rotulosDoProvider(provider)'), 'o render deve escolher os rotulos pelo provedor ativo')
+  assert.ok(codigo.includes('rotulosDoProvider(provider).tokenVar'), 'o detalhe de env deve citar a variavel do provedor ativo')
+})
+
+/**
+ * Onda 2 — os mapas de rotulos sao FROZEN e o fallback e a MESMA identidade do
+ * mapa telegram: `rotulosDoProvider(undefined)` devolve o proprio objeto
+ * telegram (nunca uma copia), e o discord e um objeto DISTINTO. Protege a
+ * aceitacao "fallback telegram para tudo que nao e discord".
+ */
+test('bundle: rotulosDoProvider — mapas congelados e fallback por identidade', { skip: BUNDLE_AUSENTE }, () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const rotulos = modulo.rotulosDoProvider as (p?: unknown) => Record<string, unknown>
+
+  const telegram = rotulos('telegram')
+  const discord = rotulos('discord')
+  assert.ok(Object.isFrozen(telegram), 'o mapa telegram deve ser congelado (imutavel)')
+  assert.ok(Object.isFrozen(discord), 'o mapa discord deve ser congelado (imutavel)')
+
+  assert.equal(rotulos(undefined), telegram, 'fallback (undefined) devolve a MESMA identidade do telegram')
+  assert.equal(rotulos(null), telegram, 'fallback (null) devolve a mesma identidade do telegram')
+  assert.equal(rotulos('signal'), telegram, 'fallback (desconhecido) devolve a mesma identidade do telegram')
+  assert.notEqual(discord, telegram, 'o mapa discord e um objeto DISTINTO do telegram')
+  void chamadas
+})
+
+/**
+ * Onda 2 — o espelho `client/client.d.ts` (copiado para `lib/client.d.ts` pelo
+ * `build-client.mjs` — o subpath `./client` do tarball) declara a MESMA
+ * superficie provider-aware do fonte `client/index.ts`: cada export NOMEADO do
+ * fonte tem a sua declaracao no espelho, e os tres pontos provider
+ * (`TipoProvider`, `EstadoTelegrama.provider`, o 3.º argumento do `chipDoBot`)
+ * estao tipados. Estrutural e sem build: le os dois ficheiros do repositorio.
+ */
+test('client.d.ts (espelho) declara a superficie provider-aware do fonte', () => {
+  const fonte = readFileSync(resolve(ROOT, 'client/index.ts'), 'utf8')
+  const espelho = readFileSync(resolve(ROOT, 'client/client.d.ts'), 'utf8')
+
+  // Cada export NOMEADO do fonte (function/const/type/interface, com ou sem
+  // `async`) tem a sua declaracao correspondente no espelho.
+  const nomes = [...fonte.matchAll(/^export (?:async )?(?:function|const|type|interface)\s+([A-Za-z0-9_]+)/gmu)].map(
+    (m) => m[1],
+  )
+  assert.ok(nomes.length >= 9, `esperava os exports do fonte, achei: ${nomes.join(', ')}`)
+  for (const nome of nomes) {
+    assert.ok(
+      new RegExp(`export (?:function|const|type|interface)\\s+${nome}\\b`, 'u').test(espelho),
+      `o espelho deve declarar o export ${nome} do fonte`,
+    )
+  }
+
+  // Os pontos provider-aware tipados no espelho.
+  assert.match(espelho, /export type TipoProvider = 'telegram' \| 'discord'/u, 'o union do TipoProvider no espelho')
+  assert.match(espelho, /readonly provider\?: TipoProvider/u, 'EstadoTelegrama.provider (opcional) no espelho')
+  assert.match(
+    espelho,
+    /chipDoBot\(token: EstadoDoToken \| null, telegrama: EstadoTelegrama \| null, provider\?: TipoProvider\)/u,
+    'o 3.º argumento (provider) do chipDoBot no espelho',
+  )
+  assert.match(
+    espelho,
+    /export function rotulosDoProvider\(provider\?: TipoProvider \| null\): RotulosDoProvider/u,
+    'rotulosDoProvider com fallback tipado no espelho',
+  )
+  assert.match(espelho, /export function normalizarProvider\(valor: unknown\): TipoProvider/u)
+})
