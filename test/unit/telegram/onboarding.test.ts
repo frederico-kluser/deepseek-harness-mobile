@@ -51,7 +51,9 @@ import {
   lerSecretsEnv,
   proximoPasso,
   resolverToken,
+  validarFormatoDe,
   validarFormatoDoToken,
+  validarFormatoDoTokenDoDiscord,
   type EstadoOnboarding,
   type RetratoDoAmbiente,
 } from '../../../src/telegram/onboarding.ts'
@@ -2096,5 +2098,84 @@ describe('CLI provider-aware -- discord registado no host', () => {
     } finally {
       temp.cleanup()
     }
+  })
+})
+
+describe('a forma do token por provedor e o retrato discord (Onda 2 do host)', () => {
+  // Construido por concatenacao, como todos os tokens deste ficheiro: um
+  // `grep` por forma de token sobre o repositorio nao encontra nada.
+  const TOKEN_DISCORD_VALIDO = `MTIzNDU2Nzg5MDEyMzQ1Njc4OQ${'.'}Gf3x9${'.'}token${'-'}secreto`
+
+  it('validarFormatoDoTokenDoDiscord: aceita a forma frouxa (pontos e travessoes) SEM botId', () => {
+    // O juiz real de um token discord e a API (`GET /users/@me`); aqui so se
+    // recusa o que obviamente nao e um token (TG-061 por canal).
+    assert.deepEqual(validarFormatoDoTokenDoDiscord(` ${TOKEN_DISCORD_VALIDO} `), { valido: true })
+  })
+
+  it('validarFormatoDoTokenDoDiscord: vazio -> vazio; mais de 80 -> comprimento-excessivo', () => {
+    assert.deepEqual(validarFormatoDoTokenDoDiscord(''), { valido: false, motivo: 'vazio' })
+    assert.deepEqual(validarFormatoDoTokenDoDiscord('   '), { valido: false, motivo: 'vazio' })
+    assert.deepEqual(validarFormatoDoTokenDoDiscord('a'.repeat(81)), {
+      valido: false,
+      motivo: 'comprimento-excessivo',
+    })
+  })
+
+  it('validarFormatoDoTokenDoDiscord: espaco ou controlo e caracteres-invalidos (recusa antes da rede)', () => {
+    // Uma linha inteira colada, um URL, ou lixo da area de transferencia com
+    // quebra de linha — o que a forma estrita do telegram ja recusava.
+    assert.deepEqual(validarFormatoDoTokenDoDiscord(`bot ${TOKEN_DISCORD_VALIDO}`), {
+      valido: false,
+      motivo: 'caracteres-invalidos',
+    })
+    assert.deepEqual(validarFormatoDoTokenDoDiscord(`url\n${TOKEN_DISCORD_VALIDO}`), {
+      valido: false,
+      motivo: 'caracteres-invalidos',
+    })
+  })
+
+  it('validarFormatoDe delega no provedor: discord usa a forma frouxa, telegram a estrita', () => {
+    // A porta usada pelo painel: um token discord legitimo NAO pode ser
+    // recusado pela forma do telegram — e vice-versa, o que o telegram recusa
+    // em forma continua recusado.
+    assert.equal(validarFormatoDe('discord', TOKEN_DISCORD_VALIDO), true)
+    assert.equal(validarFormatoDe('discord', TOKEN_VALIDO), true, 'a forma do telegram cabe na frouxa do discord')
+    assert.equal(validarFormatoDe('telegram', TOKEN_DISCORD_VALIDO), false, 'a forma discord nao passa na estrita do telegram')
+    assert.equal(validarFormatoDe('telegram', TOKEN_VALIDO), true)
+  })
+
+  it('resolverToken com a chave do discord: o AMBIENTE vale como fallback sem ficheiro', () => {
+    const temp = makeTempStateDir()
+    try {
+      const encontrado = resolverToken(
+        join(temp.path, 'nao-existe.env'),
+        { [CHAVE_DO_TOKEN]: TOKEN_VALIDO, DISCORD_BOT_TOKEN: TOKEN_DISCORD_VALIDO },
+        'DISCORD_BOT_TOKEN',
+      )
+      assert.deepEqual(encontrado, { token: TOKEN_DISCORD_VALIDO, origem: 'ambiente' })
+      // A chave do telegram no ambiente NAO alimenta o discord: sem ficheiro e
+      // sem a chave certa, nao ha token — nunca se le a chave do outro bot.
+      assert.equal(
+        resolverToken(join(temp.path, 'nao-existe.env'), { [CHAVE_DO_TOKEN]: TOKEN_VALIDO }, 'DISCORD_BOT_TOKEN'),
+        undefined,
+      )
+    } finally {
+      temp.cleanup()
+    }
+  })
+
+  it('proximoPasso com provedor discord: SEM_TOKEN fala do portal de desenvolvimento, nunca do @BotFather', () => {
+    const passo = proximoPasso(SEM_TOKEN, { ...OPCOES, provedor: 'discord' })
+    assert.equal(passo.estado, 'SEM_TOKEN')
+    assert.equal(passo.titulo, 'Falta criar o bot no Discord.')
+    assert.ok(passo.texto.includes('portal de desenvolvimento'), 'o rotulo discord aparece')
+    assert.ok(!passo.texto.includes('@BotFather'), 'o rotulo telegram nao vaza')
+  })
+
+  it('proximoPasso com provedor discord: o token recusado fala do Discord, nao do Telegram', () => {
+    const passo = proximoPasso(TOKEN_INVALIDO, { ...OPCOES, provedor: 'discord' })
+    assert.equal(passo.estado, 'TOKEN_INVALIDO')
+    assert.equal(passo.titulo, 'A chave do bot não foi aceite pelo Discord.')
+    assert.ok(!passo.texto.includes('@BotFather'), 'o caminho de cura nao manda ao BotFather')
   })
 })

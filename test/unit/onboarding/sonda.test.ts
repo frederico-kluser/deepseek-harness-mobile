@@ -192,3 +192,101 @@ describe('o transporte telegram portado continua no mesmo lugar para quem ja imp
     assert.deepEqual(viaOnboarding, viaSonda)
   })
 })
+
+describe('bordas do contrato provider-aware (Onda 2) -- timeout, classificacao e raiz da API', () => {
+  /** Um `fetch` stub que HONRA o signal de aborto, como o fetch real o faz. */
+  function fetchQueHonraTimeout(atrasoMs: number): typeof fetch {
+    return async (_url, init) => {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, atrasoMs)
+        init?.signal?.addEventListener('abort', () => {
+          clearTimeout(timer)
+          reject(init.signal?.reason ?? new Error('abortado'))
+        })
+      })
+      return respostaDiscord(200, { username: 'tarde-demais' })
+    }
+  }
+
+  it('(a) o timeout e aplicado: uma API que nao responde a tempo vira rede, cortada pelo AbortSignal', async () => {
+    const comeco = Date.now()
+    const sonda = criarSonda('discord', { buscar: fetchQueHonraTimeout(500), timeoutMs: 25 })
+    const prova = await sonda.verificar(TOKEN_DISCORD)
+    assert.deepEqual(prova, { ok: false, erro: 'rede' })
+    assert.ok(
+      Date.now() - comeco < 300,
+      'o AbortSignal cortou a chamada muito antes dos 500 ms que o stub levaria',
+    )
+  })
+
+  it('(a) o MESMO teto vale no probe telegram (o abort colapsa em rede)', async () => {
+    const comeco = Date.now()
+    const sonda = criarSonda('telegram', {
+      buscar: async (_url, init) => {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 500)
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(init.signal?.reason ?? new Error('abortado'))
+          })
+        })
+        return new Response(JSON.stringify({ ok: true, result: { id: 1, username: 'x' } }), { status: 200 })
+      },
+      timeoutMs: 25,
+    })
+    const prova = await sonda.verificar(TOKEN_TELEGRAM)
+    assert.deepEqual(prova, { ok: false, erro: 'rede' })
+    assert.ok(Date.now() - comeco < 300, 'o abort do getMe telegram tambem corta')
+  })
+
+  it('(a) 401 com corpo variado (vazio ou nao-JSON) continua a ser token-invalido', async () => {
+    for (const corpo of ['', 'nao-json', JSON.stringify({ message: '401: Unauthorized' })]) {
+      const stub = fetchStub(() => new Response(corpo, { status: 401 }))
+      const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
+      assert.deepEqual(prova, { ok: false, erro: 'token-invalido' }, `corpo: ${JSON.stringify(corpo)}`)
+    }
+  })
+
+  it('(a) token vazio: a sonda NAO julga a forma — envia `Bearer ` e a API decide', async () => {
+    // A validacao de forma e do onboarding (TG-061), nunca da sonda: o probe
+    // so transporta o que lhe derem e classifica a resposta da API.
+    const stub = fetchStub(() => respostaDiscord(401, { message: '401: Unauthorized' }))
+    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar('')
+    assert.deepEqual(prova, { ok: false, erro: 'token-invalido' })
+    // O valor BRUTO do init e `Bearer ` (com espaco) — e o que o codigo manda.
+    // (Na linha, o Headers do fetch normaliza e tira o espaco final: `Bearer`.)
+    assert.deepEqual(stub.pedidos[0]?.init?.headers, {
+      authorization: 'Bearer ',
+      accept: 'application/json',
+    })
+  })
+
+  it('(a) 429 -> indisponivel (qualquer status inesperado)', async () => {
+    const stub = fetchStub(() => respostaDiscord(429, { message: 'Too Many Requests' }))
+    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
+    assert.deepEqual(prova, { ok: false, erro: 'indisponivel' })
+  })
+
+  it('(a) 200 com corpo nao-JSON -> ok sem botNome (o corpo ininteligivel e descartado, nao explode)', async () => {
+    const stub = fetchStub(() => new Response('<html>pagina de bloqueio</html>', { status: 200 }))
+    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
+    assert.deepEqual(prova, { ok: true })
+  })
+
+  it('(a) a raiz da API aceita VARIAS barras finais (o duplo de teste pode traze-las)', async () => {
+    const stub = fetchStub(() => respostaDiscord(200, { username: 'x' }))
+    await criarSonda('discord', { apiRoot: 'http://127.0.0.1:9/api/v10///', buscar: stub.buscar }).verificar(
+      TOKEN_DISCORD,
+    )
+    assert.equal(stub.pedidos[0]?.url, 'http://127.0.0.1:9/api/v10/users/@me')
+  })
+
+  it('apiRootDe: espacos em volta sao aparados; a barra final passa INTACTA (o trim e so de espacos)', () => {
+    // Quem aparar a barra final aqui quebraria o contrato do `replace` que
+    // vive nas sondas: `apiRootDe` devolve o que o ambiente diz, e a sondas
+    // normalizam. O trim de espacos e para um `DISCORD_API_ROOT="  x  "` nao
+    // virar um URL com espacos.
+    const ambiente = { DISCORD_API_ROOT: '  http://127.0.0.1:9/api/v10/  ' }
+    assert.equal(apiRootDe('discord', ambiente), 'http://127.0.0.1:9/api/v10/')
+  })
+})

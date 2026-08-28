@@ -144,3 +144,71 @@ describe('discord REGISTRADO (Onda 2 do host) -- PROVIDER_ENV, buildWorkerEnv e 
     )
   })
 })
+
+describe('bordas da allowlist -- pai hostil, Windows e TLS', () => {
+  it('valores `undefined` no pai sao ignorados: a chave nem nasce no env do filho', () => {
+    const env = buildWorkerEnv({ PATH: '/usr/bin', TZ: undefined, LC_TIME: undefined }, 't')
+    assert.equal('TZ' in env, false)
+    assert.equal('LC_TIME' in env, false)
+    assert.equal(env['PATH'], '/usr/bin')
+  })
+
+  it('as chaves sao comparadas em MAIUSCULAS: `path` minusculo passa, `admin_pass` minusculo nao', () => {
+    // O JSDoc de buildWorkerEnv e literal: o Windows trata os nomes de
+    // variaveis de forma insensivel a caixa (`SystemRoot` == `SYSTEMROOT`).
+    // Logo a allowlist tem de casar pelo nome em maiusculas — e o que tambem
+    // impede um `admin_pass` minusculo de entrar por um buraco de caixa.
+    const env = buildWorkerEnv(
+      { path: '/usr/bin', home: '/home/dsh', admin_pass: 's3cr3t', lc_time: 'pt_PT.UTF-8' },
+      't',
+    )
+    assert.equal(env['path'], '/usr/bin')
+    assert.equal(env['home'], '/home/dsh')
+    assert.equal(env['admin_pass'], undefined, 'fora da allowlist, recusado em qualquer caixa')
+    assert.equal(env['lc_time'], 'pt_PT.UTF-8', 'o prefixo LC_ casa em minusculas como em maiusculas')
+  })
+
+  it('o bloco LC_ inteiro passa (LC_TIME, LC_MESSAGES, LC_COLLATE)', () => {
+    const env = buildWorkerEnv(
+      { PATH: '/usr/bin', LC_TIME: 'pt_PT.UTF-8', LC_MESSAGES: 'pt_PT.UTF-8', LC_COLLATE: 'C' },
+      't',
+    )
+    assert.equal(env['LC_TIME'], 'pt_PT.UTF-8')
+    assert.equal(env['LC_MESSAGES'], 'pt_PT.UTF-8')
+    assert.equal(env['LC_COLLATE'], 'C')
+  })
+
+  it('as raizes de confianca TLS passam (sem elas o cliente HTTPS do bot falha a validar)', () => {
+    const env = buildWorkerEnv(
+      {
+        PATH: '/usr/bin',
+        SSL_CERT_FILE: '/etc/ssl/certs.pem',
+        SSL_CERT_DIR: '/etc/ssl/certs',
+        REQUESTS_CA_BUNDLE: '/etc/ssl/ca-bundle.pem',
+      },
+      't',
+    )
+    assert.equal(env['SSL_CERT_FILE'], '/etc/ssl/certs.pem')
+    assert.equal(env['SSL_CERT_DIR'], '/etc/ssl/certs')
+    assert.equal(env['REQUESTS_CA_BUNDLE'], '/etc/ssl/ca-bundle.pem')
+  })
+
+  it('a chave do OUTRO provedor herdada do pai NAO passa: o token do filho e so o parametro', () => {
+    // A allowlist nao conhece TELEGRAM_BOT_TOKEN nem DISCORD_BOT_TOKEN. Um pai
+    // que os carregue nao os entrega ao filho: o token do filho e SEMPRE o
+    // parametro, para o tokenVar do provedor ativo — e o token do provedor
+    // INATIVO (a chave que o pai porventura tenha) fica de fora, para o filho
+    // nunca nascer com um token que ninguem lhe pediu.
+    const env = buildWorkerEnv(
+      { PATH: '/usr/bin', TELEGRAM_BOT_TOKEN: 'do-pai', DISCORD_BOT_TOKEN: 'do-pai' },
+      'token-do-bot-discord',
+      'discord',
+    )
+    assert.equal(env['DISCORD_BOT_TOKEN'], 'token-do-bot-discord')
+    assert.equal(env['TELEGRAM_BOT_TOKEN'], undefined, 'a chave do outro provedor herdada e descartada')
+  })
+
+  it('resolverProvedorDoAmbiente aparra espacos: ` discord ` vale discord', () => {
+    assert.equal(resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: ' discord ' }), 'discord')
+  })
+})

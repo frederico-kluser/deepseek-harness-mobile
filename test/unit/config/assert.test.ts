@@ -70,6 +70,17 @@ describe('worker.provider -- fail loud no literal (registro do host)', () => {
   it('ausente continua a ser valido (o default fechado e do schema, nao do assert)', () => {
     assert.doesNotThrow(() => assertValidConfig(makeConfig()))
   })
+
+  it('NAO-string tambem falha alto (um `provider` numerico do YAML nao degrada)', () => {
+    // A checagem e `provider in PROVIDER_ENV` — um numero tambem nao casa e
+    // o arranque recusa, com o nome do provedor na mensagem. Nunca se deixa
+    // um valor de outro tipo passar a PROVIDER_ENV[provider] (TypeError
+    // obscuro, ou pior, o tokenVar do provedor errado).
+    const comNumero = makeConfig()
+    comNumero.worker.provider = 7 as never
+    assert.throws(() => assertValidConfig(comNumero), /provider/u)
+    assert.throws(() => assertValidConfig(comNumero), /7/u)
+  })
 })
 
 describe('validacao do par descodificado de encodedAuthString (achado B-CRITICAL)', () => {

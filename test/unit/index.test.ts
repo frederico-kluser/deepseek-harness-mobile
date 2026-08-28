@@ -273,6 +273,101 @@ describe('ciclo de vida sob ctx.effect', () => {
         globalThis.fetch = fetchOriginal
       }
     })
+
+    it('(d) o GET /__guard-ui/api/telegram emite provider=discord (o painel rotula por provedor)', () => {
+      // Mesmo cenario do teste (c): provider discord com token no secrets.env.
+      // O contrato (d) e por provedor: o corpo do GET /__guard-ui/api/telegram
+      // devolve `provider: 'discord'` — e o que faz o painel trocar os rotulos
+      // do onboarding (mapa + fallback telegram).
+      const casa = join(tmpdir(), 'dsh-guard-discord-' + process.pid + '-' + Math.random().toString(36).slice(2))
+      const dir = join(casa, 'guarded-bot')
+      mkdirSync(dir, { recursive: true })
+      chmodSync(dir, 0o700)
+      writeFileSync(
+        join(dir, 'secrets.env'),
+        'DISCORD_BOT_TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto\n',
+        { mode: 0o600 },
+      )
+      writeFileSync(
+        join(dir, 'state.json'),
+        JSON.stringify({
+          version: 1,
+          desiredState: 'STOPPED',
+          pairing: { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 },
+        }),
+        { mode: 0o600 },
+      )
+      process.env.DSH_HOME = casa
+      let ctx: FakeContext | undefined
+      try {
+        const config = makeConfig()
+        config.worker.token = ''
+        config.worker.provider = 'discord'
+        config.tunnel = { mode: 'quick', ttlMinutes: 60 } // para o surface da UI montar
+        ctx = new FakeContext()
+        apply(ctx.asContext(), config)
+
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true, provider: 'discord' })
+      } finally {
+        for (const disposer of ctx?.effects ?? []) disposer()
+        delete process.env.DSH_HOME
+        rmSync(casa, { recursive: true, force: true })
+      }
+    })
+
+    it('a sonda discord a recusar (401) chega a privacidade como indisponivel — nunca inventa estado', async () => {
+      // A privacidade colapsa QUALQUER ok:false do probe em 'indisponivel'
+      // (src/index.ts, tokenOps.privacidade): nem token-invalido nem o corpo da
+      // API saem para a UI — so o estado que a UI pode representar.
+      const casa = join(tmpdir(), 'dsh-guard-discord-' + process.pid + '-' + Math.random().toString(36).slice(2))
+      const dir = join(casa, 'guarded-bot')
+      mkdirSync(dir, { recursive: true })
+      chmodSync(dir, 0o700)
+      writeFileSync(
+        join(dir, 'secrets.env'),
+        'DISCORD_BOT_TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto\n',
+        { mode: 0o600 },
+      )
+      process.env.DSH_HOME = casa
+      let ctx: FakeContext | undefined
+      const fetchOriginal = globalThis.fetch
+      const pedidos: Array<{ url: string; authorization: string | null }> = []
+      globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+        pedidos.push({
+          url: String(url),
+          authorization: new Headers(init?.headers).get('authorization'),
+        })
+        return new Response(JSON.stringify({ message: '401: Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        })
+      }) as typeof fetch
+      try {
+        const config = makeConfig()
+        config.worker.token = ''
+        config.worker.provider = 'discord'
+        config.tunnel = { mode: 'quick', ttlMinutes: 60 }
+        ctx = new FakeContext()
+        apply(ctx.asContext(), config)
+
+        const rota = ctx.webServer.routes.find((r) => r.path === UI_PATH_PRIVACIDADE)
+        assert.ok(rota !== undefined, `rota da privacidade nao registada: ${UI_PATH_PRIVACIDADE}`)
+        const handler = rota.handler as (req: IncomingMessage, res: FakeResponse) => void
+        const res = new FakeResponse()
+        handler(makeRequest({ url: UI_PATH_PRIVACIDADE, method: 'GET' }), res)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        assert.equal(res.statusCode, 200)
+        assert.deepEqual(JSON.parse(res.body), { ok: false, erro: 'indisponivel' })
+        assert.equal(pedidos.length, 1)
+        assert.equal(pedidos[0]?.url, 'https://discord.com/api/v10/users/@me')
+        assert.equal(pedidos[0]?.authorization, 'Bearer MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto')
+      } finally {
+        for (const disposer of ctx?.effects ?? []) disposer()
+        delete process.env.DSH_HOME
+        rmSync(casa, { recursive: true, force: true })
+        globalThis.fetch = fetchOriginal
+      }
+    })
   })
 
   describe('o resolvedor do token (config OU secrets.env) ligou a UI ao spawn do worker', () => {
