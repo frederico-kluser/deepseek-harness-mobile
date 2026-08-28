@@ -33,6 +33,11 @@ const VOCABULARIO_IPC: readonly IpcIntentName[] = [
   'session.issue',
   'secret.rotate',
   'emergency',
+  // EMENDA ONDA-4-AGENTS-HOST: o dispatcher de agentes (a superficie que os
+  // renderiza e da Onda 5; aqui so o vocabulo entra na SurfaceAction).
+  'agent.dispatch',
+  'agent.status',
+  'agent.cancel',
 ]
 
 const IDENTIDADE = { userKey: 'dono', chatKey: 'grupo' } as const
@@ -47,8 +52,11 @@ const linhaTyped = (linha: ActionRow): ActionRow => linha
 /* ========================================================================== */
 
 describe('SurfaceAction -- o vocabulario fechado do contrato IPC', () => {
-  it('os seis intents do contrato IPC formam a SurfaceAction', () => {
+  it('os NOVE intents do contrato IPC formam a SurfaceAction', () => {
     assert.deepEqual(VOCABULARIO_IPC.toSorted(), [
+      'agent.cancel',
+      'agent.dispatch',
+      'agent.status',
       'emergency',
       'secret.rotate',
       'session.issue',

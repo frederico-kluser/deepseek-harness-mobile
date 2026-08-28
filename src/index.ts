@@ -29,6 +29,16 @@
  *      aborta, mata a arvore processual e cancela o temporizador de reinicio. A
  *      Fiber do Cordis erradica tudo em LIFO.
  *
+ *   4. O DISPATCHER DE AGENTES (EMENDA ONDA-4-AGENTS-HOST)
+ *      O `AgentRegistry` (`src/agents/registry.ts`) vive num `ctx.effect`
+ *      proprio, entre o controlador e o worker: o disposer SINCRONO mata os
+ *      runs ativos em LIFO (fire-and-forget no dispose do harness — a garantia
+ *      LIFO da Fiber nao admite Promise no disposer, Q-2). O dispatch so corre
+ *      com `ctx.subagents` (INJETADO — o nome real do servico do harness) e
+ *      `ctx.agents`/`ctx.skills` (lidos LAZY, nunca injetados: a ausencia
+ *      deles nao pode segurar a Fiber deste plugin — o mesmo perigo do
+ *      `logger` documentado abaixo).
+ *
  * PORQUE E QUE ISTO EXISTE
  *   A discussao oficial #853 ("unauthenticated local/remote code execution via
  *   the dsh web UI control plane", verificada em 0.1.0-rc.6) demonstra que a
@@ -65,6 +75,8 @@ import { IPC_PROTOCOL_VERSION, type IpcIntentMessage, type IpcMessageToWorker } 
 import { createConfirmService } from './control/confirm.ts'
 import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelController } from './control/controller.ts'
 import { criarRespondedorDeNonce, criarRespondedorIpc } from './control/surface-ipc.ts'
+import { createAgentRegistry, DEFAULT_PROVIDER_NAME, type AgentRegistry } from './agents/registry.ts'
+import { resolveAgents } from './config/schema.ts'
 import type { Context, Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
 import { createTunnelProxy, type TunnelProxy } from './tunnel/proxy.ts'
@@ -390,7 +402,7 @@ export const name = PLUGIN_NAME
  * injeccao, que e como todos os pacotes DSH publicados o usam.
  * -----------------------------------------------------------------------------
  */
-export const inject = ['webServer', 'subprocess']
+export const inject = ['webServer', 'subprocess', 'subagents']
 
 /**
  * Ativa o plugin na Fiber corrente.
@@ -514,6 +526,19 @@ export function apply(
       'config.exposure AUSENTE: assume-se a leitura mais fechada -- ' +
         "mode='loopback', autoStart=false, trustEdgeHeaders=false. Nenhum tunel pode subir. " +
         'Declare o eixo `exposure` no cordis.patch.yml para mudar isto.',
+    )
+  }
+
+  const agentsConfig = resolveAgents(config)
+  if (config.agents === undefined) {
+    // A ausencia e lida na direccao FECHADA (`AGENTS_FAIL_CLOSED`) — nenhum
+    // agente disparavel. Ruidoso de proposito, como `exposure` ausente: quem
+    // tentar /agente vai ver "skill nao autorizada" e precisa de saber que a
+    // allowlist esta por declarar.
+    log.warn(
+      'config.agents AUSENTE: assume-se a leitura mais fechada -- skills vazio ' +
+        '(NENHUM agente disparavel) e maxRuns 1. Declare o eixo `agents` no ' +
+        'cordis.patch.yml (agents.skills + agents.maxRuns) para disparar agentes.',
     )
   }
 
@@ -1445,6 +1470,59 @@ export function apply(
     }
   }, 'dsh-guard.controlador')
 
+  /* --- 5b. O DISPATCHER DE AGENTES (EMENDA ONDA-4-AGENTS-HOST) ---------- */
+  /**
+   * O registry de agentes vive num efeito PROPRIO, registado DEPOIS do
+   * controlador e ANTES do worker (a ordem e contrato: o worker morre primeiro
+   * no LIFO — o canal fecha — e so depois os runs sao mortos; e o producer do
+   * worker, que corre depois deste, captura o registry ja existente).
+   *
+   * O disposer e SINCRONO e mata os runs ativos em LIFO (Q-2): o `dispose` do
+   * harness e assincrono e corre fire-and-forget — o abort SINCRONO do sinal e
+   * o que realmente para o turno.
+   */
+  let registryDeAgentes: AgentRegistry | undefined
+
+  /**
+   * A difusao de `agent.report` ao worker: resposta a `agent.status` (via
+   * surface-ipc) e difusao proativa quando um run termina (via registry).
+   * LAZY: o `workerSupervisor` so nasce no efeito seguinte — o mesmo padrao de
+   * `canalNotificacao`. Best-effort: worker em baixo devolve `false` e a
+   * proxima difusao traz o estado completo.
+   */
+  const difundirRelatorioDeAgentes = (): void => {
+    const relatorio = registryDeAgentes?.estado() ?? []
+    workerSupervisor?.send({ v: IPC_PROTOCOL_VERSION, type: 'agent.report', runs: relatorio })
+  }
+
+  ctx.effect((): Disposable => {
+    const registry = createAgentRegistry({
+      // A allowlist e o teto vem da CONFIG (eixo `agents`; ausente = fail-closed).
+      skillsPermitidas: agentsConfig.skills,
+      maxRuns: agentsConfig.maxRuns,
+      // O provedor do harness: 'spawn' (in-process, sessao fresca). O plugin
+      // NAO registra o provedor — isso e composicao do harness
+      // (subagent-spawn-in-process); aqui so se escolhe o nome.
+      providerName: DEFAULT_PROVIDER_NAME,
+      // GETTERS LAZY dos servicos do harness (a doutrina deste ficheiro): o
+      // `subagents` esta injetado, `agents`/`skills` podem aparecer depois.
+      subagents: () => ctx.subagents,
+      agentesDoHarness: () => ctx.agents,
+      skillsDoHarness: () => ctx.skills,
+      audit: { append: (evento) => authStack().audit.append(evento) },
+      log,
+      now: defaultSupervisorDeps.now,
+      enviarRelatorio: difundirRelatorioDeAgentes,
+    })
+    registryDeAgentes = registry
+
+    return (): void => {
+      // SINCRONO: aborta todos os runs vivos em LIFO e marca `cancelled`.
+      registry.dispose()
+      registryDeAgentes = undefined
+    }
+  }, 'dsh-guard.agentes')
+
   /* --- 6. Worker de long-polling sob ciclo de vida atomico ------------- */
   /**
    * Toda a instanciacao do processo do bot vive dentro de `ctx.effect()`.
@@ -1533,6 +1611,10 @@ export function apply(
       },
       notificarDono: difundirNotificacao,
       linkToken: linkStoreAtual,
+      // EMENDA ONDA-4-AGENTS-HOST: o dispatcher e o relatorio (a Onda 5 liga
+      // /agente /agentes /parar-agente a estas intents; o HOST ja despacha).
+      agentes: registryDeAgentes,
+      relatorioDeAgentes: difundirRelatorioDeAgentes,
     }
     const responder = criarRespondedorIpc(depsRespondedor)
     // EMENDA-COSTURA-5: o transporte do nonce (T5.2 fecha o /ligar ponta a

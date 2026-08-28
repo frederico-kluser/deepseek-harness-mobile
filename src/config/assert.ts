@@ -34,7 +34,7 @@ import { statSync } from 'node:fs'
 import type { ExposureConfig, TunnelConfig, TunnelMode } from '../contracts/tunnel.ts'
 import { PLUGIN_NAME } from '../errors.ts'
 import { PROVIDER_ENV } from '../proc/env.ts'
-import { resolveWorkerCwd, type Config, type ControlConfig } from './schema.ts'
+import { resolveWorkerCwd, type AgentsConfig, type Config, type ControlConfig } from './schema.ts'
 
 /**
  * Tecto do TTL do tunel, em minutos. 8 horas.
@@ -280,6 +280,51 @@ export function assertControlConfig(value: unknown, path: string): asserts value
 }
 
 /**
+ * A grammar PUBLICA de nomes de skill do harness (`packages/skill`):
+ * `^[a-z0-9]+(?:-[a-z0-9]+)*$`. Recusada no arranque com o nome da chave:
+ * uma skill que nao pode existir no harness e uma declaracao falsa na
+ * allowlist — a comparacao do dispatch contra ela nunca casaria.
+ */
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+
+/**
+ * Valida o eixo `agents` (EMENDA ONDA-4-AGENTS-HOST). So corre quando a chave
+ * EXISTE — a ausencia e lida por `resolveAgents` como `AGENTS_FAIL_CLOSED`.
+ *
+ * Fail loud, como tudo aqui (Q-3): `skills` tem de ser um array de nomes
+ * kebab-case NAO VAZIOS, e `maxRuns` um inteiro >= 1. Um nome com espacos,
+ * maiusculas ou um `maxRuns: 0` (ou negativo) sao configuracoes que se
+ * revelariam erradas no primeiro despacho — recusadas no load.
+ */
+export function assertAgentsConfig(value: unknown, path: string): asserts value is AgentsConfig {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error(`[${PLUGIN_NAME}] config.${path} tem de ser um objeto.`)
+  }
+  const agents = value as Record<string, unknown>
+
+  assertStringArray(agents['skills'], `${path}.skills`)
+  for (const [indice, skill] of (agents['skills'] as string[]).entries()) {
+    if (!SKILL_NAME.test(skill)) {
+      throw new Error(
+        `[${PLUGIN_NAME}] config.${path}.skills[${String(indice)}] = '${skill}' nao e um nome ` +
+          'de skill valido (kebab-case: minusculas e hifens, ex. ' +
+          "'deep-orchestrator-agent-skill'). Um nome que a grammar do harness " +
+          'rejeita nunca casaria com a allowlist no dispatch.',
+      )
+    }
+  }
+
+  const maxRuns = agents['maxRuns']
+  if (typeof maxRuns !== 'number' || !Number.isInteger(maxRuns) || maxRuns < 1) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.maxRuns tem de ser um inteiro >= 1 ` +
+        `(recebido: ${String(maxRuns)}). Zero ou negativo nao e um teto — e um ` +
+        'despacho que falharia sempre.',
+    )
+  }
+}
+
+/**
  * Exige que um caminho exista E seja um diretorio.
  *
  * PORQUE E VALIDACAO DE ARRANQUE E NAO "problema do runtime": um `worker.cwd`
@@ -429,6 +474,7 @@ export function assertValidConfig(config: Config): void {
   if (config.exposure !== undefined) assertExposureConfig(config.exposure, 'exposure')
   if (config.tunnel !== undefined) assertTunnelConfig(config.tunnel, 'tunnel')
   if (config.control !== undefined) assertControlConfig(config.control, 'control')
+  if (config.agents !== undefined) assertAgentsConfig(config.agents, 'agents')
 
   // Pedir modo tunel sem declarar o tunel e uma configuracao que so se revelaria
   // errada no instante em que alguem carregasse em "ligar" -- e nesse instante

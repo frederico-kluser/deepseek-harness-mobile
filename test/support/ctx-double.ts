@@ -21,6 +21,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 
 import type { Context, Disposable } from '../../src/dsh/adapter.ts'
+import type {
+  HarnessAgentRegistry,
+  HarnessSkillRegistry,
+  HarnessSubagentRuntime,
+} from '../../src/agents/harness.ts'
 import { FakeSubprocessService } from './child-double.ts'
 
 /* ========================================================================== */
@@ -182,6 +187,14 @@ export class FakeContext {
   readonly listeners = new Map<string, AnyListener[]>()
   readonly effects: Disposable[] = []
   readonly effectLabels: Array<string | undefined> = []
+  /**
+   * EMENDA ONDA-4-AGENTS-HOST: os servicos do harness, AUSENTES por omissao
+   * (o registry le-os LAZY e recusa o despacho quando nao estao — fail-closed;
+   * os testes de fiacao em index.test.ts instalam os FALSOS aqui).
+   */
+  subagents: HarnessSubagentRuntime | undefined
+  agents: HarnessAgentRegistry | undefined
+  skills: HarnessSkillRegistry | undefined
 
   constructor(options: { withUpgrade?: boolean } = {}) {
     this.webServer = new FakeWebServer(options)

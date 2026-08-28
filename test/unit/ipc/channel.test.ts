@@ -83,6 +83,10 @@ const INTENCOES: readonly IpcIntentName[] = [
   'session.issue',
   'secret.rotate',
   'emergency',
+  // EMENDA ONDA-4-AGENTS-HOST: o dispatcher de agentes.
+  'agent.dispatch',
+  'agent.status',
+  'agent.cancel',
 ]
 
 const INTENCAO: IpcIntentMessage = {
@@ -183,6 +187,17 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
       { v: 2, type: 'ack', requestId: 'r1', result: 'noop', state: 'READY' },
       { v: 2, type: 'ack', requestId: 'r1', result: 'rejected', state: 'STOPPING', code: 'SHUTDOWN_IN_PROGRESS' },
       ...CODIGOS.map((code): IpcMessageToWorker => ({ v: 2, type: 'error', code, message: `erro ${code}` })),
+      // EMENDA ONDA-4-AGENTS-HOST: agent.report round-tripa fiel.
+      {
+        v: 2,
+        type: 'agent.report',
+        runs: [
+          { id: 'ABCD1234', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: 1_700_000_000_000 },
+          { id: 'EFGH5678', skill: 'surf-plan-agent-skill', status: 'done', startedAt: 1, summary: 'resumo curto' },
+          { id: 'IJKL9012', skill: 'html-explainer-agent-skill', status: 'failed', startedAt: 2 },
+          { id: 'MNOP3456', skill: '3d-exemplo', status: 'cancelled', startedAt: 3 },
+        ],
+      },
     ]
 
     for (const message of todas) {
@@ -192,7 +207,17 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
     }
 
     for (const intent of INTENCOES) {
-      const message: IpcIntentMessage = { ...INTENCAO, intent, nonce: 'n-opaco' }
+      // EMENDA ONDA-4-AGENTS-HOST: cada intent round-tripa com o corpo que o
+      // contrato lhe permite — `agent.dispatch` exige params { skill, prompt },
+      // `agent.cancel` exige params { agentId }, `agent.status` nao tem params.
+      const message: IpcIntentMessage =
+        intent === 'agent.dispatch'
+          ? { ...INTENCAO, intent, nonce: 'n-opaco', params: { skill: 'deep-orchestrator-agent-skill', prompt: 'faz isto' } }
+          : intent === 'agent.cancel'
+            ? { ...INTENCAO, intent, params: { agentId: 'ABCD1234' } }
+            : intent === 'agent.status'
+              ? { ...INTENCAO, intent }
+              : { ...INTENCAO, intent, nonce: 'n-opaco' }
       const verdict = parseIpcLine(serializeIpcMessage(message, 'to-host').trimEnd(), 'to-host')
       assert.deepEqual(verdict.ok ? verdict.message : undefined, message)
     }
@@ -1083,5 +1108,133 @@ describe('nonce.request sem tratador montado: fail-closed e visivel', () => {
       ok: true,
       message,
     })
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA ONDA-4-AGENTS-HOST: o payload `params` e a mensagem `agent.report`   */
+/* ========================================================================== */
+
+describe('o payload `params` das intencoes de agente (presente sse a intent o exige)', () => {
+  it('agent.dispatch SEM params (ou com skill/prompt ausente) e forma-invalida — fail-closed', () => {
+    for (const linha of [
+      '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1"}',
+      '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":{}}',
+      '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":{"prompt":"p"}}',
+      '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":{"skill":"s"}}',
+    ]) {
+      assert.deepEqual(parseIpcLine(linha, 'to-host'), { ok: false, reason: 'forma-invalida' }, linha)
+    }
+  })
+
+  it('agent.dispatch com skill fora da grammar (maiuscula/espaco) e forma-invalida', () => {
+    for (const skill of ['Skill-Com-Maiuscula', 'com espaço', 'com_underscore', '']) {
+      const linha = `{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":${JSON.stringify({ skill, prompt: 'p' })}}`
+      assert.deepEqual(parseIpcLine(linha, 'to-host'), { ok: false, reason: 'forma-invalida' }, skill)
+    }
+  })
+
+  it('agent.cancel sem agentId e forma-invalida; agent.status NAO transporta params', () => {
+    assert.deepEqual(
+      parseIpcLine('{"v":2,"type":"intent","intent":"agent.cancel","requestId":"r","from":"1","chat":"1","params":{}}', 'to-host'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+    // `agent.status` com params: o campo e DESCARTADO pela reconstrucao (o
+    // contrato nao o declara) — a mensagem chega ao consumidor sem ele.
+    const verdict = parseIpcLine(
+      '{"v":2,"type":"intent","intent":"agent.status","requestId":"r","from":"1","chat":"1","params":{"agentId":"x"}}',
+      'to-host',
+    )
+    assert.equal(verdict.ok, true)
+    assert.equal(verdict.ok && Object.hasOwn(verdict.message, 'params'), false)
+  })
+
+  it('os params nao viajam nas intents de TUNEL (campo extra descartado pela reconstrucao)', () => {
+    const verdict = parseIpcLine(
+      '{"v":2,"type":"intent","intent":"emergency","requestId":"r","from":"1","chat":"1","params":{"skill":"x"}}',
+      'to-host',
+    )
+    assert.equal(verdict.ok, true)
+    assert.equal(verdict.ok && Object.hasOwn(verdict.message, 'params'), false)
+  })
+
+  it('a reconstrucao do params NAO transporta campos inventados', () => {
+    const verdict = parseIpcLine(
+      '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","nonce":"n","params":{"skill":"3d-exemplo","prompt":"p","agentId":"falso","extra":true}}',
+      'to-host',
+    )
+    assert.equal(verdict.ok, true)
+    assert.deepEqual(
+      verdict.ok && verdict.message.type === 'intent' ? verdict.message.params : undefined,
+      { skill: '3d-exemplo', prompt: 'p' },
+    )
+  })
+
+  it('o prompt tem teto de transporte (4096): acima, forma-invalida', () => {
+    const acima = 'p'.repeat(4097)
+    const linha = `{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":${JSON.stringify({ skill: 's', prompt: acima })}}`
+    assert.deepEqual(parseIpcLine(linha, 'to-host'), { ok: false, reason: 'forma-invalida' })
+    const noLimite = 'p'.repeat(4096)
+    const ok = `{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":${JSON.stringify({ skill: 's', prompt: noLimite })}}`
+    assert.equal(parseIpcLine(ok, 'to-host').ok, true)
+  })
+})
+
+describe('agent.report (host -> worker)', () => {
+  it('round-tripa a lista completa com os quatro status e o summary opcional', () => {
+    const mensagem = {
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: 'ABCD1234', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: 1_700_000_000_000 },
+      ],
+    } as const
+    assert.deepEqual(parseIpcLine(serializeIpcMessage(mensagem, 'to-worker').trimEnd(), 'to-worker'), {
+      ok: true,
+      message: mensagem,
+    })
+  })
+
+  it('a lista VAZIA e valida (nao ha runs em memoria)', () => {
+    const mensagem = { v: 2, type: 'agent.report', runs: [] } as const
+    assert.deepEqual(parseIpcLine(serializeIpcMessage(mensagem, 'to-worker').trimEnd(), 'to-worker'), {
+      ok: true,
+      message: mensagem,
+    })
+  })
+
+  it('status fora do vocabulario, skill fora da grammar, id vazio, startedAt nao-numerico: forma-invalida', () => {
+    for (const linha of [
+      '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"rodando","startedAt":1}]}',
+      '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"Skill-Maiuscula","status":"done","startedAt":1}]}',
+      '{"v":2,"type":"agent.report","runs":[{"id":"","skill":"s","status":"done","startedAt":1}]}',
+      '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"done","startedAt":"agora"}]}',
+      '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"done","startedAt":1,"summary":"a\\u0007b"}]}',
+      '{"v":2,"type":"agent.report","runs":"nao-e-array"}',
+      '{"v":2,"type":"agent.report","runs":[1]}',
+    ]) {
+      assert.deepEqual(parseIpcLine(linha, 'to-worker'), { ok: false, reason: 'forma-invalida' }, linha)
+    }
+  })
+
+  it('o summary tem teto (512): acima, forma-invalida', () => {
+    const acima = 's'.repeat(513)
+    const linha = `{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"done","startedAt":1,"summary":"${acima}"}]}`
+    assert.deepEqual(parseIpcLine(linha, 'to-worker'), { ok: false, reason: 'forma-invalida' })
+  })
+
+  it('o array tem teto (64 runs): 65 entradas nao cabem numa linha do canal', () => {
+    const runs = Array.from({ length: 64 }, (_, i) => ({ id: `ID${String(i).padStart(6, '0')}`, skill: 's', status: 'running', startedAt: 1 }))
+    assert.equal(parseIpcLine(JSON.stringify({ v: 2, type: 'agent.report', runs }), 'to-worker').ok, true)
+    runs.push({ id: 'EXTRA00', skill: 's', status: 'running', startedAt: 1 })
+    assert.deepEqual(
+      parseIpcLine(JSON.stringify({ v: 2, type: 'agent.report', runs }), 'to-worker'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+  })
+
+  it('NUNCA e legal no sentido errado (to-host): rejeitado por S4', () => {
+    const mensagem = { v: 2, type: 'agent.report', runs: [] } as const
+    assert.throws(() => serializeIpcMessage(mensagem, 'to-host'), IpcChannelError)
   })
 })

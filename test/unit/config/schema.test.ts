@@ -138,9 +138,11 @@ describe('resolveWorkerEntrypoint', () => {
 /* ========================================================================== */
 
 import {
+  AGENTS_FAIL_CLOSED,
   CONFIRMATION_REQUIRED_CONTROL,
   LOOPBACK_ONLY_EXPOSURE,
   mayTrustEdgeClientIp,
+  resolveAgents,
   resolveControl,
   resolveExposure,
   shouldAutoStartTunnel,
@@ -174,6 +176,21 @@ describe('resolveControl', () => {
   it('sem `control`, a confirmacao de duas etapas fica LIGADA', () => {
     assert.deepEqual(resolveControl(makeConfig()), CONFIRMATION_REQUIRED_CONTROL)
     assert.equal(CONFIRMATION_REQUIRED_CONTROL.requireConfirmation, true)
+  })
+})
+
+describe('resolveAgents -- a ausencia le-se na direccao FECHADA (Onda 4)', () => {
+  it('sem `agents`, NENHUM agente e disparavel e o teto e 1', () => {
+    assert.deepEqual(resolveAgents(makeConfig()), AGENTS_FAIL_CLOSED)
+    assert.deepEqual(AGENTS_FAIL_CLOSED, { skills: [], maxRuns: 1 })
+  })
+
+  it('o eixo declarado ganha (a allowlist e o teto sao os do manifesto)', () => {
+    const agents: { skills: string[]; maxRuns: number } = {
+      skills: ['deep-orchestrator-agent-skill'],
+      maxRuns: 3,
+    }
+    assert.deepEqual(resolveAgents(makeConfig({ agents })), agents)
   })
 })
 

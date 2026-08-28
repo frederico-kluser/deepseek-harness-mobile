@@ -147,8 +147,8 @@ describe('FASE B -- barreira instalada DEPOIS de todos os registos', () => {
     // O servidor ja esta a escutar e ja tem todo o despacho montado. E este o
     // cenario que refuta a exigencia de ordem que o codigo antigo avisava.
     apply(ctx.asContext(), makeConfig())
-    // veto + auth-check + barreira + controlador (T5.1) + worker.
-    assert.equal(ctx.effects.length, 5)
+    // veto + auth-check + barreira + controlador (T5.1) + agentes (Onda 4) + worker.
+    assert.equal(ctx.effects.length, 6)
   })
 
   // ONDA 1 (remocao do login): a barreira de credencial vive na superficie do

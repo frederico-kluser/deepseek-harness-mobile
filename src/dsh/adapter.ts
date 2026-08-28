@@ -34,6 +34,11 @@ import type {
 } from '@deepseek-ai/dsh-subprocess'
 
 import { GuardError } from '../errors.ts'
+import type {
+  HarnessAgentRegistry,
+  HarnessSkillRegistry,
+  HarnessSubagentRuntime,
+} from '../agents/harness.ts'
 
 /* ========================================================================== */
 /* Reexportacao dos tipos do host                                             */
@@ -85,6 +90,32 @@ export type BindHost = WebServer['host']
  * ficheiro: `declare module '@deepseek-ai/cordis'` nomeia um pacote do host.
  */
 declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /**
+     * >>> EMENDA ONDA-4-AGENTS-HOST (o dispatcher de agentes). <<<
+     *
+     * Os tres servicos do harness que a Onda 4 consome, no corte estrutural de
+     * `src/agents/harness.ts` (NAO ha mirror em `types/**`: o plugin nao
+     * depende destes pacotes — zero deps novas — e a regra Q-1 so se aplica ao
+     * que esta instalado). Os NOMES sao os reais:
+     *
+     *   - `subagents` — `SubagentRuntime`, registado com `super(ctx,
+     *     'subagents')` (`packages/subagent/subagent/src/index.ts`). E INJETADO
+     *     em `inject` (o unico dos tres que o `apply` exige para ativar);
+     *   - `agents` — `AgentRegistry` (`packages/core/agent/src/index.ts`);
+     *   - `skills` — `SkillRegistry` (`packages/skill/skill/src/index.ts`).
+     *
+     * Os dois ultimos sao lidos LAZY (propriedade no proxy do Context — o
+     * duble em `test/support/ctx-double.ts` espelha a superficie), nunca
+     * injetados: o plugin so precisa deles no instante do despacho, e a
+     * ausencia nao pode segurar a Fiber do plugin (o mesmo perigo do
+     * `logger` documentado no cabecalho de `src/index.ts`).
+     */
+    subagents: HarnessSubagentRuntime
+    agents: HarnessAgentRegistry
+    skills: HarnessSkillRegistry
+  }
+
   interface Events {
     /** @mode waterfall */
     'http/auth-check'(req: IncomingMessage, next: () => Promise<boolean>): Promise<boolean>

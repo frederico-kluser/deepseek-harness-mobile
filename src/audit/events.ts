@@ -227,6 +227,17 @@ export const EVENTO_INTENT_NAO_PAREADO = 'tunel_intent_nao_pareado'
 export const EVENTO_ORFAO = 'tunel_orfao_derrubado'
 
 /**
+ * O DISPATCHER DE AGENTES (EMENDA ONDA-4-AGENTS-HOST) — tres familias novas,
+ * com a MESMA regra dos toggles: sufixo OBRIGATORIO e nao vazio, e o sufixo e
+ * o unico sitio onde viajam a origem (`telegram:<id>`), a skill e o id do run
+ * (o `AuditEvent` nao tem campos para eles e a lista branca de `format.ts`
+ * descarta campos a mais). EMITIDO: `src/agents/registry.ts`.
+ */
+export const EVENTO_AGENTE_DESPACHO = 'agente_despacho'
+export const EVENTO_AGENTE_CANCELAR = 'agente_cancelar'
+export const EVENTO_AGENTE_FIM = 'agente_fim'
+
+/**
  * O TTL expirou e o tunel foi derrubado (controlo a agir, nao erro).
  *
  * Familia com sufixo, reconhecida por PREFIXO (a regra que `log.ts` pede para
@@ -351,6 +362,52 @@ export function comporEventoReset(origem: string): TunelResetEvent['evento'] {
 }
 
 /**
+ * EMENDA ONDA-4-AGENTS-HOST: composicao do nome de despacho de agente com
+ * origem e skill no sufixo — a MESMA disciplina A5 dos toggles. A skill NAO
+ * pode ser vazia (a allowlist so aceita nomes kebab-case nao vazios) e a
+ * origem NAO pode ser vazia (defeito de fiacao, falha alto).
+ */
+export function comporEventoAgenteDespacho(origem: string, skill: string): `agente_despacho:${string}` {
+  if (origem.length === 0 || skill.length === 0) {
+    throw new Error(
+      `[${PLUGIN_NAME}] EVENTO_AGENTE_SEM_ORIGEM: origem e skill do despacho nao podem ser vazias ` +
+      '(esperado `telegram:<id>` e uma skill kebab-case).',
+    )
+  }
+  return `${EVENTO_AGENTE_DESPACHO}:${origem}:${skill}`
+}
+
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: o nome de cancelamento com o id CURTO do run no
+ * sufixo — `agente_cancelar:<origem>:<agentId>`. Mesma disciplina A5.
+ */
+export function comporEventoAgenteCancelar(origem: string, agentId: string): `agente_cancelar:${string}` {
+  if (origem.length === 0 || agentId.length === 0) {
+    throw new Error(
+      `[${PLUGIN_NAME}] EVENTO_AGENTE_SEM_ORIGEM: origem e agentId do cancelamento nao podem ser vazios.`,
+    )
+  }
+  return `${EVENTO_AGENTE_CANCELAR}:${origem}:${agentId}`
+}
+
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: o nome do fim de um run com origem, skill e
+ * status terminal no sufixo — `agente_fim:<origem>:<skill>:<status>`.
+ */
+export function comporEventoAgenteFim(
+  origem: string,
+  skill: string,
+  status: 'done' | 'failed' | 'cancelled',
+): `agente_fim:${string}` {
+  if (origem.length === 0 || skill.length === 0) {
+    throw new Error(
+      `[${PLUGIN_NAME}] EVENTO_AGENTE_SEM_ORIGEM: origem e skill do fim de run nao podem ser vazias.`,
+    )
+  }
+  return `${EVENTO_AGENTE_FIM}:${origem}:${skill}:${status}`
+}
+
+/**
  * Primeira falha de autenticacao da janela de 10 min.
  * >>> PENDENTE (costura): sem emissor hoje — ver `EVENTO_AUTH_FALHA_JANELA`. <<<
  */
@@ -404,6 +461,9 @@ export type AuditEventoNome =
   | `tunel_reset:${string}`
   | `tunel_emergencia:${string}`
   | `tunel_intent_nao_pareado:${string}`
+  | `agente_despacho:${string}`
+  | `agente_cancelar:${string}`
+  | `agente_fim:${string}`
   | typeof EVENTO_ORFAO
   | typeof EVENTO_TTL_EXPIRADO
   | `tunel_ttl_expirado:${number}min:${TtlDetectedBy}`
@@ -514,6 +574,13 @@ export function eventoDoVocabulario(nome: string): boolean {
 
   const sufixoNaoPareado = sufixoDe(nome, EVENTO_INTENT_NAO_PAREADO)
   if (sufixoNaoPareado !== undefined) return nome.length > EVENTO_INTENT_NAO_PAREADO.length + 1
+
+  // EMENDA ONDA-4-AGENTS-HOST: as tres familias do dispatcher de agentes
+  // seguem a MESMA convencao — `<prefixo>:` (sufixo vazio) nao designa ninguem.
+  for (const prefixo of [EVENTO_AGENTE_DESPACHO, EVENTO_AGENTE_CANCELAR, EVENTO_AGENTE_FIM]) {
+    const sufixoAgente = sufixoDe(nome, prefixo)
+    if (sufixoAgente !== undefined) return nome.length > prefixo.length + 1
+  }
 
   for (const base of [EVENTO_MAGIC_SUSPEITO, EVENTO_PAINEL_SEGREDO_RECUSA_ANONIMA, EVENTO_PAINEL_CSRF_RECUSADO]) {
     const sufixoRajada = sufixoDe(nome, base)

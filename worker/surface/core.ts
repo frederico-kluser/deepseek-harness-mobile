@@ -433,12 +433,17 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
     case 'tunnel.status':
     case 'session.issue':
     case 'emergency':
+    case 'agent.dispatch':
+    case 'agent.status':
+    case 'agent.cancel':
     case 'menu':
     case 'ajuda':
     case 'inicio':
     case 'cancel':
       // Nav e leituras nao confirmam accao destrutiva; generico. O `cancel` e
       // navegacao local que nunca gera ack (nao envia intent); cobre o tipo.
+      // EMENDA ONDA-4-AGENTS-HOST: as tres intents de agente caem no generico
+      // ate a Onda 5 (superficie) lhes dar texto proprio.
       return result === 'noop' ? 'Já estava assim.' : 'Pedido aceite.'
   }
 }
@@ -1000,6 +1005,17 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         // girador do clique; o ack re-renderiza o CARTÃO com o estado real.
         await deps.sender.answer(event.answerTarget, { text: 'Verificando…' })
         await comandos.status(event.identity)
+        return
+      case 'agent.dispatch':
+      case 'agent.status':
+      case 'agent.cancel':
+        // EMENDA ONDA-4-AGENTS-HOST: as acoes de agente existem no contrato
+        // IPC mas a SUPERFICIE (os comandos de agente do bot) e da Onda 5 —
+        // nenhum botao as produz nesta onda. Se um evento com estas acoes
+        // chegar (defeito/versao mista), a resposta de protocolo fecha o
+        // girador (TG-027) e NAO se envia intent nenhum: sem surface nao ha
+        // o que confirmar, e inventar um dispatch seria abrir a porta.
+        await deps.sender.answer(event.answerTarget)
         return
       case 'emergency':
         // Card/notify: reducer de exposicao, sem nonce (CTL-024). Toast no card.

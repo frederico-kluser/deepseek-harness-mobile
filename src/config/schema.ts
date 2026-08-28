@@ -58,6 +58,30 @@ export interface ControlConfig {
   readonly requireConfirmation: boolean
 }
 
+/**
+ * Eixo `agents` — o DISPATCHER DE AGENTES (EMENDA ONDA-4-AGENTS-HOST).
+ *
+ * MINIMO, e fechado na direccao certa: quem pode disparar o que e politica de
+ * seguranca, e politica de seguranca nao se inventa (Q-3). A ausencia do eixo
+ * e lida por {@link resolveAgents} como {@link AGENTS_FAIL_CLOSED} — skills
+ * vazio (NENHUM agente disparavel) e maxRuns 1 — nunca como um default que
+ * abre alguma coisa.
+ */
+export interface AgentsConfig {
+  /**
+   * A ALLOWLIST de skills disparaveis (default deny). Vazio = nenhum agente
+   * disparavel — o plugin funciona sem isto, so nao dispara nada. Cada nome
+   * e kebab-case (a grammar PUBLICA do harness: `^[a-z0-9]+(?:-[a-z0-9]+)*$`),
+   * validado no arranque (`assertValidConfig`).
+   */
+  readonly skills: string[]
+  /**
+   * Teto de runs de agente CONCORRENTES. Inteiro >= 1 (validado no arranque).
+   * Acima do teto, `agent.dispatch` e recusado ate um run terminar.
+   */
+  readonly maxRuns: number
+}
+
 /** Forma exata da entrada `config` do `cordis.patch.yml`. */
 export interface Config {
   /**
@@ -124,6 +148,16 @@ export interface Config {
   tunnel?: TunnelConfig
   /** Eixo `control` -- ver {@link ControlConfig}. Minimo por decisao. */
   control?: ControlConfig
+  /**
+   * Eixo `agents` -- ver {@link AgentsConfig}.
+   *
+   * OPCIONAL (a mesma razao de `exposure`/`control`: o `replace` do motor de
+   * patches pode apagar a chave). AUSENTE = a leitura mais fechada
+   * ({@link AGENTS_FAIL_CLOSED}): nenhum agente disparavel. O `warn` ruidoso
+   * do arranque (`src/index.ts`) existe para a ausencia ser uma escolha
+   * visivel, nunca um esquecimento silencioso.
+   */
+  agents?: AgentsConfig
   /** Worker de long-polling executado fora do event loop central. */
   worker: {
     /**
@@ -338,6 +372,22 @@ export const CONFIRMATION_REQUIRED_CONTROL: ControlConfig = { requireConfirmatio
 /** O eixo `control` efetivo. */
 export function resolveControl(config: Config): ControlConfig {
   return config.control ?? CONFIRMATION_REQUIRED_CONTROL
+}
+
+/**
+ * A leitura de `agents` AUSENTE: NENHUM agente disparavel, teto 1.
+ *
+ * NAO E O `?? valor_por_omissao` PROIBIDO POR Q-3 — a mesma distincao de
+ * {@link LOOPBACK_ONLY_EXPOSURE}: a ausencia e preenchida com a RECUSA DE
+ * TUDO. Um `agents` em falta nao pode, por construcao, tornar o sistema mais
+ * aberto do que um `agents` declarado: sem allowlist nao ha dispatch, e sem
+ * dispatch nao ha execucao de codigo no host pelo dono.
+ */
+export const AGENTS_FAIL_CLOSED: AgentsConfig = { skills: [], maxRuns: 1 }
+
+/** O eixo `agents` efetivo. Ver {@link AGENTS_FAIL_CLOSED}. */
+export function resolveAgents(config: Config): AgentsConfig {
+  return config.agents ?? AGENTS_FAIL_CLOSED
 }
 
 /**

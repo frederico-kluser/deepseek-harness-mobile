@@ -145,3 +145,38 @@ describe('o criterio de aceite 1: uma snowflake atravessa os dois codecs sem per
     }
   })
 })
+
+describe('EMENDA ONDA-4-AGENTS-HOST: as intents de agente e o agent.report nos DOIS codecs', () => {
+  it('agent.dispatch com params round-tripa fiel nos dois codecs, byte a byte', () => {
+    const intent = {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'intent',
+      intent: 'agent.dispatch',
+      requestId: '01J0000000000000000000000A',
+      from: '123456789',
+      chat: '-1001234567890',
+      nonce: 'nonce-opaco',
+      params: { skill: 'deep-orchestrator-agent-skill', prompt: 'faz o relatorio' },
+    } as const
+
+    const linhaHost = serializeHost(intent, 'to-host')
+    const linhaWorker = serializeWorker(intent, 'to-host')
+    assert.equal(linhaWorker, linhaHost, 'os dois codecs serializam a mesma linha')
+    assert.deepEqual(parseHost(linhaHost.trimEnd(), 'to-host'), parseWorker(linhaWorker.trimEnd(), 'to-host'))
+  })
+
+  it('agent.report round-tripa fiel nos dois codecs (o worker precisa de conhecer a mensagem)', () => {
+    const report = {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'agent.report',
+      runs: [
+        { id: 'ABCD1234', skill: 'deep-orchestrator-agent-skill', status: 'done', startedAt: 1_700_000_000_000, summary: 'resumo' },
+      ],
+    } as const
+
+    const linhaHost = serializeHost(report, 'to-worker')
+    const linhaWorker = serializeWorker(report, 'to-worker')
+    assert.equal(linhaWorker, linhaHost, 'os dois codecs serializam a mesma linha')
+    assert.deepEqual(parseHost(linhaHost.trimEnd(), 'to-worker'), parseWorker(linhaWorker.trimEnd(), 'to-worker'))
+  })
+})

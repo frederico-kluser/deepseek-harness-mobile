@@ -83,4 +83,4 @@ export function install(
  * depois o controlador (que derruba o tunel), e so depois a barreira e
  * levantada. O `controlador` entrou na Onda 5 (T5.1, `src/index.ts`).
  */
-export const EFFECT = { veto: 0, authCheck: 1, barreira: 2, controlador: 3, worker: 4 } as const
+export const EFFECT = { veto: 0, authCheck: 1, barreira: 2, controlador: 3, agentes: 4, worker: 5 } as const

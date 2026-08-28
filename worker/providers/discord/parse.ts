@@ -78,6 +78,11 @@ export const INCREASES_EXPOSURE: Readonly<Record<SurfaceAction, boolean>> = Obje
   'session.issue': true,
   'secret.rotate': true,
   emergency: false,
+  // EMENDA ONDA-4-AGENTS-HOST: dispatch executa codigo no host (aumenta);
+  // status (leitura pura) e cancel (reduz) nao.
+  'agent.dispatch': true,
+  'agent.status': false,
+  'agent.cancel': false,
   // NAVEGACAO LOCAL (Onda 3/5): o worker resolve-a; nunca chega ao host.
   menu: false,
   ajuda: false,

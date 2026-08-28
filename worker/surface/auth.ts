@@ -765,6 +765,11 @@ export const AUMENTA_EXPOSICAO: Readonly<Record<SurfaceAction, boolean>> = Objec
   'session.issue': true,
   'secret.rotate': true,
   emergency: false,
+  // EMENDA ONDA-4-AGENTS-HOST: o dispatch EXECUTA CODIGO no host (aumenta
+  // exposicao -> exige nonce, como tunnel.up); status e cancel reduzem/leem.
+  'agent.dispatch': true,
+  'agent.status': false,
+  'agent.cancel': false,
   // NAVEGACAO LOCAL (Onda 3/5): nunca aumenta exposicao; o nucleo resolve em local.
   menu: false,
   ajuda: false,

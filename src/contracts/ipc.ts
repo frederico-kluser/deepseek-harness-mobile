@@ -23,6 +23,18 @@
  * update); todo o resto do pipeline e string — o prerequisito para provedores
  * com ids nao-numericos (snowflakes do Discord estouram Number.MAX_SAFE_INTEGER).
  *
+ * EMENDA ONDA-4-AGENTS-HOST (onda 4 — o DISPATCHER DE AGENTES no HOST): o
+ * vocabulario de intents ganha TRES membros — `agent.dispatch`, `agent.status`
+ * e `agent.cancel` — e o `IpcIntentMessage` ganha o campo ADITIVO `params`
+ * (presente sse a intent o exige; ver {@link IpcAgentIntentParams}). A NOVA
+ * mensagem host -> worker `agent.report` (a lista de runs) fecha o ciclo:
+ * resposta a `agent.status` E difusao proativa quando um run termina. Nenhum
+ * segredo viaja nestes campos (S3): skill, prompt e agentId sao dados do dono,
+ * nunca credenciais — e o request do agente NUNCA recebe token nenhum (o agente
+ * roda com as permissoes do harness, nunca com as credenciais deste plugin).
+ * A superficie de comandos do bot (Onda 5) e dona de RENDERIZAR estas intents;
+ * este contrato congela so o transporte.
+ *
  * ===========================================================================
  * PORQUE O BOT E UM SUBPROCESSO, E NAO CODIGO DENTRO DA FIBER
  * ===========================================================================
@@ -293,6 +305,17 @@ export type IpcIntentName =
   | 'session.issue'
   | 'secret.rotate'
   | 'emergency'
+  // EMENDA ONDA-4-AGENTS-HOST: o dispatcher de agentes (host) — ver a semantica
+  // de controlo de cada uma em `src/agents/registry.ts`:
+  //   - `agent.dispatch` — dispara UM agente com a skill escolhida. AUMENTA
+  //                        exposicao (execucao de codigo no host) -> EXIGE
+  //                        nonce (2 etapas), como `tunnel.up`/`secret.rotate`.
+  //   - `agent.status`   — lista os runs (leitura pura; NAO exige nonce).
+  //   - `agent.cancel`   — cancela UM run pelo `agentId`. REDUZ -> dispensa
+  //                        nonce, como `tunnel.down`/`emergency` (CTL-024).
+  | 'agent.dispatch'
+  | 'agent.status'
+  | 'agent.cancel'
 
 /**
  * Intencao vinda do worker.
@@ -319,6 +342,37 @@ export interface IpcIntentMessage extends IpcEnvelope {
   readonly chat: string
   /** Presente nas intencoes que aumentam exposicao. Opaco para o worker. */
   readonly nonce?: string | undefined
+  /**
+   * EMENDA ONDA-4-AGENTS-HOST: o payload ADITIVO das intencoes de agente.
+   *
+   * PRESENTE SSE A INTENT O EXIGE — a regra e por intent e esta no codec
+   * (`buildIntent` de `src/ipc/channel.ts` e `worker/ipc.ts`):
+   *
+   *   - `agent.dispatch` EXIGE `{ skill, prompt }`;
+   *   - `agent.cancel`   EXIGE `{ agentId }`;
+   *   - `agent.status`   NAO transporta params (leitura pura);
+   *   - qualquer outra intent NAO transporta params.
+   *
+   * O codec RECONSTROI o objeto com so os campos da intent — um campo a mais
+   * na linha nao chega ao consumidor (a mesma regra do envelope). S3: nada
+   * disto e segredo — skill/prompt/agentId sao dados do dono.
+   */
+  readonly params?: IpcAgentIntentParams | undefined
+}
+
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: a forma do payload de agente (ver o campo
+ * `params` de {@link IpcIntentMessage}). Todos os campos sao opcionais POR
+ * FORMA e obrigatorios POR INTENT — quem impoe a presenca e o codec, intent a
+ * intent, nunca este tipo.
+ */
+export interface IpcAgentIntentParams {
+  /** A skill a disparar, em kebab-case (a grammar de nomes do harness). */
+  readonly skill?: string | undefined
+  /** A instrucao do dono para o agente (texto curto; teto de transporte). */
+  readonly prompt?: string | undefined
+  /** O id CURTO do run a cancelar — o mesmo que `agent.report` lista. */
+  readonly agentId?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +500,51 @@ export interface IpcPairingSuccessMessage extends IpcEnvelope {
   /** Epoch ms do pareamento (o `pairedAt` gravado pelo worker). */
   readonly pairedAt: number
 }
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: o estado de um run de agente, efemero (memoria).
+ *
+ * O vocabulario e FECHADO por desenho: `cancelled` e o resultado de um
+ * cancelamento explicito (`agent.cancel` ou o disposer do plugin); `aborted`
+ * do harness (o modelo parou) cai em `failed`. O worker (Onda 5) renderiza
+ * texto POR STATUS — acrescentar um e mudanca de contrato.
+ */
+export type AgentRunStatus = 'running' | 'done' | 'failed' | 'cancelled'
+
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: UMA linha da lista de runs.
+ *
+ * `summary` e o RESUMO CURTO da resposta do agente (1 linha). E texto do
+ * MODELO — nao segredo (S3): o request do agente nunca recebe token nem
+ * credencial deste plugin, logo o que ele devolve nao pode conter segredo
+ * nosso. O teto de transporte e do codec; o host corta antes de emitir.
+ */
+export interface AgentRunReport {
+  /** Id CURTO (8 caracteres da parte aleatoria do ULID do run). */
+  readonly id: string
+  /** A skill disparada (kebab-case). */
+  readonly skill: string
+  readonly status: AgentRunStatus
+  /** Epoch ms do inicio do run. */
+  readonly startedAt: number
+  /** Resumo curto do resultado, presente sse o run terminou e ha texto. */
+  readonly summary?: string | undefined
+}
+
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: a lista de runs, host -> worker.
+ *
+ * Enviada em DUAS ocasioes: como resposta a `agent.status` (o worker pediu a
+ * lista) e como DIFUSAO quando um run termina (notificacao proativa — o mesmo
+ * padrao de `state`: o host e a fonte unica da verdade, o bot e projeccao).
+ * Best-effort por construcao: o worker em baixo perde a difusao, a proxima
+ * vem no proximo `agent.status`.
+ */
+export interface IpcAgentReportMessage extends IpcEnvelope {
+  readonly type: 'agent.report'
+  /** A lista COMPLETA dos runs vivos + os terminais ainda em memoria. */
+  readonly runs: readonly AgentRunReport[]
+}
+
 // ---------------------------------------------------------------------------
 // A uniao
 // ---------------------------------------------------------------------------
@@ -462,6 +561,7 @@ export type IpcMessageToWorker =
   | IpcPairingChallengeMessage
   | IpcNonceIssuedMessage
   | IpcPairingOwnerMessage
+  | IpcAgentReportMessage
 
 /** worker -> host. A EMENDA-COSTURA-5 acrescentou `nonce.request`. */
 export type IpcMessageFromWorker =

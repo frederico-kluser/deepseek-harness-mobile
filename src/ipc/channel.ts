@@ -50,6 +50,8 @@ import type { Readable, Writable } from 'node:stream'
 
 import {
   IPC_PROTOCOL_VERSION,
+  type AgentRunReport,
+  type AgentRunStatus,
   type ControlAction,
   type IpcAckMessage,
   type IpcErrorCode,
@@ -58,6 +60,7 @@ import {
   type IpcIntentName,
   type IpcMessage,
   type IpcMessageToWorker,
+  type IpcAgentIntentParams,
   type IpcNonceIssuedMessage,
   type IpcNonceRequestMessage,
   type IpcNotifyMessage,
@@ -190,6 +193,10 @@ const INTENTS: readonly IpcIntentName[] = [
   'session.issue',
   'secret.rotate',
   'emergency',
+  // EMENDA ONDA-4-AGENTS-HOST: o dispatcher de agentes (ver `../contracts/ipc.ts`).
+  'agent.dispatch',
+  'agent.status',
+  'agent.cancel',
 ]
 
 /**
@@ -209,7 +216,7 @@ const ACTIONS: readonly ControlAction[] = ['start', 'stop', 'reset']
  */
 const LEGAL_TYPES: Readonly<Record<IpcDirection, readonly string[]>> = {
   'to-host': ['intent', 'nonce.request', 'pairing.success'],
-  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge', 'nonce.issued', 'pairing.owner'],
+  'to-worker': ['state', 'ack', 'error', 'notify', 'pairing.challenge', 'nonce.issued', 'pairing.owner', 'agent.report'],
 }
 
 /** Sentido em que a linha viaja. `to-host` = o que o worker pode enviar. */
@@ -301,6 +308,16 @@ function isSha256Hex(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: um nome de skill — a grammar PUBLICA do harness
+ * (`packages/skill`, `^[a-z0-9]+(?:-[a-z0-9]+)*$`). O codec exige a grammar no
+ * TRANSPORTE para a comparacao contra a allowlist (config `agents.skills`)
+ * ser bem-definida: uma skill que nao pode existir no harness nao viaja.
+ */
+function isSkillName(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+}
+
 /* ========================================================================== */
 /* Validacao / reconstrucao                                                   */
 /* ========================================================================== */
@@ -347,6 +364,7 @@ const HANDLERS: Readonly<Record<string, IpcTypeHandler>> = {
   'nonce.issued': buildNonceIssued,
   'pairing.owner': buildPairingOwner,
   'pairing.success': buildPairingSuccess,
+  'agent.report': buildAgentReport,
 }
 
 /**
@@ -383,7 +401,7 @@ export function validateIpcMessage(value: unknown, direction: IpcDirection): Ipc
 }
 
 function buildIntent(bag: Record<string, unknown>): IpcParseResult {
-  const { intent, requestId, from, chat, nonce } = bag
+  const { intent, requestId, from, chat, nonce, params } = bag
   if (!isMember(INTENTS, intent)) return fail('forma-invalida')
   if (!isCleanText(requestId, MAX_ID_CHARS)) return fail('forma-invalida')
   if (!isId(from) || !isId(chat)) return fail('forma-invalida')
@@ -391,6 +409,9 @@ function buildIntent(bag: Record<string, unknown>): IpcParseResult {
 
   // S5: o `nonce` viaja OPACO. Nada aqui o interpreta -- quem o emite e consome
   // e o HOST (`src/control/confirm.ts`), e o worker so o transporta.
+  const paramsValidos = paramsAgentes(intent, params)
+  if (paramsValidos === null) return fail('forma-invalida')
+
   const message: IpcIntentMessage = {
     v: IPC_PROTOCOL_VERSION,
     type: 'intent',
@@ -399,8 +420,48 @@ function buildIntent(bag: Record<string, unknown>): IpcParseResult {
     from,
     chat,
     ...(nonce === undefined ? {} : { nonce }),
+    ...(paramsValidos === undefined ? {} : { params: paramsValidos }),
   }
   return { ok: true, message }
+}
+
+/**
+ * EMENDA ONDA-4-AGENTS-HOST: valida e RECONSTROI o payload `params` das
+ * intencoes de agente. PRESENTE SSE A INTENT O EXIGE (o contrato):
+ *
+ *   - `agent.dispatch` EXIGE `{ skill, prompt }` — sem eles, `forma-invalida`
+ *     (um dispatch sem skill nao designa nada; fail-closed);
+ *   - `agent.cancel` EXIGE `{ agentId }`;
+ *   - `agent.status` NAO transporta params (e qualquer outra intent tambem
+ *     nao) — o que vier e DESCARTADO pela reconstrucao (o mesmo principio do
+ *     envelope: um campo a mais na linha nao chega ao consumidor).
+ *
+ * Devolve o objeto RECONSTRUIDO, `undefined` (sem params) ou `null` (invalido).
+ */
+function paramsAgentes(
+  intent: IpcIntentName,
+  params: unknown,
+): IpcAgentIntentParams | undefined | null {
+  const exige = intent === 'agent.dispatch' || intent === 'agent.cancel'
+  if (params === undefined) return exige ? null : undefined
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return null
+  const bag = params as Record<string, unknown>
+
+  if (intent === 'agent.dispatch') {
+    const skill = bag['skill']
+    const prompt = bag['prompt']
+    if (!isSkillName(skill)) return null
+    if (!isCleanText(prompt, MAX_MESSAGE_CHARS)) return null
+    return { skill, prompt }
+  }
+  if (intent === 'agent.cancel') {
+    const agentId = bag['agentId']
+    if (!isCleanText(agentId, MAX_ID_CHARS)) return null
+    return { agentId }
+  }
+  // `agent.status` e todas as intents de tunel: params presentes sao lixo
+  // descartado — o contrato nao os declara e a reconstrucao nao os transporta.
+  return undefined
 }
 
 function buildState(bag: Record<string, unknown>): IpcParseResult {
@@ -598,6 +659,60 @@ function buildPairingSuccess(bag: Record<string, unknown>): IpcParseResult {
     pairedAt,
   }
   return { ok: true, message }
+}
+
+/* ========================================================================== */
+/* EMENDA ONDA-4-AGENTS-HOST: `agent.report` (host -> worker)                  */
+/* ========================================================================== */
+
+/** Teto de runs numa unica mensagem: acima do historico do registry (32). */
+const MAX_RUNS_PER_REPORT = 64
+/** Teto do resumo de UM run (1 linha para o Telegram; o host corta antes). */
+const MAX_RUN_SUMMARY_CHARS = 512
+
+const RUN_STATUSES: readonly AgentRunStatus[] = ['running', 'done', 'failed', 'cancelled']
+
+/**
+ * Valida e RECONSTROI uma linha `AgentRunReport`. NUNCA lanca (S4).
+ */
+function buildAgentRun(bag: Record<string, unknown>): AgentRunReport | null {
+  const { id, skill, status, startedAt, summary } = bag
+  if (!isCleanText(id, MAX_ID_CHARS)) return null
+  if (!isSkillName(skill)) return null
+  if (!isMember(RUN_STATUSES, status)) return null
+  if (!isFiniteNumber(startedAt)) return null
+  if (summary !== undefined && !isDisplayText(summary, MAX_RUN_SUMMARY_CHARS)) return null
+
+  return {
+    id,
+    skill,
+    status,
+    startedAt,
+    ...(summary === undefined ? {} : { summary }),
+  }
+}
+
+/**
+ * `agent.report` (host -> worker): a lista COMPLETA de runs (resposta a
+ * `agent.status` e difusao proativa no fim de cada run). O array tem teto — uma
+ * lista sem fim nao cabe numa linha de 64 KiB (S1). S3: `summary` e texto do
+ * MODELO, nunca segredo deste plugin.
+ */
+function buildAgentReport(bag: Record<string, unknown>): IpcParseResult {
+  const { runs } = bag
+  if (!Array.isArray(runs) || runs.length > MAX_RUNS_PER_REPORT) return fail('forma-invalida')
+
+  const reconstruidos: AgentRunReport[] = []
+  for (const entrada of runs) {
+    if (typeof entrada !== 'object' || entrada === null || Array.isArray(entrada)) {
+      return fail('forma-invalida')
+    }
+    const run = buildAgentRun(entrada as Record<string, unknown>)
+    if (run === null) return fail('forma-invalida')
+    reconstruidos.push(run)
+  }
+
+  return { ok: true, message: { v: IPC_PROTOCOL_VERSION, type: 'agent.report', runs: reconstruidos } }
 }
 
 /* ========================================================================== */

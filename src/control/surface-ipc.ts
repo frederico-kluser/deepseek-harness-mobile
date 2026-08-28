@@ -40,6 +40,7 @@ import type { ControlAction, ControlIntent, ControlRecusa, ControlResultado } fr
 import { comporTextoLinkMagico } from '../audit/notify.ts'
 import type { ConfirmServiceComVeredito } from './confirm.ts'
 import type { LinkTokenSurface } from '../contracts/link-token.ts'
+import type { AgentRegistry } from '../agents/registry.ts'
 import type { MagicStore } from '../session/magic.ts'
 import type {
   IpcAckMessage,
@@ -114,6 +115,19 @@ export interface RespondedorIpcDeps {
   readonly secretos?: Pick<SecretStore, 'rotate'> | undefined
   /** Envia um `notify` ao dono (o link magico / a instrucao local da rotacao). */
   readonly notificarDono?: ((texto: string) => void) | undefined
+  /**
+   * EMENDA ONDA-4-AGENTS-HOST: o REGISTRY DE AGENTES (o dispatcher da Onda 4).
+   * AUSENTE, as tres intents `agent.*` respondem `error INTERNAL` — fail-closed
+   * (o mesmo padrao de `session.issue`/`secret.rotate` sem fiacao).
+   */
+  readonly agentes?: AgentRegistry | undefined
+  /**
+   * Difunde `agent.report` ao worker (resposta a `agent.status`). Composto
+   * pela FIACAO (`src/index.ts`): lê `agentes.estado()`, monta a mensagem e
+   * envia pelo canal. AUSENTE: `agent.status` responde INTERNAL (sem relatorio
+   * nao ha resposta util a um pedido de lista).
+   */
+  readonly relatorioDeAgentes?: (() => void) | undefined
 }
 
 /** O tratador que a fiacao entrega a `createWorkerSupervisor({ onIntent })`. */
@@ -325,6 +339,82 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
         // valor nem a URL com `?key=`.
         deps.notificarDono(comporTextoLinkMagico(deps.agora(), url, emitido.token, emitido.expiraEm))
         return ack(intent, 'accepted', estadoAtual())
+      }
+      case 'agent.dispatch': {
+        // EMENDA ONDA-4-AGENTS-HOST: /agente. AUMENTA exposicao (execucao de
+        // codigo no host) -> EXIGE nonce, consumido AQUI no host (S5) — o
+        // worker pede-o por `nonce.request` com a acao 'reset' (a MESMA ponte
+        // do /rotacionar: o vocabulario de `ControlAction` e fechado no PREP 5
+        // e nao se toca). Sem agentes fiado, fail-closed INTERNAL.
+        if (deps.agentes === undefined || deps.confirm === undefined) {
+          log.warn(`intencao 'agent.dispatch' sem registry/confirm fiados; respondida INTERNAL (fail-closed).`)
+          return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        }
+        const veredito = deps.confirm.consumirComVeredito(intent.nonce ?? '', 'reset')
+        if (veredito !== 'ok') {
+          // CTL-021/022: nonce desconhecido/consumido ou expirado. A SKILL nao
+          // chega a ser consultada — sem confirmacao nao ha dispatch (o nonce
+          // autoriza; a allowlist defende).
+          return { ...ack(intent, 'rejected', estadoAtual()), code: 'NONCE_INVALID' }
+        }
+        const skill = intent.params?.skill
+        const prompt = intent.params?.prompt
+        if (skill === undefined || prompt === undefined) {
+          // Defesa em profundidade: o codec ja recusou esta forma (a intent
+          // sem params nao passa do canal); se chegou aqui, e defeito nosso.
+          return erro(intent, 'INTERNAL', 'Nao foi possivel processar o pedido. Tente novamente.')
+        }
+        const decidido = deps.agentes.despachar({
+          skill,
+          prompt,
+          origem: `telegram:${intent.from}`,
+        })
+        if (!decidido.ok) {
+          // RECUSA DE POLITICA (allowlist/teto/harness) — um `error` com a
+          // mensagem accionavel, que o worker mostra ao dono (o vocabulario de
+          // codigos e fechado e nenhum codigo diz "skill nao autorizada").
+          const mensagem =
+            decidido.motivo === 'skill-nao-permitida'
+              ? `A skill "${skill}" nao esta autorizada neste plugin (config agents.skills).`
+              : decidido.motivo === 'teto-atingido'
+                ? 'Ja ha agentes a correr ate o limite (config agents.maxRuns). Espera um terminar ou cancela um.'
+                : 'O harness nao esta disponivel para disparar agentes.'
+          return erro(intent, 'INTERNAL', mensagem)
+        }
+        return ack(intent, 'accepted', estadoAtual())
+      }
+      case 'agent.status': {
+        // EMENDA ONDA-4-AGENTS-HOST: /agentes. Leitura pura, sem nonce. A
+        // RESPOSTA e a difusao `agent.report` (a lista) + o ack — o mesmo
+        // padrao do `tunnel.status` (o estado completo vem pela difusao).
+        if (deps.agentes === undefined || deps.relatorioDeAgentes === undefined) {
+          log.warn(`intencao 'agent.status' sem registry fiado; respondida INTERNAL (fail-closed).`)
+          return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        }
+        try {
+          deps.relatorioDeAgentes()
+        } catch (error) {
+          log.error(
+            `falha ao difundir o relatorio de agentes: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+        return ack(intent, 'noop', estadoAtual())
+      }
+      case 'agent.cancel': {
+        // EMENDA ONDA-4-AGENTS-HOST: /parar-agente. REDUZ (cancela execucao)
+        // -> dispensa nonce (CTL-024: em panico, o botao funciona de primeira).
+        // Id desconhecido = noop idempotente (o run ja nao existe ou ja
+        // terminou — nao ha o que cancelar).
+        if (deps.agentes === undefined) {
+          log.warn(`intencao 'agent.cancel' sem registry fiado; respondida INTERNAL (fail-closed).`)
+          return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        }
+        const agentId = intent.params?.agentId
+        if (agentId === undefined) {
+          return erro(intent, 'INTERNAL', 'Nao foi possivel processar o pedido. Tente novamente.')
+        }
+        const cancelado = deps.agentes.cancelar(agentId, `telegram:${intent.from}`)
+        return ack(intent, cancelado ? 'accepted' : 'noop', estadoAtual())
       }
       case 'secret.rotate': {
         // Item 5 (costura): /rotacionar regenera o segredo e invalida as

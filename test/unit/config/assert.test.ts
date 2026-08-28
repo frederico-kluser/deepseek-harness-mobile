@@ -376,3 +376,55 @@ describe('eixo `control` -- minimo, e o PREP 5 e dono da expansao', () => {
     )
   })
 })
+
+/* ========================================================================== */
+/* O eixo `agents` (EMENDA ONDA-4-AGENTS-HOST) -- fail loud no load            */
+/* ========================================================================== */
+
+describe('o eixo agents -- allowlist e teto do dispatcher (Onda 4)', () => {
+  it('AUSENTE e valido: a leitura fail-closed e do schema (resolveAgents), nao do assert', () => {
+    assert.doesNotThrow(() => assertValidConfig(makeConfig()))
+  })
+
+  it('skills tem de ser um array de strings kebab-case; nomes invalidos RECUSAM no load', () => {
+    for (const skills of [
+      ['Skill-Com-Maiuscula'],
+      ['com espaço'],
+      ['com_underscore'],
+      ['3comecando-com-digito-e-ok', 'termina-com-hifen-'],
+      [''],
+    ]) {
+      assert.throws(
+        () => assertValidConfig(makeConfig({ agents: { skills, maxRuns: 1 } })),
+        /agents\.skills/u,
+        skills.join(','),
+      )
+    }
+    // A grammar do harness: minusculas e hifens, nunca vazio.
+    assert.doesNotThrow(() =>
+      assertValidConfig(makeConfig({ agents: { skills: ['deep-orchestrator-agent-skill', '3d-exemplo'], maxRuns: 1 } })),
+    )
+  })
+
+  it('maxRuns tem de ser um inteiro >= 1: 0, negativo, fracionario e string RECUSAM', () => {
+    for (const maxRuns of [0, -1, 1.5, '2', null]) {
+      assert.throws(
+        () =>
+          assertValidConfig(
+            makeConfig({ agents: { skills: [], maxRuns: maxRuns as never } }),
+          ),
+        /agents\.maxRuns/u,
+        String(maxRuns),
+      )
+    }
+    assert.doesNotThrow(() => assertValidConfig(makeConfig({ agents: { skills: [], maxRuns: 1 } })))
+    assert.doesNotThrow(() => assertValidConfig(makeConfig({ agents: { skills: [], maxRuns: 8 } })))
+  })
+
+  it('`agents` NAO-array e NAO-objeto recusa com a mensagem do caminho', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ agents: 'sim' as never })),
+      /config\.agents/u,
+    )
+  })
+})

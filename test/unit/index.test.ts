@@ -29,13 +29,18 @@ import {
 import { EFFECT, flush, install, makeConfig } from '../support/fixtures.ts'
 import { defaultOrphanSweepDeps, type OrphanSweepDeps } from '../../src/tunnel/pidfile.ts'
 import { createStateStore, type StateStoreHandle } from '../../src/state/store.ts'
+import type { FakeSubprocessHandle } from '../support/child-double.ts'
 
 describe('manifesto do plugin', () => {
   it('expoe o nome e as dependencias injetadas exigidas pelo contrato', () => {
     assert.equal(name, 'dsh-guard-messenger')
     // `webServer` (e nao `httpServer`): medido contra as 9 versoes publicadas --
     // `httpServer` so existiu na linha morta 0.0.1-rc.1/rc.2.
-    assert.deepEqual(inject, ['webServer', 'subprocess'])
+    // EMENDA ONDA-4-AGENTS-HOST: `subagents` entrou — o nome REAL do servico
+    // do harness (`SubagentRuntime`, `super(ctx, 'subagents')`). `agents` e
+    // `skills` ficam de FORA de proposito (lidos lazy no despacho): injeta-los
+    // prenderia a Fiber deste plugin a servicos que so o despacho precisa.
+    assert.deepEqual(inject, ['webServer', 'subprocess', 'subagents'])
   })
 
   it('NAO injeta `logger`: injeta-lo deixa a Fiber PENDING e apply() nunca corre', () => {
@@ -53,9 +58,14 @@ describe('manifesto do plugin', () => {
   it('cada nome injetado corresponde a um servico que ESTENDE Service', () => {
     // O espelho verificado por CONTRACT-* diz quais sao: `WebServer extends
     // Service` e `SubprocessRuntime extends Service`. `LoggerService` nao.
+    // EMENDA ONDA-4-AGENTS-HOST: `subagents` NAO tem espelho (o plugin nao
+    // depende do pacote — zero deps novas); a fonte e o harness, consultado
+    // em /Volumes/Ext2TB/Projects/deepseek-harness/packages/subagent/
+    // (`SubagentRuntime extends Service`, registado com 'subagents').
     const declaracoes: Record<string, string> = {
       webServer: 'types/dsh-host-webserver/index.d.ts',
       subprocess: 'types/dsh-subprocess/index.d.ts',
+      subagents: 'harness: packages/subagent/subagent/src/index.ts (SubagentRuntime extends Service)',
     }
     for (const nome of inject) {
       assert.notEqual(declaracoes[nome], undefined, `'${nome}' nao e um servico injetavel conhecido`)
@@ -64,15 +74,23 @@ describe('manifesto do plugin', () => {
 })
 
 describe('ciclo de vida sob ctx.effect', () => {
-  it('regista cinco efeitos, etiquetados, e todos devolvem disposers SINCRONOS', () => {
+  it('regista seis efeitos, etiquetados, e todos devolvem disposers SINCRONOS', () => {
     const { ctx } = install()
 
-    assert.equal(ctx.effects.length, 5, 'veto + auth-check + barreira + controlador + worker')
+    assert.equal(
+      ctx.effects.length,
+      6,
+      'veto + auth-check + barreira + controlador + agentes + worker',
+    )
     assert.deepEqual(ctx.effectLabels, [
       'dsh-guard.veto-de-permissao',
       'dsh-guard.auth-check',
       'dsh-guard.barreira',
       'dsh-guard.controlador',
+      // EMENDA ONDA-4-AGENTS-HOST: o dispatcher de agentes, entre o controlador
+      // e o worker (o worker morre primeiro no LIFO; o producer do worker
+      // captura o registry ja existente).
+      'dsh-guard.agentes',
       'dsh-guard.worker',
     ])
 
@@ -89,11 +107,13 @@ describe('ciclo de vida sob ctx.effect', () => {
 
   it('a ordem dos efeitos poe o worker DEPOIS do controlador e da barreira (LIFO ao descarregar)', () => {
     // Os disposers correm em ordem inversa: o worker morre primeiro, depois o
-    // controlador (que derruba o tunel), e so depois a barreira e levantada.
-    // Ao contrario, haveria uma janela em que o plano de controlo responde sem
-    // credencial com o worker ainda vivo.
+    // registry de agentes (os runs sao mortos), depois o controlador (que
+    // derruba o tunel), e so depois a barreira e levantada. Ao contrario,
+    // haveria uma janela em que o plano de controlo responde sem credencial
+    // com o worker ainda vivo.
     assert.equal(EFFECT.barreira < EFFECT.controlador, true)
-    assert.equal(EFFECT.controlador < EFFECT.worker, true)
+    assert.equal(EFFECT.controlador < EFFECT.agentes, true)
+    assert.equal(EFFECT.agentes < EFFECT.worker, true)
   })
 
   it('em modo loopback o efeito do controlador e um disposer sincrono e inerte', () => {
@@ -123,14 +143,14 @@ describe('ciclo de vida sob ctx.effect', () => {
 
   it('token vazio/ausente = telegram nao configurado: sem worker, mas o efeito existe', () => {
     // Contrato INSTALL.md Passo 2/4: o portao HTTP sobe sem o bot. A validacao
-    // aceita o token vazio, o efeito do worker continua registado (5 efeitos /
+    // aceita o token vazio, o efeito do worker continua registado (6 efeitos /
     // ordem LIFO inalterados) mas NAO spawna supervisor nem subprocesso.
     const config = makeConfig()
     config.worker.token = ''
     const ctx = new FakeContext()
     apply(ctx.asContext(), config)
 
-    assert.equal(ctx.effects.length, 5, 'o efeito do worker continua registado')
+    assert.equal(ctx.effects.length, 6, 'o efeito do worker continua registado')
     assert.equal(
       ctx.subprocess.calls.length,
       0,
@@ -447,7 +467,7 @@ describe('ciclo de vida sob ctx.effect', () => {
     })
 
     assert.equal(ctx.subprocess.calls.length, 1, 'so o worker e spawnado no apply')
-    assert.equal(ctx.effects.length, 5)
+    assert.equal(ctx.effects.length, 6, 'veto + auth-check + barreira + controlador + agentes + worker')
 
     // O listen da reserva e assincrono: o servidor nasce num tick posterior.
     await flush()
@@ -1214,6 +1234,324 @@ describe('boot em loopback: um orfao VIVO e derrubado antes de qualquer iniciali
       }
       if (ctx !== undefined) for (const disposer of ctx.effects) disposer()
       limpar()
+    }
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA ONDA-4-AGENTS-HOST: a FIACAO do dispatcher de agentes               */
+/* ========================================================================== */
+
+/**
+ * O harness FALSO para a fiacao: `ctx.subagents` (start registado, run com
+ * resultado controlado), `ctx.agents` (uma raiz viva) e `ctx.skills` (uma
+ * skill qualquer). O teste resolve os runs para fechar o ciclo ponta a ponta.
+ */
+function harnessFalso(): {
+  subagents: {
+    starts: Array<{ name: string; request: { prompt: unknown; parent: unknown; signal: AbortSignal } }>
+    runs: Array<{
+      run: { id: string; result: Promise<unknown>; dispose(): Promise<void> }
+      resolver(resultado: unknown): void
+      disposed: { contagem: number }
+    }>
+  }
+  agentes: { roots(): Array<{ id: string; session: { header: { cwd: string } } }> }
+  skills: { get(name: string): Promise<{ name: string; description: string; content: string } | undefined> }
+} {
+  const starts: Array<{ name: string; request: { prompt: unknown; parent: unknown; signal: AbortSignal } }> = []
+  const runs: Array<{
+    run: { id: string; result: Promise<unknown>; dispose(): Promise<void> }
+    resolver(resultado: unknown): void
+    disposed: { contagem: number }
+  }> = []
+
+  const subagents = {
+    starts,
+    runs,
+    async start(
+      name: string,
+      request: { prompt: unknown; parent: unknown; signal: AbortSignal },
+    ): Promise<{ id: string; result: Promise<unknown>; dispose(): Promise<void> }> {
+      starts.push({ name, request })
+      const disposed: { contagem: number } = { contagem: 0 }
+      let resolver!: (resultado: unknown) => void
+      const result = new Promise<unknown>((res) => {
+        resolver = res
+      })
+      const run = {
+        id: 'run-harness-1',
+        result,
+        dispose: async (): Promise<void> => {
+          disposed.contagem += 1
+        },
+      }
+      runs.push({ run, resolver, disposed })
+      return run
+    },
+  }
+
+  return {
+    subagents,
+    agentes: { roots: () => [{ id: 'agente-raiz', session: { header: { cwd: '/workspace' } } }] },
+    skills: {
+      get: async (name: string) =>
+        name === 'deep-orchestrator-agent-skill'
+          ? { name, description: 'orquestrador', content: 'Instrucoes da skill.' }
+          : undefined,
+    },
+  }
+}
+
+describe('a fiacao do dispatcher de agentes (Onda 4) — ponta a ponta pelo canal', () => {
+  /**
+   * Casa DSH_HOME + install com TUNEL configurado: o fluxo de nonce
+   * (nonce.request -> nonce.issued) passa pelo ConfirmService do CONTROLADOR,
+   * que so nasce com config de tunel (em loopback o responder de nonce
+   * responde EXPOSURE_DISABLED). O tunel NAO sobe (autoStart false e a
+   * intencao persistida e STOPPED) — nenhum cloudflared e spawnado.
+   */
+  function instalarComAgentes(opcoes: {
+    harness?: ReturnType<typeof harnessFalso>
+    comHarness?: boolean
+  } = {}): {
+    ctx: FakeContext
+    harness: ReturnType<typeof harnessFalso>
+    filho: FakeSubprocessHandle
+  } {
+    const casa = join(tmpdir(), `dsh-guard-agentes-${process.pid}-${Math.random().toString(36).slice(2)}`)
+    const dir = join(casa, 'guarded-bot')
+    mkdirSync(dir, { recursive: true })
+    chmodSync(dir, 0o700)
+    writeFileSync(
+      join(dir, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        desiredState: 'STOPPED',
+        pairing: { ownerUserId: 123, ownerChatId: 456, pairedAt: 1_000 },
+      }),
+      { mode: 0o600 },
+    )
+    process.env.DSH_HOME = casa
+    const ctx = new FakeContext()
+    const harness = harnessFalso()
+    if (opcoes.comHarness !== false) {
+      // Os servicos do harness sao instalados ANTES do apply — o registry
+      // le-os lazy, mas a fiacao tem de os ver no momento do despacho.
+      ctx.subagents = harness.subagents as never
+      ctx.agents = harness.agentes as never
+      ctx.skills = harness.skills as never
+    } else {
+      ctx.subagents = { start: async () => { throw new Error('nao devia ser chamado') } } as never
+    }
+    apply(
+      ctx.asContext(),
+      makeConfig({
+        exposure: { mode: 'tunnel', autoStart: false, trustEdgeHeaders: false },
+        tunnel: { mode: 'quick', ttlMinutes: 60 },
+        agents: { skills: ['deep-orchestrator-agent-skill'], maxRuns: 1 },
+      }),
+    )
+    return { ctx, harness, filho: ctx.subprocess.lastChild() }
+  }
+
+  /** O fluxo de 2 etapas: o worker pede o nonce (acao reset) e recebe nonce.issued. */
+  async function pedirNonce(filho: { stdout: { write(chunk: string): boolean } }, linhas: () => string[]): Promise<string> {
+    filho.stdout.write(
+      JSON.stringify({ v: 2, type: 'nonce.request', acao: 'reset', requestId: 'nonce-1' }) + '\n',
+    )
+    await flush()
+    await flush()
+    const issued = linhas()
+      .map((linha) => JSON.parse(linha) as Record<string, unknown>)
+      .find((m) => m['type'] === 'nonce.issued')
+    assert.ok(issued !== undefined, 'o host emitiu o nonce')
+    assert.equal(issued['acao'], 'reset')
+    const nonce = issued['nonce']
+    assert.equal(typeof nonce, 'string')
+    return nonce as string
+  }
+
+  it('nonce.request/reset -> agent.dispatch com nonce dispara no harness; o fim difunde agent.report', async () => {
+    const { ctx, harness, filho } = instalarComAgentes()
+    try {
+      const linhas = (): string[] => filho.stdinLines
+      const nonce = await pedirNonce(filho, linhas)
+
+      // O DONO dispara /agente com o nonce e os params.
+      filho.stdout.write(
+        JSON.stringify({
+          v: 2,
+          type: 'intent',
+          intent: 'agent.dispatch',
+          requestId: 'ag-1',
+          from: '123',
+          chat: '456',
+          nonce,
+          params: { skill: 'deep-orchestrator-agent-skill', prompt: 'faz o relatorio' },
+        }) + '\n',
+      )
+      await flush()
+      await flush()
+
+      // O registry despachou no harness FALSO: o start foi chamado.
+      assert.equal(harness.subagents.starts.length, 1, 'o run foi disparado no harness')
+      assert.equal(harness.subagents.starts[0]?.name, 'spawn', 'o provedor e o spawn in-process')
+
+      // O RUN TERMINA -> o host DIFUNDE agent.report (notificacao proativa).
+      const publicado = harness.subagents.runs[0]
+      assert.ok(publicado !== undefined)
+      publicado.resolver({
+        output: [{ type: 'text', text: 'relatorio pronto' }],
+        stopReason: 'completed',
+      })
+      await flush()
+      await flush()
+
+      const relatorios = linhas()
+        .map((linha) => JSON.parse(linha) as { type?: string; runs?: unknown })
+        .filter((m) => m['type'] === 'agent.report')
+      assert.equal(relatorios.length, 1, 'o agent.report foi difundido')
+      const runs = relatorios[0]?.['runs'] as Array<{ status?: string; skill?: string; summary?: string }> | undefined
+      assert.equal(runs?.[0]?.status, 'done')
+      assert.equal(runs?.[0]?.skill, 'deep-orchestrator-agent-skill')
+      assert.equal(runs?.[0]?.summary, 'relatorio pronto')
+    } finally {
+      for (const disposer of ctx.effects) disposer()
+      delete process.env.DSH_HOME
+    }
+  })
+
+  it('agent.cancel atravessa o canal e cancela o run no harness (dispose + abort)', async () => {
+    const { ctx, harness, filho } = instalarComAgentes()
+    try {
+      const linhas = (): string[] => filho.stdinLines
+      const nonce = await pedirNonce(filho, linhas)
+
+      filho.stdout.write(
+        JSON.stringify({
+          v: 2,
+          type: 'intent',
+          intent: 'agent.dispatch',
+          requestId: 'ag-1',
+          from: '123',
+          chat: '456',
+          nonce,
+          params: { skill: 'deep-orchestrator-agent-skill', prompt: 'faz' },
+        }) + '\n',
+      )
+      await flush()
+      await flush()
+      assert.equal(harness.subagents.starts.length, 1)
+
+      // /agentes: a lista (com o run RUNNING) chega por agent.report — e dela
+      // que o dono tira o id curto para o cancelamento.
+      filho.stdout.write(
+        JSON.stringify({
+          v: 2,
+          type: 'intent',
+          intent: 'agent.status',
+          requestId: 'status-1',
+          from: '123',
+          chat: '456',
+        }) + '\n',
+      )
+      await flush()
+      await flush()
+      const relatorio = linhas()
+        .map((linha) => JSON.parse(linha) as { type?: string; runs?: Array<{ id?: string; status?: string }> })
+        .filter((m) => m['type'] === 'agent.report')
+        .at(-1)
+      const id = relatorio?.['runs']?.find((r) => r['status'] === 'running')?.id
+      assert.ok(id !== undefined, 'o run apareceu no relatorio com o id curto')
+
+      // /parar-agente: sem nonce (REDUZ — CTL-024).
+      filho.stdout.write(
+        JSON.stringify({
+          v: 2,
+          type: 'intent',
+          intent: 'agent.cancel',
+          requestId: 'cancel-1',
+          from: '123',
+          chat: '456',
+          params: { agentId: id },
+        }) + '\n',
+      )
+      await flush()
+      await flush()
+
+      const publicado = harness.subagents.runs[0]
+      assert.ok(publicado !== undefined)
+      assert.equal(publicado.disposed.contagem, 1, 'o handle publicado foi disposto')
+      assert.equal(harness.subagents.starts[0]?.request.signal.aborted, true, 'o sinal foi abortado')
+    } finally {
+      for (const disposer of ctx.effects) disposer()
+      delete process.env.DSH_HOME
+    }
+  })
+
+  it('agent.status responde noop e difunde agent.report (a lista vazia quando nada corre)', async () => {
+    const { ctx, filho } = instalarComAgentes()
+    try {
+      const linhas = (): string[] => filho.stdinLines
+
+      filho.stdout.write(
+        JSON.stringify({
+          v: 2,
+          type: 'intent',
+          intent: 'agent.status',
+          requestId: 'status-1',
+          from: '123',
+          chat: '456',
+        }) + '\n',
+      )
+      await flush()
+      await flush()
+
+      const ack = linhas()
+        .map((linha) => JSON.parse(linha) as { type?: string; result?: string; requestId?: string })
+        .find((m) => m['type'] === 'ack' && m['requestId'] === 'status-1')
+      assert.equal(ack?.['result'], 'noop')
+      const relatorios = linhas()
+        .map((linha) => JSON.parse(linha) as { type?: string; runs?: unknown })
+        .filter((m) => m['type'] === 'agent.report')
+      assert.equal(relatorios.length, 1, 'o agent.status difunde o relatorio')
+      assert.deepEqual(relatorios[0]?.['runs'], [], 'sem runs, a lista e vazia')
+    } finally {
+      for (const disposer of ctx.effects) disposer()
+      delete process.env.DSH_HOME
+    }
+  })
+
+  it('sem os servicos do harness, o dispatch e recusado de forma SINCRONA (fail-closed)', async () => {
+    const { ctx, filho } = instalarComAgentes({ comHarness: false })
+    try {
+      const linhas = (): string[] => filho.stdinLines
+      const nonce = await pedirNonce(filho, linhas)
+
+      filho.stdout.write(
+        JSON.stringify({
+          v: 2,
+          type: 'intent',
+          intent: 'agent.dispatch',
+          requestId: 'ag-1',
+          from: '123',
+          chat: '456',
+          nonce,
+          params: { skill: 'deep-orchestrator-agent-skill', prompt: 'faz' },
+        }) + '\n',
+      )
+      await flush()
+      await flush()
+
+      const erro = linhas()
+        .map((linha) => JSON.parse(linha) as { type?: string; requestId?: string; code?: string; message?: string })
+        .find((m) => m['type'] === 'error' && m['requestId'] === 'ag-1')
+      assert.equal(erro?.['code'], 'INTERNAL')
+      assert.ok(erro?.['message']?.includes('harness') === true, 'a mensagem nomeia o harness')
+    } finally {
+      for (const disposer of ctx.effects) disposer()
+      delete process.env.DSH_HOME
     }
   })
 })

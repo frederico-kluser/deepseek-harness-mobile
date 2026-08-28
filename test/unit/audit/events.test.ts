@@ -42,6 +42,9 @@ import { EVENTO_DESLIGAR, EVENTO_LIGAR, EVENTO_RESET } from '../../../src/contro
 import { EVENTO_NAO_PAREADO as NAO_PAREADO_DO_EMISSOR } from '../../../src/control/surface-ipc.ts'
 import { EVENTO_ORFAO as ORFAO_DO_EMISSOR } from '../../../src/tunnel/pidfile.ts'
 import {
+  comporEventoAgenteCancelar,
+  comporEventoAgenteDespacho,
+  comporEventoAgenteFim,
   comporEventoReset,
   comporEventoToggle,
   emitSessaoNova,
@@ -50,6 +53,9 @@ import {
   EVENTO_AUTH_FALHA_JANELA,
   EVENTO_AUTH_SEGREDO_INDISPONIVEL,
   EVENTO_AUTH_SESSAO,
+  EVENTO_AGENTE_CANCELAR,
+  EVENTO_AGENTE_DESPACHO,
+  EVENTO_AGENTE_FIM,
   EVENTO_EXPOSICAO_RESTRITA,
   EVENTO_INTENT_NAO_PAREADO,
   EVENTO_LACUNA,
@@ -232,6 +238,9 @@ describe('o vocabulario fechado', () => {
       EVENTO_AUTH_CREDENCIAL,
       EVENTO_AUTH_SEGREDO_INDISPONIVEL,
       EVENTO_AUTH_FALHA_JANELA,
+      EVENTO_AGENTE_DESPACHO,
+      EVENTO_AGENTE_CANCELAR,
+      EVENTO_AGENTE_FIM,
       EVENTO_TUNEL_LIGAR,
       EVENTO_TUNEL_DESLIGAR,
       EVENTO_TUNEL_RESET,
@@ -265,6 +274,11 @@ describe('o vocabulario fechado', () => {
     exigeNome(EVENTO_AUTH_SEGREDO_INDISPONIVEL)
     exigeNome(EVENTO_AUTH_FALHA_JANELA)
     exigeNome(EVENTO_ORFAO)
+    // EMENDA ONDA-4-AGENTS-HOST: as tres familias do dispatcher, na forma
+    // completa que os emissores reais escrevem (origem + skill/agentId/status).
+    exigeNome('agente_despacho:telegram:123:deep-orchestrator-agent-skill')
+    exigeNome('agente_cancelar:telegram:123:ABCD1234')
+    exigeNome('agente_fim:telegram:123:deep-orchestrator-agent-skill:done')
     exigeNome(EVENTO_TTL_EXPIRADO)
     exigeNome(EVENTO_MODO_RESTRITO)
     exigeNome(EVENTO_EXPOSICAO_RESTRITA)
@@ -484,6 +498,30 @@ describe('o vocabulario fechado', () => {
     assert.throws(() => comporEventoReset(''), /EVENTO_TOGGLE_SEM_ORIGEM/u)
   })
 
+  it('os compositores de agente (Onda 4) produzem o nome completo com origem e skill no sufixo', () => {
+    assert.equal(
+      comporEventoAgenteDespacho('telegram:123456', 'deep-orchestrator-agent-skill'),
+      'agente_despacho:telegram:123456:deep-orchestrator-agent-skill',
+    )
+    assert.equal(
+      comporEventoAgenteCancelar('telegram:123456', 'ABCD1234'),
+      'agente_cancelar:telegram:123456:ABCD1234',
+    )
+    assert.equal(
+      comporEventoAgenteFim('telegram:123456', 'surf-plan-agent-skill', 'failed'),
+      'agente_fim:telegram:123456:surf-plan-agent-skill:failed',
+    )
+  })
+
+  it('A5: os compositores de agente RECUSAM origem/skill vazias — `<prefixo>:` nao entra no log', () => {
+    assert.throws(() => comporEventoAgenteDespacho('', 'skill'), /EVENTO_AGENTE_SEM_ORIGEM/u)
+    assert.throws(() => comporEventoAgenteDespacho('telegram:1', ''), /EVENTO_AGENTE_SEM_ORIGEM/u)
+    assert.throws(() => comporEventoAgenteCancelar('', 'ABCD1234'), /EVENTO_AGENTE_SEM_ORIGEM/u)
+    assert.throws(() => comporEventoAgenteCancelar('telegram:1', ''), /EVENTO_AGENTE_SEM_ORIGEM/u)
+    assert.throws(() => comporEventoAgenteFim('', 'skill', 'done'), /EVENTO_AGENTE_SEM_ORIGEM/u)
+    assert.throws(() => comporEventoAgenteFim('telegram:1', '', 'done'), /EVENTO_AGENTE_SEM_ORIGEM/u)
+  })
+
   it('eventoDoVocabulario reconhece as formas REAIS e recusa as malformadas', () => {
     // Os nomes base, incluindo os dos emissores fechados. Os PREFIXOS de
     // toggle ficam de fora de proposito: o nome sem sufixo nao designa ninguem.
@@ -529,6 +567,12 @@ describe('o vocabulario fechado', () => {
       'tunel_emergencia:telegram:123',
       'tunel_intent_nao_pareado:telegram:123',
       'tunel_orfao_derrubado',
+      'agente_despacho:telegram:123:deep-orchestrator-agent-skill',
+      'agente_despacho:painel:a1b2c3d4:surf-plan-agent-skill',
+      'agente_cancelar:telegram:123:ABCD1234',
+      'agente_fim:telegram:123:deep-orchestrator-agent-skill:done',
+      'agente_fim:telegram:123:deep-orchestrator-agent-skill:failed',
+      'agente_fim:telegram:123:deep-orchestrator-agent-skill:cancelled',
     ]) {
       assert.equal(eventoDoVocabulario(nome), true, `${nome} pertence ao vocabulario`)
     }
@@ -546,6 +590,12 @@ describe('o vocabulario fechado', () => {
       'tunel_emergencia:', // origem vazia: nao designa ninguem
       'tunel_intent_nao_pareado',
       'tunel_intent_nao_pareado:',
+      'agente_despacho', // o prefixo SEM sufixo nao designa ninguem
+      'agente_despacho:',
+      'agente_cancelar',
+      'agente_cancelar:',
+      'agente_fim',
+      'agente_fim:',
       'auth_falha', // nome incompleto do vocabulario
       'login_ok',
       'auditoria_lacuna_extra:1',

@@ -212,6 +212,18 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     '{"v":2,"type":"pairing.owner","from":"1","chat":"\\u0007","pairedAt":1}',
     '{"v":2,"type":"pairing.owner","from":"1","chat":"2","pairedAt":"amanha"}',
     '{"v":2,"type":"pairing.owner","from":"1","chat":"b'.repeat(65)+'","pairedAt":1}',
+    // EMENDA ONDA-4-AGENTS-HOST: malformadas do payload de agente.
+    '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1"}',
+    '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":{"skill":"Maiuscula","prompt":"p"}}',
+    '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","params":{"prompt":"p"}}',
+    '{"v":2,"type":"intent","intent":"agent.cancel","requestId":"r","from":"1","chat":"1","params":{}}',
+    '{"v":2,"type":"intent","intent":"agent.cancel","requestId":"r","from":"1","chat":"1","params":{"agentId":42}}',
+    '{"v":2,"type":"agent.report"}',
+    '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"rodando","startedAt":1}]}',
+    '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"done","startedAt":1,"summary":42}]}',
+    '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"done","startedAt":1,"summary":"a\\u0007b"}]}',
+    '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"S","status":"done","startedAt":1}]}',
+    '{"v":2,"type":"agent.report","runs":42}',
   ]
   // As linhas NO LIMITE dos tetos (64 chars de id, 128 de nonce, 4096 de
   // mensagem, URL de 2048) — montadas em runtime para o literal nao ter

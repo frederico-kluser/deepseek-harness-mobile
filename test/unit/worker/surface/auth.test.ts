@@ -891,12 +891,20 @@ describe('criarGuardDeIdentidade — decisao por evento, descartado CONTADO', ()
       'session.issue': true,
       'secret.rotate': true,
       emergency: false,
+      // EMENDA ONDA-4-AGENTS-HOST: dispatch EXECUTA codigo no host (aumenta ->
+      // exige nonce); status (leitura pura) e cancel (reduz) nao.
+      'agent.dispatch': true,
+      'agent.status': false,
+      'agent.cancel': false,
       menu: false,
       ajuda: false,
       inicio: false,
       cancel: false,
     })
     assert.equal(AUMENTA_EXPOSICAO.emergency, false, 'em panico, o botao tem de funcionar a primeira')
+    assert.equal(AUMENTA_EXPOSICAO['agent.dispatch'], true, 'dispatch executa codigo no host')
+    assert.equal(AUMENTA_EXPOSICAO['agent.status'], false, 'status e leitura pura')
+    assert.equal(AUMENTA_EXPOSICAO['agent.cancel'], false, 'cancelar reduz e dispensa nonce')
     assert.equal(AUMENTA_EXPOSICAO.menu, false, 'navegacao local nunca aumenta exposicao')
     assert.equal(AUMENTA_EXPOSICAO.ajuda, false, 'navegacao local nunca aumenta exposicao')
     assert.equal(AUMENTA_EXPOSICAO.inicio, false, 'navegacao local nunca aumenta exposicao')
