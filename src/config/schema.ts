@@ -76,8 +76,11 @@ export interface AgentsConfig {
    */
   readonly skills: string[]
   /**
-   * Teto de runs de agente CONCORRENTES. Inteiro >= 1 (validado no arranque).
-   * Acima do teto, `agent.dispatch` e recusado ate um run terminar.
+   * Teto de runs de agente CONCORRENTES. Inteiro entre 1 e
+   * `AGENTS_MAX_RUNS_CEILING` (32, validado no arranque): com o historico
+   * cheio (32) a lista do relatorio `agent.report` atinge exatamente o teto
+   * da linha do canal (64). Acima do teto, `agent.dispatch` e recusado ate um
+   * run terminar.
    */
   readonly maxRuns: number
 }

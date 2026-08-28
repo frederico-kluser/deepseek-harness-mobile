@@ -503,10 +503,14 @@ export interface IpcPairingSuccessMessage extends IpcEnvelope {
 /**
  * EMENDA ONDA-4-AGENTS-HOST: o estado de um run de agente, efemero (memoria).
  *
- * O vocabulario e FECHADO por desenho: `cancelled` e o resultado de um
- * cancelamento explicito (`agent.cancel` ou o disposer do plugin); `aborted`
- * do harness (o modelo parou) cai em `failed`. O worker (Onda 5) renderiza
- * texto POR STATUS — acrescentar um e mudanca de contrato.
+ * O vocabulario e FECHADO por desenho. `cancelled` e o resultado de um
+ * cancelamento explicito (`agent.cancel` ou o disposer do plugin) — e TAMBEM
+ * o mapeamento do `aborted` do harness (EMENDA ONDA-4-FIX-REPORT-CAPS): o
+ * abort do harness so nasce do sinal de cancelamento/dispose do registry,
+ * nunca espontaneo, logo `aborted` cai em `cancelled`, nunca em `failed`.
+ * `failed` e o resultado dos restantes stopReason do harness (`error`,
+ * `max-tokens`, `refusal`) e das falhas de infraestrutura do seam. O worker
+ * (Onda 5) renderiza texto POR STATUS — acrescentar um e mudanca de contrato.
  */
 export type AgentRunStatus = 'running' | 'done' | 'failed' | 'cancelled'
 
@@ -538,6 +542,12 @@ export interface AgentRunReport {
  * padrao de `state`: o host e a fonte unica da verdade, o bot e projeccao).
  * Best-effort por construcao: o worker em baixo perde a difusao, a proxima
  * vem no proximo `agent.status`.
+ *
+ * A lista TEM TETO de transporte (EMENDA ONDA-4-FIX-REPORT-CAPS): no maximo
+ * 64 runs por mensagem — acima disso o codec recusa a linha
+ * (`IPC_MESSAGE_INVALID`) e o dono ficaria sem resposta. O registry capa-a
+ * ANTES de emitir, mantendo os runs MAIS RECENTES (a poda de historico e a
+ * outra rede; 32 vivos + 32 terminais = 64, o teto exato).
  */
 export interface IpcAgentReportMessage extends IpcEnvelope {
   readonly type: 'agent.report'

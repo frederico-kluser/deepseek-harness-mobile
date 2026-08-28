@@ -665,8 +665,20 @@ function buildPairingSuccess(bag: Record<string, unknown>): IpcParseResult {
 /* EMENDA ONDA-4-AGENTS-HOST: `agent.report` (host -> worker)                  */
 /* ========================================================================== */
 
-/** Teto de runs numa unica mensagem: acima do historico do registry (32). */
-const MAX_RUNS_PER_REPORT = 64
+/**
+ * Teto de runs numa UNICA mensagem `agent.report` — o teto do TRANSPORTE
+ * (S1: uma linha de 64 KiB), acima do qual o codec recusa a mensagem com
+ * `IPC_MESSAGE_INVALID` do lado da escrita.
+ *
+ * EXPORTADO por causa da EMENDA ONDA-4-FIX-REPORT-CAPS: o registry
+ * (`src/agents/registry.ts`) usa o MESMO numero para capar a lista antes de
+ * emitir (`relatorio()`) e o assert deriva dele o teto de `agents.maxRuns`.
+ * Um so numero, uma so fonte de verdade — nunca um literal repetido.
+ *
+ * O valor (64) e o dobro do historico do registry (32): 32 vivos + 32
+ * terminais cabem na linha; acima disso a lista nao cabe no contrato.
+ */
+export const MAX_RUNS_PER_REPORT = 64
 /** Teto do resumo de UM run (1 linha para o Telegram; o host corta antes). */
 const MAX_RUN_SUMMARY_CHARS = 512
 

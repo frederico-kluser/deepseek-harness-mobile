@@ -15,14 +15,26 @@
  *   - disposer: mata os runs ativos em LIFO, sincronamente (Q-2);
  *   - os caminhos de falha POST-ACK (skill inexistente, sem agente-pai,
  *     `start` rejeitado, abort pre-publicacao) nunca mentem: o run nasce e
- *     termina com o status HONESTO (`failed`/`cancelled`).
+ *     termina com o status HONESTO (`failed`/`cancelled`);
+ *   - o relatorio e CAPADO no teto do canal: 32 vivos + 32 terminais = 64
+ *     (o maximo legal) serializa SEM lancar no codec real; com maxRuns acima
+ *     do teto do assert (33 — a repro do revisor), a lista NUNCA passa de 64
+ *     (defesa em profundidade) e serializa — os MAIS RECENTES sobrevivem ao
+ *     corte.
  */
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import type { AuditEvent } from '../../../src/contracts/auth.ts'
-import { createAgentRegistry, MAX_SUMMARY_CHARS, type AgentRegistry } from '../../../src/agents/registry.ts'
+import { IPC_PROTOCOL_VERSION } from '../../../src/contracts/ipc.ts'
+import { MAX_RUNS_PER_REPORT, serializeIpcMessage } from '../../../src/ipc/channel.ts'
+import {
+  createAgentRegistry,
+  MAX_RUNS_HISTORY,
+  MAX_SUMMARY_CHARS,
+  type AgentRegistry,
+} from '../../../src/agents/registry.ts'
 import type {
   HarnessAgent,
   HarnessAgentRegistry,
@@ -541,5 +553,109 @@ describe('as falhas pos-ack', () => {
     const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'] })
     h.dispatch('deep-orchestrator-agent-skill')
     assert.equal(h.auditoria.some((e) => e.resultado === 'permitido'), true, 'so o audit e escrito')
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA ONDA-4-FIX-REPORT-CAPS: o relatorio nunca passa do teto do canal     */
+/* ========================================================================== */
+
+describe('o relatorio capado no teto do canal (MAX_RUNS_PER_REPORT)', () => {
+  /** Cada dispatch recebe o SEU run publicado (a fila substitui o start). */
+  function publicarEmFila(h: Bancada, publicados: RunFake[]): void {
+    h.harness.subagents.start = async (name, request): Promise<RunFake['run']> => {
+      h.harness.subagents.starts.push({ name, request })
+      const publicado = runPublicado(`run-harness-${publicados.length}`)
+      publicados.push(publicado)
+      return publicado.run
+    }
+  }
+
+  it('32 vivos + 32 terminais = 64 (o maximo legal): a lista fica no teto e serializa SEM lancar', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], maxRuns: MAX_RUNS_HISTORY })
+    const publicados: RunFake[] = []
+    publicarEmFila(h, publicados)
+
+    // Fase A: 32 runs ATIVOS (o teto legal de concorrencia).
+    for (let i = 0; i < MAX_RUNS_HISTORY; i++) {
+      assert.deepEqual(h.dispatch('deep-orchestrator-agent-skill'), { ok: true })
+      await flush()
+    }
+
+    // Fase B: resolve o run MAIS RECENTE de cada vez — o mais antigo continua
+    // vivo na FRENTE da tabela, logo a poda do historico nunca o tira — e
+    // despacha mais um: a tabela interna cresce ate 32 vivos + 32 terminais =
+    // 64, o teto exato de uma mensagem agent.report (a repro do revisor:
+    // acima disto o codec recusava a linha e o dono ficava sem relatorio).
+    for (let k = 1; k <= MAX_RUNS_HISTORY; k++) {
+      publicados[30 + k]?.resolver({ output: [{ type: 'text', text: 'concluido' }], stopReason: 'completed' })
+      await flush()
+      assert.deepEqual(h.dispatch('deep-orchestrator-agent-skill'), { ok: true })
+      await flush()
+    }
+
+    const estado = h.registry.estado()
+    assert.equal(estado.length, MAX_RUNS_PER_REPORT, 'a lista tem exatamente o teto do canal')
+    assert.doesNotThrow(
+      () =>
+        serializeIpcMessage(
+          { v: IPC_PROTOCOL_VERSION, type: 'agent.report', runs: estado },
+          'to-worker',
+        ),
+      'o codec REAL aceita a lista no teto — a resposta a agent.status nao pode falhar',
+    )
+    assert.equal(
+      h.relatorios.every((r) => r.length <= MAX_RUNS_PER_REPORT),
+      true,
+      'as difusoes proativas tambem saem capadas',
+    )
+  })
+
+  it('defesa em profundidade: 33 vivos + 32 terminais (65 > 64) capa a lista em 64 e serializa SEM lancar', async () => {
+    // A REPRO DO REVISOR: 33 runs ativos (o teto que o assert recusa — o
+    // registry NAO valida maxRuns, quem valida e o assert). Entrar por cima
+    // dele de proposito exercita o teto da EMISSAO — a ultima rede antes do
+    // canal — para o dia em que maxRuns ou o historico mudem.
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], maxRuns: 33 })
+    const publicados: RunFake[] = []
+    publicarEmFila(h, publicados)
+
+    for (let i = 0; i < 33; i++) {
+      assert.deepEqual(h.dispatch('deep-orchestrator-agent-skill'), { ok: true })
+      await flush()
+    }
+    // O id do run MAIS ANTIGO (o primeiro despacho): nunca mais sai da FRENTE
+    // da tabela — e o primeiro a cair fora do corte no relatorio.
+    const idDoMaisAntigo = h.registry.estado()[0]?.id
+    assert.ok(idDoMaisAntigo !== undefined)
+    // Resolve o MAIS RECENTE de cada vez e despacha mais um: a tabela interna
+    // chega a 65 (33 vivos + 32 terminais) — UMA acima do teto do canal.
+    for (let k = 1; k <= MAX_RUNS_HISTORY; k++) {
+      publicados[31 + k]?.resolver({ output: [{ type: 'text', text: 'fim' }], stopReason: 'completed' })
+      await flush()
+      assert.deepEqual(h.dispatch('deep-orchestrator-agent-skill'), { ok: true })
+      await flush()
+    }
+
+    const estado = h.registry.estado()
+    assert.equal(estado.length, MAX_RUNS_PER_REPORT, 'a lista e capada no teto, nunca acima')
+    assert.doesNotThrow(
+      () =>
+        serializeIpcMessage(
+          { v: IPC_PROTOCOL_VERSION, type: 'agent.report', runs: estado },
+          'to-worker',
+        ),
+      'o codec REAL aceita a lista capada — nenhuma difusao se perde',
+    )
+    const ids = new Set(estado.map((r) => r.id))
+    const idDoMaisRecente = estado[estado.length - 1]?.id
+    assert.ok(idDoMaisRecente !== undefined)
+    assert.equal(ids.has(idDoMaisRecente), true, 'o run MAIS RECENTE sobrevive ao corte')
+    assert.equal(ids.has(idDoMaisAntigo), false, 'o mais ANTIGO e o que sai do relatorio')
+    assert.equal(
+      h.relatorios.every((r) => r.length <= MAX_RUNS_PER_REPORT),
+      true,
+      'as difusoes proativas tambem saem capadas',
+    )
   })
 })

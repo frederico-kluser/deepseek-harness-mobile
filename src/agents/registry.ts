@@ -49,6 +49,7 @@ import {
   comporEventoAgenteDespacho,
   comporEventoAgenteFim,
 } from '../audit/events.ts'
+import { MAX_RUNS_PER_REPORT } from '../ipc/channel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
 import { createUlidFactory } from '../ulid.ts'
 import type {
@@ -67,6 +68,10 @@ export const DEFAULT_PROVIDER_NAME = 'spawn'
  * Teto do historico em memoria. A lista e efemera e pequena; o teto existe
  * para o relatorio nao crescer sem fim num uso prolongado — o run terminal
  * MAIS ANTIGO sai quando o teto e atingido.
+ *
+ * E METADE de `MAX_RUNS_PER_REPORT` (o teto do canal, 64) DE PROPOSITO: com o
+ * teto de `agents.maxRuns` tambem em 32 (assert), a tabela inteira — 32 vivos
+ * + 32 terminais — cabe numa unica mensagem `agent.report`.
  */
 export const MAX_RUNS_HISTORY = 32
 
@@ -146,7 +151,7 @@ interface RunInterno {
 export interface AgentRegistryDeps {
   /** A allowlist de skills disparaveis (config `agents.skills`). VAZIA = nada. */
   readonly skillsPermitidas: readonly string[]
-  /** Teto de runs CONCORRENTES (config `agents.maxRuns`). >= 1. */
+  /** Teto de runs CONCORRENTES (config `agents.maxRuns`; o assert impoe 1..32). */
   readonly maxRuns: number
   /** O provedor do harness (`'spawn'` — in-process, sessao fresca). */
   readonly providerName: string
@@ -202,9 +207,19 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
 
   const contando = (runsAtivos: number): boolean => runsAtivos >= deps.maxRuns
 
-  /** A lista COMPLETA (vivos + terminais em memoria) — o corpo do relatorio. */
+  /**
+   * A lista COMPLETA (vivos + terminais em memoria) — o corpo do relatorio.
+   *
+   * CAPADA POR CONSTRUCAO a `MAX_RUNS_PER_REPORT` (EMENDA
+   * ONDA-4-FIX-REPORT-CAPS): `slice(-MAX_RUNS_PER_REPORT)` mantem os runs
+   * MAIS RECENTES e nunca ultrapassa o teto do codec, que RECUSA listas
+   * maiores com `IPC_MESSAGE_INVALID` — um `agent.status` sem relatorio e
+   * difusoes perdidas nao podem acontecer, mesmo que `maxRuns` ou o teto do
+   * historico mudem no futuro. A poda de historico (`podarHistorico`) e a
+   * outra rede; esta e a da EMISSAO, a ultima antes do canal.
+   */
   const relatorio = (): AgentRunReport[] =>
-    runs.map((run) => ({
+    runs.slice(-MAX_RUNS_PER_REPORT).map((run) => ({
       id: run.id,
       skill: run.skill,
       status: run.status,

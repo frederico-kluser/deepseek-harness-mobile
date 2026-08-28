@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { assertValidConfig } from '../../../src/config/assert.ts'
+import { AGENTS_MAX_RUNS_CEILING, assertValidConfig } from '../../../src/config/assert.ts'
 import { PACKAGED_WORKER_DIR, resolveWorkerCwd } from '../../../src/config/schema.ts'
 import type { ExposureConfig, TunnelConfig } from '../../../src/contracts/tunnel.ts'
 import { makeConfig } from '../../support/fixtures.ts'
@@ -419,6 +419,27 @@ describe('o eixo agents -- allowlist e teto do dispatcher (Onda 4)', () => {
     }
     assert.doesNotThrow(() => assertValidConfig(makeConfig({ agents: { skills: [], maxRuns: 1 } })))
     assert.doesNotThrow(() => assertValidConfig(makeConfig({ agents: { skills: [], maxRuns: 8 } })))
+  })
+
+  it('maxRuns tem um TETO derivado: o teto (32) aceito, teto+1 recusado com a mensagem do canal', () => {
+    // 32 vivos + 32 de historico = 64 = o teto EXATO da linha do canal
+    // (MAX_RUNS_PER_REPORT). O teto e derivado, nao um literal: se o historico
+    // ou o teto do canal mudarem, este teste segue o novo valor.
+    assert.doesNotThrow(() =>
+      assertValidConfig(makeConfig({ agents: { skills: [], maxRuns: AGENTS_MAX_RUNS_CEILING } })),
+    )
+
+    const acima = AGENTS_MAX_RUNS_CEILING + 1
+    assert.throws(
+      () => assertValidConfig(makeConfig({ agents: { skills: [], maxRuns: acima } })),
+      (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.match(error.message, /agents\.maxRuns/u)
+        assert.match(error.message, new RegExp(`entre 1 e ${String(AGENTS_MAX_RUNS_CEILING)}`, 'u'))
+        assert.match(error.message, new RegExp(String(acima), 'u'))
+        return true
+      },
+    )
   })
 
   it('`agents` NAO-array e NAO-objeto recusa com a mensagem do caminho', () => {

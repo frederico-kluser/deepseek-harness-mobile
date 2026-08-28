@@ -31,8 +31,10 @@
 
 import { statSync } from 'node:fs'
 
+import { MAX_RUNS_HISTORY } from '../agents/registry.ts'
 import type { ExposureConfig, TunnelConfig, TunnelMode } from '../contracts/tunnel.ts'
 import { PLUGIN_NAME } from '../errors.ts'
+import { MAX_RUNS_PER_REPORT } from '../ipc/channel.ts'
 import { PROVIDER_ENV } from '../proc/env.ts'
 import { resolveWorkerCwd, type AgentsConfig, type Config, type ControlConfig } from './schema.ts'
 
@@ -271,6 +273,20 @@ export function assertTunnelConfig(value: unknown, path: string): asserts value 
   }
 }
 
+/**
+ * Teto de `config.agents.maxRuns` (EMENDA ONDA-4-FIX-REPORT-CAPS).
+ *
+ * DERIVADO, nao um literal. O relatorio `agent.report` viaja numa UNICA linha
+ * do canal IPC e o codec RECUSA listas acima de `MAX_RUNS_PER_REPORT` (64) —
+ * `IPC_MESSAGE_INVALID` do lado da escrita: o relatorio nao chega ao worker e
+ * as difusoes perdem-se. A tabela do registry chega a `maxRuns` vivos + 32
+ * terminais (`MAX_RUNS_HISTORY`), logo o teto de concorrencia e
+ * `MAX_RUNS_PER_REPORT - MAX_RUNS_HISTORY` — hoje 64 - 32 = 32: historico
+ * cheio + teto cheio e EXATAMENTE a linha do canal. Acima disto a configuracao
+ * e recusada no load (fail loud, Q-3), sem clamp.
+ */
+export const AGENTS_MAX_RUNS_CEILING = MAX_RUNS_PER_REPORT - MAX_RUNS_HISTORY
+
 /** Valida o eixo `control` -- minimo. A expansao e do COMMIT PREP 5. */
 export function assertControlConfig(value: unknown, path: string): asserts value is ControlConfig {
   if (typeof value !== 'object' || value === null) {
@@ -292,8 +308,10 @@ const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
  * EXISTE — a ausencia e lida por `resolveAgents` como `AGENTS_FAIL_CLOSED`.
  *
  * Fail loud, como tudo aqui (Q-3): `skills` tem de ser um array de nomes
- * kebab-case NAO VAZIOS, e `maxRuns` um inteiro >= 1. Um nome com espacos,
- * maiusculas ou um `maxRuns: 0` (ou negativo) sao configuracoes que se
+ * kebab-case NAO VAZIOS, e `maxRuns` um inteiro entre 1 e
+ * `AGENTS_MAX_RUNS_CEILING` (32 — o relatorio `agent.report` cabe na linha do
+ * canal com o historico cheio). Um nome com espacos, maiusculas ou um
+ * `maxRuns: 0` (ou negativo, ou acima do teto) sao configuracoes que se
  * revelariam erradas no primeiro despacho — recusadas no load.
  */
 export function assertAgentsConfig(value: unknown, path: string): asserts value is AgentsConfig {
@@ -320,6 +338,16 @@ export function assertAgentsConfig(value: unknown, path: string): asserts value 
       `[${PLUGIN_NAME}] config.${path}.maxRuns tem de ser um inteiro >= 1 ` +
         `(recebido: ${String(maxRuns)}). Zero ou negativo nao e um teto — e um ` +
         'despacho que falharia sempre.',
+    )
+  }
+  if (maxRuns > AGENTS_MAX_RUNS_CEILING) {
+    throw new Error(
+      `[${PLUGIN_NAME}] config.${path}.maxRuns tem de ser um inteiro entre 1 e ` +
+        `${String(AGENTS_MAX_RUNS_CEILING)} (recebido: ${String(maxRuns)}). Acima de ` +
+        `${String(AGENTS_MAX_RUNS_CEILING)} vivos, a lista do relatorio agent.report ` +
+        `(vivos + ${String(MAX_RUNS_HISTORY)} de historico) passaria do teto do canal ` +
+        `(${String(MAX_RUNS_PER_REPORT)} runs por mensagem) e o codec recusa-a: o ` +
+        'dono ficaria sem resposta aos agentes e as difusoes perder-se-iam.',
     )
   }
 }
