@@ -216,3 +216,114 @@ describe('provider/discord/parse — gramatica do custom_id (g1:<acao>:<token>)'
     assert.equal(lerAnswerTarget('{"i":1,"t":"x"}'), undefined, 'campos tem de ser strings')
   })
 })
+
+describe('provider/discord/parse — lerAnswerTarget (bordas do JSON)', () => {
+  it('campos extra sao ignorados; messageId vazio ou nao-string cai fora', () => {
+    assert.deepEqual(lerAnswerTarget('{"i":"a","t":"b","m":"m1","x":1}'), {
+      interactionId: 'a',
+      interactionToken: 'b',
+      messageId: 'm1',
+    })
+    assert.deepEqual(lerAnswerTarget('{"i":"a","t":"b","m":""}'), {
+      interactionId: 'a',
+      interactionToken: 'b',
+    }, 'messageId vazio nao entra')
+    assert.deepEqual(lerAnswerTarget('{"i":"a","t":"b","m":42}'), {
+      interactionId: 'a',
+      interactionToken: 'b',
+    }, 'messageId nao-string nao entra')
+  })
+
+  it('par sem i/t (vazio ou ausente) nao e da nossa forma; JSON malformado -> undefined', () => {
+    assert.equal(lerAnswerTarget('{"i":"","t":"b"}'), undefined)
+    assert.equal(lerAnswerTarget('{"i":"a","t":""}'), undefined)
+    assert.equal(lerAnswerTarget('{"i":"a"}'), undefined)
+    assert.equal(lerAnswerTarget('{"t":"b"}'), undefined)
+    assert.equal(lerAnswerTarget('{lixo'), undefined)
+    assert.equal(lerAnswerTarget('null'), undefined)
+    assert.equal(lerAnswerTarget('"string"'), undefined)
+    assert.equal(lerAnswerTarget('42'), undefined)
+  })
+
+  it('montarAnswerTarget sem messageId nao emite a chave m (JSON inequivoco)', () => {
+    assert.equal(montarAnswerTarget({ interactionId: 'i1', interactionToken: 't1' }), '{"i":"i1","t":"t1"}')
+  })
+})
+
+describe('provider/discord/parse — gramatica g1 (teto de 100 bytes, bordas)', () => {
+  it('buildCustomId com EXATAMENTE 100 bytes passa; 101 falha alto', () => {
+    // `g1:menu:` = 8 bytes; 92 chars de token = 100 bytes no total.
+    const exato = buildCustomId('menu', 't'.repeat(92))
+    assert.equal(utf8Bytes(exato), 100)
+    assert.throws(() => buildCustomId('menu', 't'.repeat(93)), /limite 100/u)
+  })
+
+  it('parseCustomId: o teto e medido ANTES do split (payload gigante morre cedo)', () => {
+    const gigante = `g1:menu:${'x'.repeat(200)}`
+    assert.deepEqual(parseCustomId(gigante), { ok: false, reason: 'deny:custom-id-too-long' })
+  })
+
+  it('parseCustomId: numero de partes errado (2 ou 4) -> unknown-schema', () => {
+    assert.deepEqual(parseCustomId('g1:menu'), { ok: false, reason: 'deny:custom-id-unknown-schema' })
+    assert.deepEqual(parseCustomId('g1:menu:tok:extra'), { ok: false, reason: 'deny:custom-id-unknown-schema' })
+  })
+
+  it('parseCustomId: acao desconhecida e token fora do alfabeto tem razoes DISTINTAS', () => {
+    assert.equal(parseCustomId('g1:acao-inventada:tok').ok, false)
+    // O '*' esta fora do alfabeto base64url mas NAO e o separador: 3 partes,
+    // token malformado (o teste de razoes distintas).
+    const razao = parseCustomId('g1:menu:tok*invalido')
+    assert.deepEqual(razao, { ok: false, reason: 'deny:custom-id-malformed-token' })
+    assert.equal(parseCustomId('g1:menu:').ok, false)
+  })
+})
+
+describe('provider/discord/parse — conversao de fronteira (D4) e descartes', () => {
+  it('id NUMERICO seguro (2^53 ou abaixo) converte a STRING na fronteira; inseguro descarta', () => {
+    const { mapear, descartados } = criarParse()
+    // 9007199254740991 = Number.MAX_SAFE_INTEGER: ainda seguro -> string.
+    const seguro = fakeInteractionCreate({ interactionId: 'x' })
+    ;(seguro.d as Record<string, unknown>)['id'] = 9007199254740991
+    const evento = mapear(seguro)
+    assert.equal(evento?.kind, 'acao')
+    const acao = evento as Extract<SurfaceEvent, { kind: 'acao' }>
+    assert.equal(lerAnswerTarget(acao.answerTarget)?.interactionId, '9007199254740991')
+    // 2**60 > 2^53: inseguro -> sem id na fronteira -> fail-closed. (Literal
+    // numerico proibido pelo lint: perderia precisao ja no fonte.)
+    const inseguro = fakeInteractionCreate({ interactionId: 'x' })
+    ;(inseguro.d as Record<string, unknown>)['id'] = 2 ** 60
+    assert.equal(mapear(inseguro), undefined)
+    assert.equal(descartados(), 1, 'o inseguro conta como descarte (DISCORD-019)')
+  })
+
+  it('author.id numerico seguro de MESSAGE_CREATE converte a string', () => {
+    const { mapear } = criarParse()
+    const msg = fakeMessageCreate({})
+    ;(msg.d as Record<string, unknown>)['author'] = { id: 12345 }
+    const e = mapear(msg) as Extract<SurfaceEvent, { kind: 'comando' }>
+    assert.equal(e.identity.userKey, '12345')
+  })
+
+  it('interacao com token nao-string ou data ausente e descartada sem excecao', () => {
+    const { mapear, descartados } = criarParse()
+    const semData = fakeInteractionCreate({})
+    ;(semData.d as Record<string, unknown>)['data'] = undefined
+    assert.equal(mapear(semData), undefined)
+    const tokenNumerico = fakeInteractionCreate({})
+    ;(tokenNumerico.d as Record<string, unknown>)['token'] = 12345
+    assert.equal(mapear(tokenNumerico), undefined)
+    assert.equal(descartados(), 2)
+  })
+
+  it('MESSAGE_CREATE com d nao-objecto e op 0 sem t contam como descartados', () => {
+    const { mapear, descartados } = criarParse()
+    assert.equal(mapear({ op: 0, t: 'MESSAGE_CREATE', s: 1, d: 'texto' }), undefined)
+    assert.equal(mapear({ op: 0, s: 5 }), undefined, 'op 0 sem t = dispatch-outro, contado')
+    assert.equal(descartados(), 2)
+  })
+
+  it('payload INTERACTION_CREATE com d null e recusado sem excecao', () => {
+    const { mapear } = criarParse()
+    assert.equal(mapear({ op: 0, t: 'INTERACTION_CREATE', d: null }), undefined)
+  })
+})

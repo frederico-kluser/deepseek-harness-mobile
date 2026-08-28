@@ -25,6 +25,12 @@ import { TOKEN_ENV_VAR } from '../../../worker/providers/telegram/token.ts'
 import { TOKEN_ENV_VAR as TOKEN_ENV_VAR_DISCORD } from '../../../worker/providers/discord/token.ts'
 import { runTelegramWorker } from '../../../worker/telegram-bot.ts'
 import {
+  aguardar as aguardarDiscord,
+  startFakeDiscord as startFakeDiscordApoio,
+  TOKEN_DE_TESTE as TOKEN_DE_TESTE_DISCORD,
+  type FakeDiscord,
+} from './providers/discord/apoio.ts'
+import {
   aguardar,
   captureLog,
   chamadasDe,
@@ -35,8 +41,10 @@ import {
 } from './bot-apoio.ts'
 
 const abertos: FakeBotApi[] = []
+const abertosDiscord: FakeDiscord[] = []
 after(async () => {
   await Promise.all(abertos.map((srv) => srv.close()))
+  await Promise.all(abertosDiscord.map((srv) => srv.close()))
 })
 
 const ARGV_LIMPO = ['/usr/bin/node', '/pacote/dist/worker/telegram-bot.js']
@@ -416,5 +424,231 @@ describe('worker/telegram-bot — ciclo completo contra o servidor falso', () =>
     assert.equal(code, WORKER_EXIT.POLLING)
     assert.match(log.all(), /a montagem do adaptador falhou/u)
     assert.equal(chamadasDe(srv, 'getUpdates').length, 0, 'nem chegou a fazer polling')
+  })
+})
+describe('worker/telegram-bot — o boot classifica pelo CODE do contrato (bordas)', () => {
+  it('start rejeita com code 10 (CONFIG) -> o processo sai 10, distinto de instabilidade', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const erro = new ProviderError(WORKER_EXIT.CONFIG, 'TOKEN_MISSING', 'configuracao recusada.')
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider: provedorComStartQueRejeita(erro),
+    })
+    assert.equal(code, WORKER_EXIT.CONFIG)
+    assert.equal(code, 10)
+    assert.notEqual(code, WORKER_EXIT.POLLING)
+    assert.match(log.all(), /TOKEN_MISSING/u)
+  })
+
+  it('start rejeita com code 13 (POLLING) -> sai 13 (o default so se usa SEM code)', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const erro = new ProviderError(WORKER_EXIT.POLLING, 'GATEWAY_FAILED', 'o loop do gateway morreu.')
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider: provedorComStartQueRejeita(erro),
+    })
+    assert.equal(code, WORKER_EXIT.POLLING)
+    assert.match(log.all(), /GATEWAY_FAILED/u)
+  })
+
+  it('create rebenta com ProviderError 11 -> sai 11 (o catch do arranque le o code)', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const provider: ProvedorDescrito = {
+      id: 'telegram',
+      create: () => {
+        throw new ProviderError(WORKER_EXIT.CONFLICT, 'POLLING_CONFLICT', '409: outro getUpdates vivo.')
+      },
+      lerToken: () => TOKEN_DE_TESTE,
+      assertTokenNaoEmArgv: () => undefined,
+    }
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider,
+    })
+    assert.equal(code, WORKER_EXIT.CONFLICT)
+    assert.match(log.all(), /POLLING_CONFLICT/u)
+  })
+
+  it('erro com code FORA do union (9, 15, string, decimal) -> POLLING 13 (nao e do contrato)', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    for (const code of [9, 15, '12', 12.5]) {
+      const erro = Object.assign(new Error('code estranho'), { code })
+      const saida = await runTelegramWorker({
+        env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
+        argv: ARGV_LIMPO,
+        log: log.logger,
+        time: new FakeTime(),
+        ipc,
+        provider: provedorComStartQueRejeita(erro),
+      })
+      assert.equal(saida, WORKER_EXIT.POLLING, `code ${String(code)} nao e do contrato: cai no default 13`)
+    }
+  })
+
+  it('o boot chama a assertTokenNaoEmArgv DO PROVEDOR (com o argv e o token)', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const recebidos: Array<{ argv: readonly string[]; token: string | undefined }> = []
+    const provider: ProvedorDescrito = {
+      id: 'discord',
+      create: () => {
+        throw new Error('nao chega aqui')
+      },
+      lerToken: () => TOKEN_DE_TESTE,
+      assertTokenNaoEmArgv: (argv, token) => {
+        recebidos.push({ argv, token })
+        throw new ProviderError(WORKER_EXIT.CONFIG, 'TOKEN_IN_ARGV', 'token na linha de comando.')
+      },
+    }
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE },
+      argv: [...ARGV_LIMPO, '--token', TOKEN_DE_TESTE],
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider,
+    })
+    assert.equal(code, WORKER_EXIT.CONFIG)
+    assert.equal(recebidos.length, 1, 'a assert do provedor correu uma vez')
+    assert.equal(recebidos[0]?.token, TOKEN_DE_TESTE, 'recebe o token lido do ambiente')
+    assert.deepEqual(recebidos[0]?.argv, [...ARGV_LIMPO, '--token', TOKEN_DE_TESTE])
+    assert.match(log.all(), /TOKEN_IN_ARGV/u)
+  })
+})
+
+describe('worker/telegram-bot — apiRootVar (bordas)', () => {
+  it('provedor SEM apiRootVar: o env da raiz do telegram NAO entra no create', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const depsRecebidas: Array<{ readonly apiRoot?: string }> = []
+    const provider: ProvedorDescrito = {
+      id: 'telegram',
+      // Sem apiRootVar: este provedor nao tem raiz via env.
+      create: (deps) => {
+        depsRecebidas.push(deps.apiRoot === undefined ? {} : { apiRoot: deps.apiRoot })
+        return {
+          id: 'telegram',
+          limits: { maxTextLength: 4096, maxActionRows: 1, maxActionPerRow: 1, maxActionDataBytes: 64, supportsEditing: true },
+          start: async () => undefined,
+          stop: async () => undefined,
+          publishCommands: async () => undefined,
+          sender: () => ({
+            send: async () => '',
+            edit: async () => 'unchanged',
+            answer: async () => true,
+          }),
+          descartados: () => 0,
+        }
+      },
+      lerToken: () => TOKEN_DE_TESTE,
+      assertTokenNaoEmArgv: () => undefined,
+    }
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE, TELEGRAM_API_ROOT: 'https://api.telegram.org' },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider,
+    })
+    assert.equal(code, WORKER_EXIT.OK)
+    assert.equal(depsRecebidas[0]?.apiRoot, undefined, 'sem apiRootVar o boot NAO le env nenhuma')
+  })
+
+  it('apiRootVar com env vazia: o boot NAO passa apiRoot (vazio = sem raiz)', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const { provider, depsRecebidas } = provedorQueCapturaDeps()
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE, DISCORD_API_ROOT: '' },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider,
+    })
+    assert.equal(code, WORKER_EXIT.OK)
+    assert.equal(depsRecebidas[0]?.apiRoot, undefined)
+  })
+})
+
+describe('worker/telegram-bot — o boot generico com o provedor discord REAL (registry)', () => {
+  it('DSH_GUARD_PROVIDER=discord: identifica, READY, para limpo (OK); o token nunca vai ao log', async () => {
+    const srv = await startFakeDiscordApoio()
+    abertosDiscord.push(srv)
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    let parar: (() => Promise<void>) | undefined
+
+    const corrida = runTelegramWorker({
+      env: {
+        DSH_GUARD_PROVIDER: 'discord',
+        [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE_DISCORD,
+        DISCORD_API_ROOT: srv.apiRoot,
+      },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      onBooted: (boot) => {
+        parar = boot.parar
+      },
+    })
+
+    await aguardarDiscord(() => srv.gatewayState.sessions >= 1, 'READY do discord no boot')
+    assert.ok(parar !== undefined, 'o handle de paragem existe')
+    await parar?.()
+    const code = await corrida
+
+    assert.equal(code, WORKER_EXIT.OK)
+    assert.equal(log.all().includes(TOKEN_DE_TESTE_DISCORD), false, 'o token do discord nao sai no log')
+    assert.equal(srv.gatewayState.identify[0]?.['token'], TOKEN_DE_TESTE_DISCORD, 'o identify levou o token')
+  })
+
+  it('DSH_GUARD_PROVIDER=discord: close 4004 no gateway -> o PROCESSO sai 12 (por codigo, nao por classe)', async () => {
+    const srv = await startFakeDiscordApoio()
+    abertosDiscord.push(srv)
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+
+    const corrida = runTelegramWorker({
+      env: {
+        DSH_GUARD_PROVIDER: 'discord',
+        [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE_DISCORD,
+        DISCORD_API_ROOT: srv.apiRoot,
+      },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+    })
+
+    await aguardarDiscord(() => srv.gatewayState.sessions >= 1, 'READY antes do 4004')
+    srv.fecharGateway(4004, 'token recusado')
+    const code = await Promise.race([
+      corrida,
+      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 5000)),
+    ])
+    assert.equal(code, WORKER_EXIT.UNAUTHORIZED, 'o fatal do discord sai com o codigo CERTO (12)')
+    assert.equal(code, 12)
+    assert.notEqual(code, WORKER_EXIT.POLLING, 'NAO pode cair em 13 (o debito da Onda 3)')
+    assert.match(log.all(), /GATEWAY_UNAUTHORIZED/u)
+    assert.equal(log.all().includes(TOKEN_DE_TESTE_DISCORD), false)
   })
 })

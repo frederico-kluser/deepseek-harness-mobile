@@ -189,3 +189,62 @@ describe('provider/discord/teclado — edicao in-place', () => {
 })
 
 export type { LogCapturado }
+
+describe('provider/discord/teclado — renderizacao (bordas do layout)', () => {
+  it('layout vazio ou so linhas sem botoes validos -> undefined (mensagem sem botoes)', () => {
+    assert.equal(renderActionRowLayout([]), undefined)
+    assert.equal(renderActionRowLayout([[], []]), undefined, 'linhas vazias nao viram ActionRow')
+    const log = captureLog()
+    assert.equal(renderActionRowLayout([[botao('', 'menu', 'tok')]], log.logger), undefined)
+  })
+
+  it('uma linha invalida entre validas e PULADA, nao aborta a renderizacao', () => {
+    const layout: ActionRowLayout = [
+      [botao('', 'menu', 'tok')], // rotulo vazio: pulada
+      [botao('Ok', 'menu', 'tok-a')],
+    ]
+    const componentes = renderActionRowLayout(layout)
+    assert.ok(componentes !== undefined)
+    assert.equal(componentes.length, 1, 'so a linha valida vira ActionRow')
+    assert.deepEqual(componentes[0], {
+      type: 1,
+      components: [{ type: 2, style: 1, label: 'Ok', custom_id: 'g1:menu:tok-a' }],
+    })
+  })
+
+  it('o log avisa em cada descarte com os campos (rotulo acima do limite)', () => {
+    const log = captureLog()
+    const layout: ActionRowLayout = [[botao('x'.repeat(BUTTON_LABEL_MAX_CHARS + 1), 'menu', 'tok')]]
+    renderActionRowLayout(layout, log.logger)
+    assert.ok(log.lines.some((l) => l.includes('acima do limite') && l.includes(`max=${BUTTON_LABEL_MAX_CHARS}`)))
+  })
+})
+
+describe('provider/discord/teclado — resposta ao clique (bordas do protocolo)', () => {
+  it('text === "" (vazio) e tratado como NEGACAO silenciosa: type 6, sem data', async () => {
+    const { api, chamadas } = apiDeTeste()
+    const alvo = montarAnswerTarget({ interactionId: 'i1', interactionToken: 't1' })
+    const ok = await answerCallbackAlways(api, alvo, captureLog().logger, { text: '' })
+    assert.equal(ok, true)
+    assert.deepEqual(chamadas[0], { tipo: CALLBACK_DEFERRED_UPDATE_MESSAGE })
+  })
+
+  it('com messageTarget E texto: o toast (type 4) ganha — nada de showAlert no corpo', async () => {
+    const { api, chamadas } = apiDeTeste()
+    const alvo = montarAnswerTarget({ interactionId: 'i1', interactionToken: 't1', messageId: 'm7' })
+    const ok = await answerCallbackAlways(api, alvo, captureLog().logger, { text: 'Ligando…', showAlert: true })
+    assert.equal(ok, true)
+    assert.deepEqual(chamadas[0], {
+      tipo: CALLBACK_CHANNEL_MESSAGE_WITH_SOURCE,
+      data: { content: 'Ligando…', flags: MESSAGE_FLAG_EPHEMERAL },
+    }, 'o showAlert do contrato do telegram nao tem analogo: o corpo so leva content+flags')
+  })
+
+  it('answerTarget com messageId vazio na serializacao: cai no type 6 (sem messageTarget)', async () => {
+    const { api, chamadas } = apiDeTeste()
+    // m="" nao entra no lerAnswerTarget -> sem messageId -> DEFERRED (6).
+    const ok = await answerCallbackAlways(api, '{"i":"i1","t":"t1","m":""}', captureLog().logger)
+    assert.equal(ok, true)
+    assert.deepEqual(chamadas[0], { tipo: CALLBACK_DEFERRED_UPDATE_MESSAGE })
+  })
+})

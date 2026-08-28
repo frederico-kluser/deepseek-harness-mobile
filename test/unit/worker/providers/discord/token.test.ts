@@ -82,3 +82,42 @@ describe('provider/discord/token — TG-069 (token NUNCA em argv)', () => {
     assert.doesNotThrow(() => assertTokenNotInArgv(['--config', 'caminho/curto'], TOKEN_DE_TESTE))
   })
 })
+
+describe('provider/discord/token — DISCORD_TOKEN_SHAPE (forma conservadora)', () => {
+  it('>= 50 chars do alfabeto base64url + separadores comuns e a forma', () => {
+    assert.ok(DISCORD_TOKEN_SHAPE.test('A'.repeat(50)), '50 chars: o piso exato')
+    assert.ok(DISCORD_TOKEN_SHAPE.test(`abcDEF-_.${'x'.repeat(45)}`), 'alfabeto + separadores ._-')
+    assert.ok(DISCORD_TOKEN_SHAPE.test('a'.repeat(80)), 'muito acima do piso')
+  })
+
+  it('abaixo de 50 chars ou com caracteres fora do alfabeto nao e a forma', () => {
+    assert.equal(DISCORD_TOKEN_SHAPE.test('A'.repeat(49)), false, '49 chars: abaixo do piso')
+    assert.equal(DISCORD_TOKEN_SHAPE.test(''), false)
+    assert.equal(DISCORD_TOKEN_SHAPE.test(`a${'x'.repeat(60)}=`), false, '= (padding base64) nao e a forma')
+    assert.equal(DISCORD_TOKEN_SHAPE.test(`a${'x'.repeat(60)}:`), false, ': (separador g1) nao e a forma')
+    assert.equal(DISCORD_TOKEN_SHAPE.test(`a${'x'.repeat(60)} `), false, 'espaco nao e a forma')
+  })
+})
+
+describe('provider/discord/token — assertTokenNotInArgv (bordas)', () => {
+  it('token curto (< 8 chars) nao dispara a literal — a FORMA continua a valer', () => {
+    // A literal so vale a partir de 8 chars (senao o proprio argv cheio de
+    // palavras curtas recusaria tudo); a forma apanha o resto.
+    assert.doesNotThrow(() => assertTokenNotInArgv([...ARGV_LIMPO, '--token', 'abc123'], 'abc123'))
+  })
+
+  it('sem o token (undefined) so a forma recusa — um token de OUTRO bot', () => {
+    const outroToken = 'MzQ0NTAzMDA4MzYyODU0NzE2OTk1Njk3OTIzNDU2Nzg5MDEyMzQ1Ng'
+    assert.throws(
+      () => assertTokenNotInArgv([...ARGV_LIMPO, outroToken]),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderError)
+        assert.equal(error.code, WORKER_EXIT.CONFIG)
+        assert.equal(error.reason, 'TOKEN_IN_ARGV')
+        assert.match(error.message, /argv\[2\]/u, 'a mensagem cita o INDICE do argumento')
+        assert.equal(error.message.includes(outroToken), false, 'nao cita o valor recusado')
+        return true
+      },
+    )
+  })
+})
