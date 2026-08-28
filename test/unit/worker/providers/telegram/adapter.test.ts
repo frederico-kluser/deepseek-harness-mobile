@@ -14,6 +14,8 @@ import {
   TELEGRAM_LIMITS,
   type TelegramAdapter,
 } from '../../../../../worker/providers/telegram/adapter.ts'
+import { ProviderError } from '../../../../../worker/providers/telegram/interno.ts'
+import { WORKER_EXIT } from '../../../../../worker/lib/errors.ts'
 import {
   canonicalErrors,
   captureLog,
@@ -196,7 +198,15 @@ describe('provider/telegram/adapter — o loop de boot', () => {
       },
     )
     assert.equal(rejeitou, true, 'start() rejeita num 409 de getUpdates pos-onStart')
-    assert.equal((erro as { error_code?: number } | undefined)?.error_code, 409, 'a causa e o 409 do Telegram')
+    // Onda 3-fix: o erro que sai do adaptador e o do CONTRATO COMUM —
+    // `ProviderError` com o `code` NUMERICO 11 (o boot classifica por code, sem
+    // instanceof); o GrammyError original viaja na `cause` para o log.
+    assert.ok(erro instanceof ProviderError, 'o erro do contrato comum')
+    if (erro instanceof ProviderError) {
+      assert.equal(erro.code, WORKER_EXIT.CONFLICT, '409 -> 11')
+      assert.equal(erro.reason, 'POLLING_CONFLICT')
+      assert.equal((erro.cause as { error_code?: number } | undefined)?.error_code, 409, 'a causa e o 409 do Telegram')
+    }
     await parar(adapter)
   })
 
@@ -219,7 +229,12 @@ describe('provider/telegram/adapter — o loop de boot', () => {
       },
     )
     assert.equal(rejeitou, true, 'start() rejeita num 401 de getUpdates')
-    assert.equal((erro as { error_code?: number } | undefined)?.error_code, 401)
+    assert.ok(erro instanceof ProviderError, 'o erro do contrato comum')
+    if (erro instanceof ProviderError) {
+      assert.equal(erro.code, WORKER_EXIT.UNAUTHORIZED, '401 -> 12')
+      assert.equal(erro.reason, 'POLLING_UNAUTHORIZED')
+      assert.equal((erro.cause as { error_code?: number } | undefined)?.error_code, 401)
+    }
     await parar(adapter)
   })
 })

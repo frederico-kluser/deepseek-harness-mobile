@@ -11,6 +11,14 @@
  * (relogio, espera, logger, mascaramento, erro tipado e codigos de saida)
  * vivem AQUI, uma unica vez.
  *
+ * EXCEPCAO SANCTIONADA (Onda 3-fix): o CONTRATO DE ERRO — a classe
+ * `ProviderError` e o union `WorkerExitCode` — e CANONICO em
+ * `worker/lib/errors.ts`, o unico `worker/lib/*` que este adaptador importa:
+ * e o contrato que os DOIS adaptadores e o BOOT GENERICO partilham, e o boot
+ * classifica o erro terminal de QUALQUER provedor lendo o `code` numerico
+ * (sem `instanceof` de classe de provedor). Aqui re-exporta-se para os
+ * ficheiros internos e os testes continuarem a importar do mesmo sitio.
+ *
  * ===========================================================================
  * PORQUE RELOGIO E LOGGER SAO TIPOS E NAO IMPORTS
  * ===========================================================================
@@ -156,10 +164,8 @@ export function describeForLog(value: unknown, knownSecrets: readonly string[] =
 }
 
 /* ========================================================================== */
-/* ERRO TIPADO E CODIGOS DE SAIDA (port de `worker/lib/errors.ts`)            */
+/* ERRO TIPADO E CODIGOS DE SAIDA — CANONICO em `worker/lib/errors.ts`        */
 /* ========================================================================== */
-
-export const WORKER_LOG_NAME = 'dsh-guard-messenger/worker'
 
 /**
  * Vocabulario FECHADO de causas do adaptador discord. Espelha o
@@ -183,37 +189,12 @@ export type ProviderErrorCode =
   | 'BOOT_TIMEOUT'
   | 'CUSTOM_ID_TOO_LONG'
 
-export class ProviderError extends Error {
-  override readonly name = 'ProviderError'
-  readonly code: ProviderErrorCode
-
-  constructor(code: ProviderErrorCode, detail: string, options?: { readonly cause?: unknown }) {
-    super(`[${WORKER_LOG_NAME}] ${code}: ${detail}`, options)
-    this.code = code
-  }
-}
-
-export const WORKER_EXIT = Object.freeze({
-  OK: 0,
-  CONFIG: 10,
-  CONFLICT: 11,
-  UNAUTHORIZED: 12,
-  POLLING: 13,
-  BOOT_TIMEOUT: 14,
-})
-
-/** Codigo de saida que corresponde a cada causa terminal. */
-export function exitCodeFor(code: ProviderErrorCode): number {
-  switch (code) {
-    case 'TOKEN_MISSING':
-    case 'TOKEN_IN_ARGV':
-      return WORKER_EXIT.CONFIG
-    case 'GATEWAY_UNAUTHORIZED':
-      return WORKER_EXIT.UNAUTHORIZED
-    case 'BOOT_TIMEOUT':
-      return WORKER_EXIT.BOOT_TIMEOUT
-    case 'GATEWAY_FAILED':
-    case 'CUSTOM_ID_TOO_LONG':
-      return WORKER_EXIT.POLLING
-  }
-}
+/**
+ * A classe de erro e os codigos de saida do CONTRATO COMUM (Onda 3-fix):
+ * `ProviderError` com o `code` NUMERICO `WorkerExitCode` (10..14) — o boot
+ * generico classifica por `code`, nao por `instanceof`; `WORKER_EXIT` e o
+ * vocabulario fechado dos codigos de saida. (O `exitCodeFor` deste adaptador
+ * desapareceu: o `code` do `ProviderError` E o codigo de saida.)
+ */
+export { ProviderError, WORKER_EXIT, isWorkerExitCode } from '../../lib/errors.ts'
+export type { WorkerExitCode } from '../../lib/errors.ts'

@@ -42,13 +42,7 @@
 import type { ClienteDiscord } from './cliente.ts'
 import { DiscordApiError } from './cliente.ts'
 import type { ProviderErrorCode, TimeSource, WorkerLogger } from './interno.ts'
-import {
-  ProviderError,
-  WORKER_EXIT,
-  describeForLog,
-  exitCodeFor,
-  systemTime,
-} from './interno.ts'
+import { ProviderError, WORKER_EXIT, describeForLog, systemTime } from './interno.ts'
 
 /** Gateway opcodes (doc oficial de opcodes-and-status-codes). */
 export const OP = Object.freeze({
@@ -228,12 +222,13 @@ export function iniciarGateway(
       } catch (error) {
         if (error instanceof DiscordApiError && error.status === 401) {
           fatal = new ProviderError(
+            WORKER_EXIT.UNAUTHORIZED,
             'GATEWAY_UNAUTHORIZED',
             'o token foi recusado pelo GET /gateway/bot (HTTP 401): revogado ou errado. ' +
               'O processo SAI: reiniciar cegamente nao resolve um token recusado.',
             { cause: error },
           )
-          log.error(fatal.message, { code: fatal.code, exit_code: exitCodeFor(fatal.code) })
+          log.error(fatal.message, { code: fatal.reason, exit_code: fatal.code })
           return 'fatal'
         }
         // Rede/proxy: o backoff do loop volta a tentar; o prazo de boot cobre.
@@ -472,10 +467,11 @@ export function iniciarGateway(
               ? 'intents invalidos (close 4013): a soma de bits nao e um intents valido'
               : 'intent privilegiado nao aprovado (close 4014): ative o MESSAGE_CONTENT no portal do desenvolvedor'
         fatal = new ProviderError(
+          WORKER_EXIT.UNAUTHORIZED,
           'GATEWAY_UNAUTHORIZED',
           `${motivo}. O processo SAI: zero reconexoes para um veredito de token.`,
         )
-        log.error(fatal.message, { code: fatal.code, exit_code: exitCodeFor(fatal.code), close: code })
+        log.error(fatal.message, { code: fatal.reason, exit_code: fatal.code, close: code })
         return
       }
       if (code === CLOSE.NORMAL || code === CLOSE.GOING_AWAY) {
@@ -500,6 +496,7 @@ export function iniciarGateway(
   const prazoBoot = setTimeout(() => {
     if (arrancou || parado) return
     fatal = new ProviderError(
+      WORKER_EXIT.BOOT_TIMEOUT,
       'BOOT_TIMEOUT',
       `o gateway nao chegou a READY/RESUMED em ${bootTimeoutMs} ms`,
     )
@@ -524,8 +521,18 @@ export function iniciarGateway(
     clearTimeout(prazoBoot)
 
     if (fatal !== undefined) {
-      log.error(fatal.message, { code: fatal.code, exit_code: exitCodeFor(fatal.code) })
-      return { kind: 'fatal', code: fatal.code, exitCode: exitCodeFor(fatal.code), error: fatal }
+      log.error(fatal.message, { code: fatal.reason, exit_code: fatal.code })
+      // O `code` do outcome e a CAUSA legivel (o `ProviderError.reason`); o
+      // `exitCode` e o NUMERICO (o `ProviderError.code`) — o boot generico
+      // classifica por este ultimo, lendo o campo, sem instanceof de provedor.
+      // O cast e honesto: `reason` e sempre um dos valores do vocabulario
+      // fechado (construido com esse literal nos tres sitios de fatal).
+      return {
+        kind: 'fatal',
+        code: fatal.reason as ProviderErrorCode,
+        exitCode: fatal.code,
+        error: fatal,
+      }
     }
     return { kind: 'stopped', exitCode: WORKER_EXIT.OK }
   })()

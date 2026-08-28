@@ -53,10 +53,15 @@ import type { SurfaceAction } from '../surface/contract.ts'
 import { gerarRequestId } from '../surface/tokens.ts'
 
 import { createTelegramProvider, type TelegramAdapter } from './telegram/adapter.ts'
-import { assertTokenNotInArgv, lerTokenDoAmbiente } from './telegram/token.ts'
+import {
+  API_ROOT_ENV_VAR as TELEGRAM_API_ROOT_ENV_VAR,
+  assertTokenNotInArgv,
+  lerTokenDoAmbiente,
+} from './telegram/token.ts'
 
 import { createDiscordProvider, type DiscordAdapter } from './discord/adapter.ts'
 import {
+  API_ROOT_ENV_VAR as DISCORD_API_ROOT_ENV_VAR,
   assertTokenNotInArgv as assertDiscordTokenNotInArgv,
   lerTokenDoAmbiente as lerTokenDiscordDoAmbiente,
 } from './discord/token.ts'
@@ -112,6 +117,14 @@ export interface ProvedorDescrito {
   readonly lerToken: (env: NodeJS.ProcessEnv) => string
   /** Recusa arrancar com token na linha de comandos (TG-069). */
   readonly assertTokenNaoEmArgv: (argv: readonly string[], token?: string) => void
+  /**
+   * Nome da variavel de ambiente com a raiz da API do provedor (duble de
+   * teste). O BOOT generico le `env[apiRootVar]` e passa o valor como
+   * `apiRoot` ao `create` SO quando definido — cada provedor com a SUA
+   * variavel, sem vazamento cruzado (o boot da Onda 4 lia a raiz do telegram
+   * para qualquer provedor). `undefined` = o provedor nao tem raiz via env.
+   */
+  readonly apiRootVar?: string
 }
 
 /** As deps que o boot passa ao `create` de QUALQUER provedor. */
@@ -125,6 +138,7 @@ export interface ProvedorCreateDeps {
 
 const DESCRICAO_TELEGRAM: ProvedorDescrito = {
   id: 'telegram',
+  apiRootVar: TELEGRAM_API_ROOT_ENV_VAR,
   create: (deps: ProvedorCreateDeps): TelegramAdapter => createTelegramProvider(deps),
   lerToken: (env: NodeJS.ProcessEnv): string => lerTokenDoAmbiente(env),
   assertTokenNaoEmArgv: (argv: readonly string[], token?: string): void =>
@@ -133,6 +147,7 @@ const DESCRICAO_TELEGRAM: ProvedorDescrito = {
 
 const DESCRICAO_DISCORD: ProvedorDescrito = {
   id: 'discord',
+  apiRootVar: DISCORD_API_ROOT_ENV_VAR,
   create: (deps: ProvedorCreateDeps): DiscordAdapter => createDiscordProvider(deps),
   lerToken: (env: NodeJS.ProcessEnv): string => lerTokenDiscordDoAmbiente(env),
   assertTokenNaoEmArgv: (argv: readonly string[], token?: string): void =>

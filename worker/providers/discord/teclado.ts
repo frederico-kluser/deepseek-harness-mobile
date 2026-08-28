@@ -20,8 +20,11 @@
  * ===========================================================================
  * O análogo do `answerCallbackQuery`: `POST /interactions/{id}/{token}/
  * callback`. Os tipos (doc oficial de interactions, InteractionCallbackType):
- *   - type 6 `DEFERRED_UPDATE_MESSAGE` — ACK o clique SEM estado de loading
- *     e SEM editar: o girador para e a edicao real (se houver) vem pelo PATCH;
+ *   - type 7 `UPDATE_MESSAGE` — ACK do clique num botao de uma MENSAGEM
+ *     (quando o answerTarget carrega o `messageId`): sem `data`, a mensagem
+ *     fica INTACTA e o girador para — a edicao real (se houver) vem pelo PATCH;
+ *   - type 6 `DEFERRED_UPDATE_MESSAGE` — o mesmo ACK silencioso para cliques
+ *     SEM messageTarget (fallback);
  *   - type 4 `CHANNEL_MESSAGE_WITH_SOURCE` com `flags: 64` (EPHEMERAL) — a
  *     resposta com texto (o "toast" do nucleo: "Ligando...", "Ok, cancelado."),
  *     visivel so para quem clicou e que some ao trocar de canal.
@@ -39,6 +42,13 @@ export const BUTTON_LABEL_MAX_CHARS = 80
 
 /** `InteractionCallbackType.DEFERRED_UPDATE_MESSAGE` — ACK silencioso (TG-027). */
 export const CALLBACK_DEFERRED_UPDATE_MESSAGE = 6
+
+/**
+ * `InteractionCallbackType.UPDATE_MESSAGE` — ACK de um clique COM messageTarget
+ * (DISCORD-027): sem `data`, a mensagem fica intacta e o girador para; e a
+ * resposta DOCUMENTADA para cliques em botoes de mensagens.
+ */
+export const CALLBACK_UPDATE_MESSAGE = 7
 
 /** `InteractionCallbackType.CHANNEL_MESSAGE_WITH_SOURCE` — resposta com texto. */
 export const CALLBACK_CHANNEL_MESSAGE_WITH_SOURCE = 4
@@ -149,9 +159,14 @@ export async function answerCallbackAlways(
       })
     } else {
       // NEGACAO/confirmacao silenciosa: ACK sem loading e sem texto. A
-      // edicao real (estado) chega pelo PATCH do `edit`.
+      // edicao real (estado) chega pelo PATCH do `edit`. Com messageTarget o
+      // ACK e type 7 (UPDATE_MESSAGE — sem `data` a mensagem fica INTACTA);
+      // sem messageTarget cai no type 6 (DEFERRED_UPDATE_MESSAGE).
       await api.answerInteraction(alvo.interactionId, alvo.interactionToken, {
-        type: CALLBACK_DEFERRED_UPDATE_MESSAGE,
+        type:
+          alvo.messageId === undefined
+            ? CALLBACK_DEFERRED_UPDATE_MESSAGE
+            : CALLBACK_UPDATE_MESSAGE,
       })
     }
     return true

@@ -146,8 +146,9 @@ export function spawnWorkerDiscord(deps: { srv: FakeDiscordE2E; argvExtra?: read
     pendurado = true
     try {
       child.kill('SIGKILL')
-    } catch {
+    } catch (error) {
       // processo ja morreu; o 'close' resolve a promessa
+      void error
     }
   }, 20_000)
   watchdog.unref()
@@ -170,15 +171,17 @@ export function spawnWorkerDiscord(deps: { srv: FakeDiscordE2E; argvExtra?: read
     escrever: (mensagem) => {
       try {
         child.stdin?.write(`${JSON.stringify(mensagem)}\n`)
-      } catch {
+      } catch (error) {
         // stdin ja fechado: nada a fazer
+        void error
       }
     },
     encerrar: () => {
       try {
         child.stdin?.end()
-      } catch {
+      } catch (error) {
         // stdin ja fechado: nada a fazer
+        void error
       }
     },
     parar: async (): Promise<void> => {
@@ -192,8 +195,9 @@ export function spawnWorkerDiscord(deps: { srv: FakeDiscordE2E; argvExtra?: read
         const t = setTimeout(() => {
           try {
             child.kill('SIGKILL')
-          } catch {
+          } catch (error) {
             // morreu entretanto
+            void error
           }
           resolve()
         }, 2000)

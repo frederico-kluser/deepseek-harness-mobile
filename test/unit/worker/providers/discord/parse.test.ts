@@ -85,11 +85,13 @@ describe('provider/discord/parse — clique bem formado (INTERACTION_CREATE)', (
     assert.equal(acao.messageTarget, '1300112233445566778')
     assert.equal(acao.identity.userKey, OWNER_SNOWFLAKE)
     assert.equal(acao.identity.chatKey, OWNER_CHANNEL)
-    // TG-027: o answerTarget carrega o PAR (interactionId, interactionToken).
+    // TG-027: o answerTarget carrega o PAR (interactionId, interactionToken)
+    // e o messageId da mensagem do botao (para o ACK type 7, DISCORD-027).
     const alvo = lerAnswerTarget(acao.answerTarget)
     assert.deepEqual(alvo, {
       interactionId: '1300223344556677889',
       interactionToken: 'interacao-token-sintetico',
+      messageId: '1300112233445566778',
     })
   })
 

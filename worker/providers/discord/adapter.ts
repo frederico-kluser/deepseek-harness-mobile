@@ -115,9 +115,10 @@ export function createDiscordProvider(deps: DiscordProviderDeps): DiscordAdapter
     throw new Error('token vazio: nao ha bot para construir (valide antes com lerTokenDoAmbiente)')
   }
 
-  // A raiz da API: (1) a injetada pelo teste; (2) a do AMBIENTE (`DISCORD_API_ROOT`,
-  // que o boot generico da Onda 4 ainda nao le por provedor — ele le a raiz do
-  // telegram, que em producao discord esta ausente); (3) a publica.
+  // A raiz da API: (1) a injetada pelo boot/teste (o boot generico le a SUA
+  // env por provedor — `DISCORD_API_ROOT` via `apiRootVar` do registry, nunca
+  // a do telegram); (2) a do AMBIENTE aqui como fallback para uso direto do
+  // adaptador; (3) a publica.
   const apiRoot = deps.apiRoot ?? lerApiRootDoAmbiente(process.env)
 
   const cliente: ClienteDiscord = criarClienteDiscord({

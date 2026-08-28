@@ -20,6 +20,7 @@ import {
   TOKEN_ENV_VAR,
 } from '../../../../../worker/providers/discord/token.ts'
 import { ProviderError } from '../../../../../worker/providers/discord/interno.ts'
+import { WORKER_EXIT } from '../../../../../worker/lib/errors.ts'
 import { TOKEN_DE_TESTE } from './apoio.ts'
 
 const ARGV_LIMPO = ['/usr/bin/node', '/pacote/dist/worker/telegram-bot.js']
@@ -36,7 +37,10 @@ describe('provider/discord/token — as variaveis (contrato com o host)', () => 
       () => lerTokenDoAmbiente({}),
       (error: unknown) => {
         assert.ok(error instanceof ProviderError)
-        assert.equal(error.code, 'TOKEN_MISSING')
+        // O contrato comum (Onda 3-fix): o `code` e o NUMERICO 10 (CONFIG) e a
+        // causa legivel vive no `reason`/mensagem.
+        assert.equal(error.code, WORKER_EXIT.CONFIG)
+        assert.equal(error.reason, 'TOKEN_MISSING')
         assert.match(error.message, /DISCORD_BOT_TOKEN/u)
         assert.equal(error.message.includes('token-x'), false, 'nao cita valores')
         return true
@@ -59,7 +63,8 @@ describe('provider/discord/token — TG-069 (token NUNCA em argv)', () => {
       () => assertTokenNotInArgv([...ARGV_LIMPO, '--token', TOKEN_DE_TESTE], TOKEN_DE_TESTE),
       (error: unknown) => {
         assert.ok(error instanceof ProviderError)
-        assert.equal(error.code, 'TOKEN_IN_ARGV')
+        assert.equal(error.code, WORKER_EXIT.CONFIG)
+        assert.equal(error.reason, 'TOKEN_IN_ARGV')
         assert.match(error.message, /DISCORD_BOT_TOKEN/u)
         return true
       },

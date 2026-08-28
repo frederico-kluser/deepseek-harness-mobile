@@ -49,6 +49,7 @@ import {
   exitCodeFor,
   describeForLog,
   WORKER_EXIT,
+  type WorkerExitCode,
   type WorkerLogger,
 } from './interno.ts'
 
@@ -93,6 +94,7 @@ export interface TelegramPollingOptions {
 export function assertPollingOptions(options: TelegramPollingOptions): void {
   if (options.allowed_updates === undefined) {
     throw new ProviderError(
+      WORKER_EXIT.POLLING,
       'POLLING_FAILED',
       'allowed_updates omitido: o servidor MANTERIA a configuracao anterior, ' +
         'que e estado invisivel guardado do lado do Telegram.',
@@ -100,6 +102,7 @@ export function assertPollingOptions(options: TelegramPollingOptions): void {
   }
   if (options.allowed_updates.length === 0) {
     throw new ProviderError(
+      WORKER_EXIT.POLLING,
       'POLLING_FAILED',
       'allowed_updates vazio: na Bot API isso NAO e "nenhum", e o reset para o ' +
         'conjunto por omissao — abre a superficie fechada para mais de vinte.',
@@ -107,12 +110,14 @@ export function assertPollingOptions(options: TelegramPollingOptions): void {
   }
   if (options.timeout === undefined || options.timeout > LONG_POLL_MAX_TIMEOUT) {
     throw new ProviderError(
+      WORKER_EXIT.POLLING,
       'POLLING_FAILED',
       `timeout tem de existir e ser <= ${LONG_POLL_MAX_TIMEOUT} (o servidor clampa la de qualquer forma).`,
     )
   }
   if (options.drop_pending_updates !== true) {
     throw new ProviderError(
+      WORKER_EXIT.POLLING,
       'POLLING_FAILED',
       'drop_pending_updates tem de ser true no boot: ate 24 h de comandos represados ' +
         'executariam de uma vez ao arrancar.',
@@ -127,7 +132,8 @@ export function assertPollingOptions(options: TelegramPollingOptions): void {
  */
 export function classifyPollingError(error: unknown): {
   readonly code: ProviderErrorCode
-  readonly exitCode: number
+  /** Ja o codigo do CONTRATO COMUM (10..14): o wrap em ProviderError usa-o tal qual. */
+  readonly exitCode: WorkerExitCode
   readonly message: string
 } {
   if (error instanceof GrammyError && error.error_code === CONFLICT_OTHER_GET_UPDATES) {
@@ -214,8 +220,10 @@ export async function runPolling(deps: RunPollingDeps): Promise<PollingOutcome> 
     const resultado = await Promise.race([started.then(() => 'stopped' as const), prazo])
 
     if (resultado === 'boot-timeout') {
+      const code: ProviderErrorCode = 'BOOT_TIMEOUT'
       const erro = new ProviderError(
-        'BOOT_TIMEOUT',
+        WORKER_EXIT.BOOT_TIMEOUT,
+        code,
         `o arranque nao chegou a receber updates em ${bootTimeoutMs} ms`,
       )
       deps.log.error(
@@ -223,10 +231,10 @@ export async function runPolling(deps: RunPollingDeps): Promise<PollingOutcome> 
           `${bootTimeoutMs} ms sem o polling comecar. Causa tipica: a Bot API esta inalcancavel ` +
           'e o retry interno do grammY entrou num sono longo. O adaptador SAI para que o ' +
           'supervisor do host aplique a sua propria politica de reinicio.',
-        { code: erro.code, exit_code: exitCodeFor(erro.code), boot_timeout_ms: bootTimeoutMs },
+        { code: erro.reason, exit_code: erro.code, boot_timeout_ms: bootTimeoutMs },
       )
       await pararComCuidado(deps)
-      return { kind: 'fatal', code: erro.code, exitCode: exitCodeFor(erro.code), error: erro }
+      return { kind: 'fatal', code, exitCode: erro.code, error: erro }
     }
 
     deps.log.info('long polling terminado a pedido')
@@ -238,7 +246,16 @@ export async function runPolling(deps: RunPollingDeps): Promise<PollingOutcome> 
       exit_code: verdict.exitCode,
       cause: describeForLog(error, secretsOf()),
     })
-    return { kind: 'fatal', code: verdict.code, exitCode: verdict.exitCode, error }
+    // O erro que REJEITA o `adapter.start` e o do CONTRATO COMUM: `ProviderError`
+    // com o `code` NUMERICO (11/12/13). O boot generico le o campo e usa-o como
+    // codigo de saida — sem `instanceof` de classe de provedor. A causa original
+    // (o GrammyError 409/401) fica em `cause` para o log.
+    return {
+      kind: 'fatal',
+      code: verdict.code,
+      exitCode: verdict.exitCode,
+      error: new ProviderError(verdict.exitCode, verdict.code, verdict.message, { cause: error }),
+    }
   }
 }
 

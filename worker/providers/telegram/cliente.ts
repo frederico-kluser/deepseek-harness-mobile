@@ -21,7 +21,7 @@
 import { Bot, GrammyError, HttpError, type ApiClientOptions, type Context } from 'grammy'
 
 import { type AutoRetryOptions, createAutoRetryTransformer, createTransportLogTransformer } from './transporte.ts'
-import { systemTime, describeForLog, ProviderError, type TimeSource, type WorkerLogger } from './interno.ts'
+import { systemTime, describeForLog, ProviderError, WORKER_EXIT, type TimeSource, type WorkerLogger } from './interno.ts'
 
 export interface CreateTelegramBotOptions {
   readonly token: string
@@ -111,7 +111,11 @@ export function createErrorHandler(
 export function createTelegramBot(options: CreateTelegramBotOptions): Bot<Context> {
   const token = options.token.trim()
   if (token === '') {
-    throw new ProviderError('TOKEN_MISSING', 'token vazio: nao ha bot para construir')
+    throw new ProviderError(
+      WORKER_EXIT.CONFIG,
+      'TOKEN_MISSING',
+      'token vazio: nao ha bot para construir',
+    )
   }
 
   const time = options.time ?? systemTime

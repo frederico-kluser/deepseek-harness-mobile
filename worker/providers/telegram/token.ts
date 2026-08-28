@@ -19,7 +19,7 @@
  * entrega o token a quem estiver a olhar para o ecra (TG-069).
  */
 
-import { ProviderError } from './interno.ts'
+import { ProviderError, WORKER_EXIT } from './interno.ts'
 
 /** O nome que o HOST escreve no ambiente do worker. Contrato com o host. */
 export const TOKEN_ENV_VAR = 'TELEGRAM_BOT_TOKEN'
@@ -47,6 +47,7 @@ export function lerTokenDoAmbiente(env: NodeJS.ProcessEnv): string {
   const cru = env[TOKEN_ENV_VAR]
   if (cru === undefined || cru.trim() === '') {
     throw new ProviderError(
+      WORKER_EXIT.CONFIG,
       'TOKEN_MISSING',
       `a variavel de ambiente ${TOKEN_ENV_VAR} esta ausente ou vazia; ` +
         'o host constroi o ambiente do worker por allowlist e e ela que a escreve',
@@ -68,6 +69,7 @@ export function assertTokenNotInArgv(argv: readonly string[], token?: string): v
     const literal = token !== undefined && token.length >= 8 && arg.includes(token)
     if (literal || BOT_TOKEN_SHAPE.test(arg)) {
       throw new ProviderError(
+        WORKER_EXIT.CONFIG,
         'TOKEN_IN_ARGV',
         `argv[${index}] contem algo com forma de token do Telegram. ` +
           `/proc/<pid>/cmdline e legivel por qualquer processo local: o token entra por ${TOKEN_ENV_VAR}, ` +

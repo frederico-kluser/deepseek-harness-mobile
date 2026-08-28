@@ -176,11 +176,23 @@ export function parseCustomId(data: unknown): CustomIdParse {
 export interface AnswerTargetDiscord {
   readonly interactionId: string
   readonly interactionToken: string
+  /**
+   * A mensagem onde o botao vive (o `d.message.id`), quando o clique veio de
+   * um botao de uma mensagem. O sender usa-o para responder ao clique com
+   * `type 7` (UPDATE_MESSAGE) em vez de `type 6` (DEFERRED_UPDATE_MESSAGE) —
+   * o ACK certo quando ha messageTarget (o callback edita a mensagem no
+   * lugar; sem `data`, a mensagem fica INTACTA e o girador para).
+   */
+  readonly messageId?: string
 }
 
 /** Serializa o par num `answerTarget` STRING (D4). */
 export function montarAnswerTarget(alvo: AnswerTargetDiscord): string {
-  return JSON.stringify({ i: alvo.interactionId, t: alvo.interactionToken })
+  return JSON.stringify({
+    i: alvo.interactionId,
+    t: alvo.interactionToken,
+    ...(alvo.messageId === undefined ? {} : { m: alvo.messageId }),
+  })
 }
 
 /** Le o `answerTarget` de volta. `undefined` = nao e da nossa forma. */
@@ -192,7 +204,12 @@ export function lerAnswerTarget(alvo: string): AnswerTargetDiscord | undefined {
     if (typeof box.i !== 'string' || box.i === '' || typeof box.t !== 'string' || box.t === '') {
       return undefined
     }
-    return { interactionId: box.i, interactionToken: box.t }
+    const messageId = box.m
+    return {
+      interactionId: box.i,
+      interactionToken: box.t,
+      ...(typeof messageId !== 'string' || messageId === '' ? {} : { messageId }),
+    }
   } catch {
     return undefined
   }
@@ -341,7 +358,17 @@ export function criarParse(): {
         descartados += 1
         return undefined
       }
-      const answerTarget = montarAnswerTarget({ interactionId, interactionToken })
+      // `messageTarget` = a mensagem onde o botao vive (o `d.message.id`).
+      // O `chatKey` ja e o `channel_id`; o edit do sender usa os dois. O par
+      // do answerTarget leva o `messageId` quando existe: o sender responde ao
+      // clique com type 7 (UPDATE_MESSAGE) em vez de 6 (DISCORD-027).
+      const mensagem = isObject(d.message) ? d.message : undefined
+      const messageTarget = mensagem === undefined ? undefined : snowflake(mensagem.id)
+      const answerTarget = montarAnswerTarget({
+        interactionId,
+        interactionToken,
+        ...(messageTarget === undefined ? {} : { messageId: messageTarget }),
+      })
       const identidadeNeutra = lerIdentityDeInteracao(d)
 
       const parse = parseCustomId(data.custom_id)
@@ -369,11 +396,6 @@ export function criarParse(): {
         }
         return rejeitado
       }
-
-      // `messageTarget` = a mensagem onde o botao vive (o `d.message.id`).
-      // O `chatKey` ja e o `channel_id`; o edit do sender usa os dois.
-      const mensagem = isObject(d.message) ? d.message : undefined
-      const messageTarget = mensagem === undefined ? undefined : snowflake(mensagem.id)
 
       const accao: SurfaceActionEvent = {
         kind: 'acao',

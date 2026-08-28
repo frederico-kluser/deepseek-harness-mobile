@@ -75,6 +75,9 @@ describe('worker/providers/registry — resolucao do provedor (fail-closed)', ()
     assert.equal(typeof prov.lerToken, 'function')
     assert.equal(typeof prov.assertTokenNaoEmArgv, 'function')
     assert.equal(typeof prov.create, 'function')
+    // Onda 3-fix: cada provedor declara a SUA env de raiz da API — o boot le
+    // `env[apiRootVar]` e nunca passa a env de outro canal ao create.
+    assert.equal(prov.apiRootVar, 'TELEGRAM_API_ROOT')
     // O assert do telegram recusa um token em argv (TG-069) — contrato vivo.
     assert.throws(() => prov.assertTokenNaoEmArgv([...ARGV_LIMPO, '--token', provToken()]))
   })
@@ -92,6 +95,7 @@ describe('worker/providers/registry — discord REGISTRADO (Onda 3)', () => {
     assert.equal(typeof prov.create, 'function')
     assert.equal(typeof prov.lerToken, 'function')
     assert.equal(typeof prov.assertTokenNaoEmArgv, 'function')
+    assert.equal(prov.apiRootVar, 'DISCORD_API_ROOT')
   })
 
   it('o lerToken do discord le a SUA variavel (DISCORD_BOT_TOKEN), nao a do telegram', () => {

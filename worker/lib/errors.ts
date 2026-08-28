@@ -101,7 +101,7 @@ export const WORKER_EXIT = Object.freeze({
 })
 
 /** Codigo de saida que corresponde a cada causa terminal. */
-export function exitCodeFor(code: WorkerErrorCode): number {
+export function exitCodeFor(code: WorkerErrorCode): WorkerExitCode {
   switch (code) {
     case 'TOKEN_MISSING':
     case 'TOKEN_IN_ARGV':
@@ -116,5 +116,66 @@ export function exitCodeFor(code: WorkerErrorCode): number {
     case 'CALLBACK_DATA_TOO_LONG':
     case 'MESSAGE_EMPTY':
       return WORKER_EXIT.POLLING
+  }
+}
+
+/**
+ * Codigo de saida do PROCESSO que um erro de provedor pode carregar — o
+ * vocabulario FECHADO dos valores de {@link WORKER_EXIT} (10..14). O 0 (OK)
+ * nao e um erro e fica fora do union.
+ *
+ * E a chave de classificacao do BOOT GENERICO (`worker/telegram-bot.ts`): o
+ * boot le o campo `code` do erro rejeitado por `adapter.start()`/`create` e
+ * usa-o directamente como codigo de saida — sem `instanceof` de nenhuma
+ * classe de provedor. Um erro de um provedor FUTURO funciona se carregar um
+ * destes codigos.
+ */
+export type WorkerExitCode = 10 | 11 | 12 | 13 | 14
+
+/** Estreita um numero no union fechado (o guard de classificacao do boot). */
+export function isWorkerExitCode(code: number): code is WorkerExitCode {
+  return (
+    code === WORKER_EXIT.CONFIG ||
+    code === WORKER_EXIT.CONFLICT ||
+    code === WORKER_EXIT.UNAUTHORIZED ||
+    code === WORKER_EXIT.POLLING ||
+    code === WORKER_EXIT.BOOT_TIMEOUT
+  )
+}
+
+/**
+ * O ERRO COMUM do provedor — canonico, sem dono de adaptador.
+ *
+ * Antes da Onda 3-fix cada adaptador definia a SUA classe `ProviderError` (e o
+ * boot telegram classificava por `instanceof` da classe do telegram — um erro
+ * do discord caia em POLLING_FAILED 13 em vez do codigo certo). A classe e o
+ * contrato que os DOIS adaptadores e o boot partilham:
+ *
+ *   - `code` e o NUMERICO {@link WorkerExitCode} — o boot classifica lendo
+ *     ESTE campo (10..14), sem conhecer o provedor;
+ *   - `reason` e a causa legivel (ex.: `'TOKEN_MISSING'`,
+ *     `'GATEWAY_UNAUTHORIZED'`) — vai no prefixo da mensagem para o log do
+ *     operador continuar a distinguir causas sem ler codigos.
+ *
+ * A `message` NAO e sitio para segredo: vai ao `stderr`, que o host encaminha
+ * para o log do DSH. Quem construir um `ProviderError` a partir de texto de
+ * terceiros passa-o por `redact()` ANTES.
+ */
+export class ProviderError extends Error {
+  override readonly name = 'ProviderError'
+  /** O codigo de saida do processo (10..14) — a chave do boot. */
+  readonly code: WorkerExitCode
+  /** A causa legivel (ex.: `'TOKEN_MISSING'`), prefixo da mensagem. */
+  readonly reason: string
+
+  constructor(
+    code: WorkerExitCode,
+    reason: string,
+    detail: string,
+    options?: { readonly cause?: unknown },
+  ) {
+    super(`[${WORKER_LOG_NAME}] ${reason}: ${detail}`, options)
+    this.code = code
+    this.reason = reason
   }
 }

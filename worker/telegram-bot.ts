@@ -17,14 +17,16 @@
  *   2. ler o token do ambiente (via o token reader DO PROVEDOR); o logger nasce
  *      ANTES, para a falha de leitura sair por algum lado;
  *   3. `assertTokenNaoEmArgv` (TG-069: token NUNCA em `argv`);
- *   4. criar o adaptador: `createTelegramProvider({token, apiRoot?, log, time})`;
+ *   4. criar o adaptador: `prov.create({token, apiRoot?, log, time})` — a raiz
+ *      da API vem de `prov.apiRootVar` (cada provedor com a SUA env);
  *   5. `sender = adapter.sender()` e `limites = adapter.limits`;
  *   6. armar o canal IPC (`bindWorkerIpcToProcess` + despacho por TABELA +
  *      ponte de nonce + `pairing.owner` -> `nucleo.onOwner` = `auth.semearDono`);
  *   7. montar o NUCLEO neutro com as deps (log, time, ipc bridge, sender,
  *      limites, emitirNonce, parar, auth, comandos);
- *   8. `adapter.start(tratarEvento)` (o polling arranca; 409/401 fazem o
- *      `start()` rejeitar e o proceso SAI com 11/12 — o e2e depende disto);
+ *   8. `adapter.start(tratarEvento)` (o polling arranca; um erro terminal faz o
+ *      `start()` rejeitar com o `code` do contrato comum e o proceso SAI com
+ *      esse codigo — 409/401 do telegram = 11/12, o e2e depende disto);
  *   9. `adapter.publishCommands(COMANDOS_PUBLICADOS)` — TG-080: uma falha e
  *      logada, NAO derruba o boot.
  *
@@ -61,14 +63,8 @@ import {
   type PonteDeNonce,
   type ProvedorDescrito,
 } from './providers/registry.ts'
-import {
-  ProviderError,
-  WORKER_EXIT,
-  describeForLog,
-  exitCodeFor,
-} from './providers/telegram/interno.ts'
-import { classifyPollingError } from './providers/telegram/polling.ts'
-import { API_ROOT_ENV_VAR } from './providers/telegram/token.ts'
+import { isWorkerExitCode, WORKER_EXIT } from './lib/errors.ts'
+import { describeForLog } from './lib/redact.ts'
 import { criarAuthDeSuperficie, criarDesafioDePareamento } from './surface/auth.ts'
 import { criarComandosDeSuperficie, COMANDOS_PUBLICADOS } from './surface/commands.ts'
 import type { ProviderAdapter } from './surface/contract.ts'
@@ -104,6 +100,18 @@ export interface WorkerRuntime {
   readonly onBooted?: (boot: BootEmCurso) => void
 }
 
+/**
+ * O `code` NUMERICO do CONTRATO COMUM (`ProviderError` de
+ * `worker/lib/errors.ts`), em QUALQUER erro — sem `instanceof` de classe de
+ * provedor. Fora da gama fechada 10..14 (ex.: o `code` do corpo do Discord
+ * num `DiscordApiError` que escape) NAO e do contrato e o erro cai no default.
+ */
+function codeDoContrato(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const code = (error as { readonly code?: unknown }).code
+  return typeof code === 'number' && isWorkerExitCode(code) ? code : undefined
+}
+
 /** Extrai os campos que o nucleo precisa do adaptador — sem conhecer o provedor. */
 function montarDoAdaptador(adapter: ProviderAdapter): {
   readonly sender: ReturnType<ProviderAdapter['sender']>
@@ -119,10 +127,12 @@ function montarDoAdaptador(adapter: ProviderAdapter): {
  * separacao e o que torna todo este caminho testavel sem subprocesso.
  *
  * O retorno resolve:
- *   - com o codigo CLASSIFICADO quando o `adapter.start` rejeita (409->11,
- *     401->12, BOOT_TIMEOUT->14 — o erro terminal chega como {@link ProviderError}
- *     e o codigo e preservado ANTES do `classifyPollingError`) ou o arranque
- *     falha (config->10, desconhecido->10);
+ *   - com o codigo CLASSIFICADO quando o `adapter.start` rejeita ou o arranque
+ *     falha: o boot le o campo `code` do erro (o CONTRATO COMUM de
+ *     `worker/lib/errors.ts` — 10/11/12/13/14, numerico, sem `instanceof` de
+ *     classe de provedor; os 409/401 do telegram chegam ja com 11/12 do
+ *     `classifyPollingError` DO ADAPTADOR) e usa-o tal qual; `ProvedorDesconhecido`
+ *     -> 10; qualquer outro erro -> 13 (POLLING, o default);
  *   - com OK apos {@link BootEmCurso.parar} (paragem limpa);
  *   - em producao NORMAL, fica pendente ate o dead-man's switch do canal chamar
  *     `proc.exit(0)` — a promessa e irrelevante quando o processo ja saiu.
@@ -165,8 +175,10 @@ export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<nu
     token = prov.lerToken(env)
     prov.assertTokenNaoEmArgv(argv, token)
 
-    // 4-5. o adaptador e os campos que o nucleo consome.
-    const apiRoot = env[API_ROOT_ENV_VAR]
+    // 4-5. o adaptador e os campos que o nucleo consome. A raiz da API e a
+    // do PROVEDOR (`prov.apiRootVar` — cada um com a SUA env, nunca a do
+    // telegram para outro canal); so e passada quando definida.
+    const apiRoot = prov.apiRootVar === undefined ? undefined : env[prov.apiRootVar]
     adapter = prov.create({
       token,
       log,
@@ -174,14 +186,20 @@ export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<nu
       ...(apiRoot === undefined || apiRoot === '' ? {} : { apiRoot }),
     })
   } catch (error) {
-    // Nunca engolir: a causa sai mascarada, com codigo quando ha codigo.
-    if (error instanceof ProviderError) {
-      log.error(error.message, { code: error.code })
-      return exitCodeFor(error.code)
-    }
+    // Nunca engolir: a causa sai mascarada, com codigo quando ha codigo. O
+    // codigo e lido do CAMPO `code` do erro (contrato comum, numerico) — nao
+    // ha `instanceof` de classe de provedor: o erro de QUALQUER adaptador
+    // (telegram hoje, discord amanha) classifica-se por si.
     if (error instanceof ProvedorDesconhecidoError) {
       log.error(error.message)
       return WORKER_EXIT.CONFIG
+    }
+    const code = codeDoContrato(error)
+    if (code !== undefined) {
+      log.error(error instanceof Error ? error.message : describeForLog(error, segredosDe()), {
+        code,
+      })
+      return code
     }
     log.error('falha nao classificada no arranque do worker', {
       detail: describeForLog(error, segredosDe()),
@@ -287,31 +305,32 @@ export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<nu
   try {
     await arrancouDoPeer
   } catch (error) {
-    // Um {@link ProviderError} rejeitado pelo `adapter.start` (ex.: o BOOT_TIMEOUT
-    // do `runPolling`) JÁ traz o codigo (e o `runPolling` já registou o fatal).
-    // O codigo e preservado AQUI, ANTES do `classifyPollingError` — que so recebe
-    // os 409/401 (GrammyError 11/12) que o e2e exige. Sem isto, o BOOT_TIMEOUT
-    // (14) cairia no POLLING_FAILED (13). E C: sem log duplo — o runPolling já
-    // logou o fatal; o boot só repete em `debug`.
-    if (error instanceof ProviderError) {
-      const code = exitCodeFor(error.code)
+    // O erro terminal de `adapter.start` traz o `code` do CONTRATO COMUM
+    // (numerico, 10..14) — o `runPolling`/`gateway` do adaptador ja o
+    // classificou e ja registou o fatal; o boot so repete em `debug`. Os
+    // 409/401 do telegram chegam aqui como `ProviderError` 11/12 (o e2e
+    // depende disto) e o BOOT_TIMEOUT como 14. Sem `instanceof` de classe de
+    // provedor: QUALQUER erro com `code` do contrato classifica-se por si.
+    const code = codeDoContrato(error)
+    if (code !== undefined) {
+      // O adaptador ja registou o fatal a nivel error; aqui so se repete em
+      // debug, com a causa legivel (o `reason` do ProviderError) para o log
+      // continuar a distinguir vereditos sem ler codigos.
       log.debug('arranque terminou com veredito terminal', {
-        code: error.code,
+        code,
         exit_code: code,
+        detail: describeForLog(error, segredosDe()),
       })
       await parar()
       return code
     }
-    // 409/401 (e afins) terminam o PROCESSO com o codigo proprio — o e2e
-    // depende disto (11/12), logo o comportamento real e preservado.
-    const verdict = classifyPollingError(error)
-    log.error(verdict.message, {
-      code: verdict.code,
-      exit_code: verdict.exitCode,
-      cause: describeForLog(error, segredosDe()),
+    // Sem `code` do contrato: POLLING_FAILED (13), o default — o adaptador ja
+    // registou a causa; o boot regista em `debug` para nao duplicar.
+    log.debug('arranque terminou sem veredito do contrato; o polling falhou', {
+      detail: describeForLog(error, segredosDe()),
     })
     await parar()
-    return verdict.exitCode
+    return WORKER_EXIT.POLLING
   }
 
   // O polling parou limpo (via `parar`/emergencia). Em producao NORMAL isto

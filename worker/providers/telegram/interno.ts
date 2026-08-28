@@ -156,15 +156,14 @@ export function describeForLog(value: unknown, knownSecrets: readonly string[] =
 }
 
 /* ========================================================================== */
-/* ERRO TIPADO E CODIGOS DE SAIDA (port de `worker/lib/errors.ts`)            */
+/* ERRO TIPADO E CODIGOS DE SAIDA — CANONICO em `worker/lib/errors.ts`        */
 /* ========================================================================== */
 
-export const WORKER_LOG_NAME = 'dsh-guard-messenger/worker'
-
 /**
- * Vocabulario FECHADO de causas. Espelha `WorkerErrorCode` de
- * `worker/lib/errors.ts` — o adaptador comete os mesmos vereditos (409/401
- * terminais, prazo de arranque) e precisa de os distinguir pelo codigo.
+ * Vocabulario FECHADO de causas do adaptador telegram. Espelha o
+ * `WorkerErrorCode` de `worker/lib/errors.ts` — o adaptador comete os mesmos
+ * vereditos (409/401 terminais, prazo de arranque) e precisa de os distinguir
+ * pelo codigo nos vereditos (`classifyPollingError`) e nos `PollingOutcome`.
  */
 export type ProviderErrorCode =
   | 'TOKEN_MISSING'
@@ -175,39 +174,12 @@ export type ProviderErrorCode =
   | 'BOOT_TIMEOUT'
   | 'CALLBACK_DATA_TOO_LONG'
 
-export class ProviderError extends Error {
-  override readonly name = 'ProviderError'
-  readonly code: ProviderErrorCode
-
-  constructor(code: ProviderErrorCode, detail: string, options?: { readonly cause?: unknown }) {
-    super(`[${WORKER_LOG_NAME}] ${code}: ${detail}`, options)
-    this.code = code
-  }
-}
-
-export const WORKER_EXIT = Object.freeze({
-  OK: 0,
-  CONFIG: 10,
-  CONFLICT: 11,
-  UNAUTHORIZED: 12,
-  POLLING: 13,
-  BOOT_TIMEOUT: 14,
-})
-
-/** Codigo de saida que corresponde a cada causa terminal. */
-export function exitCodeFor(code: ProviderErrorCode): number {
-  switch (code) {
-    case 'TOKEN_MISSING':
-    case 'TOKEN_IN_ARGV':
-      return WORKER_EXIT.CONFIG
-    case 'POLLING_CONFLICT':
-      return WORKER_EXIT.CONFLICT
-    case 'POLLING_UNAUTHORIZED':
-      return WORKER_EXIT.UNAUTHORIZED
-    case 'BOOT_TIMEOUT':
-      return WORKER_EXIT.BOOT_TIMEOUT
-    case 'POLLING_FAILED':
-    case 'CALLBACK_DATA_TOO_LONG':
-      return WORKER_EXIT.POLLING
-  }
-}
+/**
+ * A classe de erro e os codigos de saida do CONTRATO COMUM (Onda 3-fix):
+ * `ProviderError` com o `code` NUMERICO `WorkerExitCode` (10..14) — o boot
+ * generico classifica por `code`, nao por `instanceof`; `WORKER_EXIT` e o
+ * vocabulario fechado dos codigos de saida; `exitCodeFor` mapeia as causas
+ * legiveis (o vocabulario acima) para o codigo de saida.
+ */
+export { ProviderError, WORKER_EXIT, exitCodeFor, isWorkerExitCode } from '../../lib/errors.ts'
+export type { WorkerExitCode } from '../../lib/errors.ts'

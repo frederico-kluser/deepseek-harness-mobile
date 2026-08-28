@@ -32,6 +32,7 @@ import {
   type FakeDiscordE2E,
   type WorkerFilho,
 } from './discord-apoio.ts'
+import { WORKER_EXIT } from '../../worker/lib/errors.ts'
 
 assertSemTokenRealNoAmbiente()
 
@@ -158,9 +159,11 @@ describe('e2e discord — boot do processo real', () => {
     assert.ok(stdout.includes(`"from":"${DONO.from}"`), 'o snowflake gigante atravessa BYTE A BYTE (D4)')
     assert.ok(stdout.includes(`"chat":"${DONO.chat}"`))
 
-    // TG-027: o girador para — o callback (type 6, DEFERRED_UPDATE_MESSAGE).
+    // TG-027: o girador para — o callback com messageTarget (o botao vive na
+    // mensagem m100) e type 7 (UPDATE_MESSAGE, DISCORD-027); sem data, a
+    // mensagem fica intacta e a edicao real vem pelo PATCH separado.
     await aguardar(() => chamadasDe(srv, '/interactions/').length >= 1, 'o callback chega ao REST')
-    assert.deepEqual(chamadasDe(srv, '/interactions/')[0]?.body, { type: 6 })
+    assert.deepEqual(chamadasDe(srv, '/interactions/')[0]?.body, { type: 7 })
 
     filho.encerrar()
     const saida = await filho.saida
@@ -175,11 +178,10 @@ describe('e2e discord — boot do processo real', () => {
 
     const saida = await filho.saida
     // O veredito e TERMINAL e fail-closed (recusa o arranque, nao conecta).
-    // Nota: o boot generico da Onda 4 classifica o ProviderError de um
-    // provedor NAO-telegram por `instanceof` (classe do telegram) e cai em
-    // POLLING_FAILED (13) em vez de CONFIG (10) — documentado no handoff da
-    // Onda 3; o adapter discord em si devolve o codigo 10 no `exitCodeFor`.
-    assert.notEqual(saida.code, 0, 'token em argv recusa o arranque')
+    // Com o boot generico por CODIGO (Onda 3-fix), o fatal do discord sai com
+    // o codigo CERTO: 10 (CONFIG) — antes caia em 13 (POLLING_FAILED) por o
+    // boot classificar por `instanceof` da classe do telegram.
+    assert.equal(saida.code, WORKER_EXIT.CONFIG, 'token em argv = CONFIG (10), nao instabilidade')
     assert.equal(srv.gatewayState.sessions, 0, 'nem chegou a falar com o gateway')
     assert.match(filho.stderr(), /TOKEN_IN_ARGV/u)
     assert.equal(filho.stderr().includes(TOKEN_DE_TESTE_DISCORD), false, 'a recusa nao vaza o que recusa')
@@ -194,7 +196,7 @@ describe('e2e discord — boot do processo real', () => {
 
     const saida = await filho.saida
     assert.equal(saida.pendurado, false, 'sai sozinho, sem kill de seguranca')
-    assert.notEqual(saida.code, 0, 'o veredito de token e terminal')
+    assert.equal(saida.code, WORKER_EXIT.UNAUTHORIZED, '401 no boot = 12, espelho do telegram')
     assert.match(filho.stderr(), /GATEWAY_UNAUTHORIZED|token foi recusado/u)
     assert.equal(filho.stderr().includes(TOKEN_DE_TESTE_DISCORD), false, 'o token nao vaza')
   })

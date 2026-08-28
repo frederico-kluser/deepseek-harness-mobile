@@ -22,6 +22,7 @@ import type { WorkerIpc } from '../../../worker/ipc.ts'
 import type { ProvedorDescrito } from '../../../worker/providers/registry.ts'
 import { ProviderError } from '../../../worker/providers/telegram/interno.ts'
 import { TOKEN_ENV_VAR } from '../../../worker/providers/telegram/token.ts'
+import { TOKEN_ENV_VAR as TOKEN_ENV_VAR_DISCORD } from '../../../worker/providers/discord/token.ts'
 import { runTelegramWorker } from '../../../worker/telegram-bot.ts'
 import {
   aguardar,
@@ -92,6 +93,40 @@ function provedorComStartQueRejeita(erro: unknown): ProvedorDescrito {
   }
 }
 
+/**
+ * Provedor cujo `create` CAPTURA as deps que o boot passa — para provar que a
+ * raiz da API e a do PROVEDOR (`apiRootVar`), nunca a de outro canal.
+ */
+function provedorQueCapturaDeps(): {
+  readonly provider: ProvedorDescrito
+  readonly depsRecebidas: Array<{ readonly apiRoot?: string }>
+} {
+  const depsRecebidas: Array<{ readonly apiRoot?: string }> = []
+  const provider: ProvedorDescrito = {
+    id: 'discord',
+    apiRootVar: 'DISCORD_API_ROOT',
+    create: (deps) => {
+      depsRecebidas.push(deps.apiRoot === undefined ? {} : { apiRoot: deps.apiRoot })
+      return {
+        id: 'discord',
+        limits: { maxTextLength: 2000, maxActionRows: 5, maxActionPerRow: 5, maxActionDataBytes: 100, supportsEditing: true },
+        start: async () => undefined,
+        stop: async () => undefined,
+        publishCommands: async () => undefined,
+        sender: () => ({
+          send: async () => '',
+          edit: async () => 'unchanged',
+          answer: async () => true,
+        }),
+        descartados: () => 0,
+      }
+    },
+    lerToken: () => TOKEN_DE_TESTE,
+    assertTokenNaoEmArgv: () => undefined,
+  }
+  return { provider, depsRecebidas }
+}
+
 /** Um `GrammyError` 409 como o grammY o produz (o boot classifica-o -> 11). */
 function erro409DeGetUpdates(): GrammyError {
   return new GrammyError(
@@ -100,20 +135,6 @@ function erro409DeGetUpdates(): GrammyError {
       ok: false,
       error_code: 409,
       description: 'Conflict: terminated by other getUpdates request',
-    },
-    'getUpdates',
-    {},
-  )
-}
-
-/** Um `GrammyError` 401 como o grammY o produz (o boot classifica-o -> 12). */
-function erro401DeGetUpdates(): GrammyError {
-  return new GrammyError(
-    'Call to getUpdates failed',
-    {
-      ok: false,
-      error_code: 401,
-      description: 'Unauthorized',
     },
     'getUpdates',
     {},
@@ -210,16 +231,21 @@ describe('worker/telegram-bot — ciclo completo contra o servidor falso', () =>
     const log = captureLog()
     const { ipc } = ipcFalso()
 
-    // O regex da classificacao do boot vai para cima do `start()` rejeitado.
-    // Um adaptador cujo arranque rejeita com o 409 do grammY (o mesmo erro que
-    // o `bot.start()` real produz num getUpdates conflituoso).
+    // O adaptador REAL ja classificou o 409 do grammY e rejeita o `start()`
+    // com o erro do CONTRATO COMUM (`ProviderError` code 11) — o mesmo erro
+    // que o `runPolling` do telegram produz num getUpdates conflituoso.
+    const erro = new ProviderError(
+      WORKER_EXIT.CONFLICT,
+      'POLLING_CONFLICT',
+      'CONFLITO 409: outro getUpdates esta a correr com este mesmo token.',
+    )
     const code = await runTelegramWorker({
       env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
       argv: ARGV_LIMPO,
       log: log.logger,
       time: new FakeTime(),
       ipc,
-      provider: provedorComStartQueRejeita(erro409DeGetUpdates()),
+      provider: provedorComStartQueRejeita(erro),
     })
 
     assert.equal(code, WORKER_EXIT.CONFLICT)
@@ -231,18 +257,71 @@ describe('worker/telegram-bot — ciclo completo contra o servidor falso', () =>
     const log = captureLog()
     const { ipc } = ipcFalso()
 
+    const erro = new ProviderError(
+      WORKER_EXIT.UNAUTHORIZED,
+      'POLLING_UNAUTHORIZED',
+      'NAO AUTORIZADO 401: o token do bot foi recusado.',
+    )
     const code = await runTelegramWorker({
       env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
       argv: ARGV_LIMPO,
       log: log.logger,
       time: new FakeTime(),
       ipc,
-      provider: provedorComStartQueRejeita(erro401DeGetUpdates()),
+      provider: provedorComStartQueRejeita(erro),
     })
 
     assert.equal(code, WORKER_EXIT.UNAUTHORIZED)
     assert.notEqual(code, WORKER_EXIT.OK)
     assert.match(log.all(), /401/u)
+  })
+
+  it('contrato comum: erro com code 12 sai 12 INDEPENDENTE do provedor (fake discord, nao telegram)', async () => {
+    // O debito da Onda 3: o boot classificava por `instanceof` da classe do
+    // telegram e um fatal do discord caia em 13. Com o contrato comum, o boot
+    // le o `code` numerico de QUALQUER erro — o provedor nem importa.
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const erro = new ProviderError(
+      WORKER_EXIT.UNAUTHORIZED,
+      'GATEWAY_UNAUTHORIZED',
+      'o token foi recusado pelo GET /gateway/bot (HTTP 401).',
+    )
+
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider: provedorComStartQueRejeita(erro),
+    })
+
+    assert.equal(code, WORKER_EXIT.UNAUTHORIZED)
+    assert.equal(code, 12)
+    assert.notEqual(code, WORKER_EXIT.POLLING, 'o fatal do discord NAO pode cair em 13')
+    assert.match(log.all(), /GATEWAY_UNAUTHORIZED/u)
+  })
+
+  it('erro SEM code do contrato (ex.: GrammyError cru) -> POLLING (13), o default', async () => {
+    // O boot generico NAO conhece o grammY: um GrammyError cru rejeitado pelo
+    // `start()` cai no default 13. (O adaptador telegram REAL nunca deixa um
+    // GrammyError escapar — o `runPolling` classifica e embrulha em
+    // ProviderError com o code 11/12/13 antes de rejeitar.)
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider: provedorComStartQueRejeita(erro409DeGetUpdates()),
+    })
+
+    assert.equal(code, WORKER_EXIT.POLLING)
+    assert.match(log.all(), /polling falhou/u)
   })
 
   it('BOOT_TIMEOUT no start -> o boot preserva o codigo e sai com 14 (NAO 13)', async () => {
@@ -253,6 +332,7 @@ describe('worker/telegram-bot — ciclo completo contra o servidor falso', () =>
     const log = captureLog()
     const { ipc } = ipcFalso()
     const erro = new ProviderError(
+      WORKER_EXIT.BOOT_TIMEOUT,
       'BOOT_TIMEOUT',
       'o arranque nao chegou a receber updates em 45000 ms',
     )
@@ -270,6 +350,52 @@ describe('worker/telegram-bot — ciclo completo contra o servidor falso', () =>
     assert.equal(code, 14)
     assert.notEqual(code, WORKER_EXIT.POLLING, 'o BOOT_TIMEOUT NAO pode cair em 13')
     assert.match(log.all(), /BOOT_TIMEOUT/u)
+  })
+
+  it('apiRootVar: o boot passa a raiz da env DO PROVEDOR, nunca a do telegram', async () => {
+    // O vazamento da Onda 3: com TELEGRAM_API_ROOT setado, o adaptador discord
+    // recebia a raiz do telegram. O boot le `env[prov.apiRootVar]` — o discord
+    // tem a SUA env e so ela entra.
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const { provider, depsRecebidas } = provedorQueCapturaDeps()
+
+    const code = await runTelegramWorker({
+      env: {
+        [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE,
+        TELEGRAM_API_ROOT: 'https://api.telegram.org',
+        DISCORD_API_ROOT: 'https://discord.example.test/api/v10',
+      },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider,
+    })
+
+    assert.equal(code, WORKER_EXIT.OK)
+    assert.equal(depsRecebidas.length, 1, 'o create correu uma vez')
+    assert.equal(depsRecebidas[0]?.apiRoot, 'https://discord.example.test/api/v10')
+    assert.notEqual(depsRecebidas[0]?.apiRoot, 'https://api.telegram.org', 'a raiz do telegram NAO vaza')
+  })
+
+  it('apiRootVar: env ausente ou vazia do provedor -> o boot NAO passa apiRoot', async () => {
+    const log = captureLog()
+    const { ipc } = ipcFalso()
+    const { provider, depsRecebidas } = provedorQueCapturaDeps()
+
+    const code = await runTelegramWorker({
+      env: { [TOKEN_ENV_VAR_DISCORD]: TOKEN_DE_TESTE },
+      argv: ARGV_LIMPO,
+      log: log.logger,
+      time: new FakeTime(),
+      ipc,
+      provider,
+    })
+
+    assert.equal(code, WORKER_EXIT.OK)
+    assert.equal(depsRecebidas.length, 1)
+    assert.equal(depsRecebidas[0]?.apiRoot, undefined, 'sem env da raiz, o create nao recebe apiRoot')
   })
 
   it('o proveedor que rebenta ao montar o adaptador nao pendura: sai com codigo', async () => {

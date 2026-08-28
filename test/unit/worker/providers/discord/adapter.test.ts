@@ -128,7 +128,11 @@ describe('provider/discord/adapter — o loop de boot', () => {
     if (acao?.kind === 'acao') {
       assert.equal(acao.action, 'tunnel.up')
       assert.equal(acao.token, 'nonce-opaco')
-      assert.deepEqual(lerAnswerTarget(acao.answerTarget), { interactionId: 'i9', interactionToken: 'tok-9' })
+      assert.deepEqual(lerAnswerTarget(acao.answerTarget), {
+        interactionId: 'i9',
+        interactionToken: 'tok-9',
+        messageId: 'm1',
+      })
       assert.equal(acao.messageTarget, 'm1')
     }
 
@@ -163,7 +167,11 @@ describe('provider/discord/adapter — o loop de boot', () => {
     const rejeitado = eventos[0]
     assert.equal(rejeitado?.kind, 'acao-invalida')
     if (rejeitado?.kind === 'acao-invalida') {
-      assert.deepEqual(lerAnswerTarget(rejeitado.answerTarget), { interactionId: 'i8', interactionToken: 'tok-8' })
+      assert.deepEqual(lerAnswerTarget(rejeitado.answerTarget), {
+        interactionId: 'i8',
+        interactionToken: 'tok-8',
+        messageId: 'm1',
+      })
       assert.equal('action' in rejeitado, false)
       assert.equal('token' in rejeitado, false)
     }

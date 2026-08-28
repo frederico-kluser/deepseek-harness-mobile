@@ -19,6 +19,7 @@ import {
   BUTTON_LABEL_MAX_CHARS,
   CALLBACK_CHANNEL_MESSAGE_WITH_SOURCE,
   CALLBACK_DEFERRED_UPDATE_MESSAGE,
+  CALLBACK_UPDATE_MESSAGE,
   editMessageInPlace,
   MESSAGE_FLAG_EPHEMERAL,
   renderActionRowLayout,
@@ -99,6 +100,14 @@ describe('provider/discord/teclado — resposta ao clique (TG-027)', () => {
     const ok = await answerCallbackAlways(api, alvo, captureLog().logger)
     assert.equal(ok, true)
     assert.deepEqual(chamadas[0], { tipo: CALLBACK_DEFERRED_UPDATE_MESSAGE })
+  })
+
+  it('com messageTarget: ACK type 7 UPDATE_MESSAGE (DISCORD-027) — a mensagem fica intacta', async () => {
+    const { api, chamadas } = apiDeTeste()
+    const alvo = montarAnswerTarget({ interactionId: 'i1', interactionToken: 't1', messageId: 'm7' })
+    const ok = await answerCallbackAlways(api, alvo, captureLog().logger)
+    assert.equal(ok, true)
+    assert.deepEqual(chamadas[0], { tipo: CALLBACK_UPDATE_MESSAGE })
   })
 
   it('com texto: type 4 CHANNEL_MESSAGE_WITH_SOURCE EFEMERA (flags 64) — o toast', async () => {
