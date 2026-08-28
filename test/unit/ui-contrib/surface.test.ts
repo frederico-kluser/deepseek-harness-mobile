@@ -30,6 +30,7 @@ import { describe, it } from 'node:test'
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ControlAction, ControlIntent, ControlResultado } from '../../../src/contracts/control.ts'
+import type { AgentRunReport } from '../../../src/contracts/ipc.ts'
 import type { TunnelSnapshot } from '../../../src/contracts/tunnel.ts'
 import {
   createNativeUiSurface,
@@ -39,6 +40,7 @@ import {
 } from '../../../src/ui-contrib/surface.ts'
 import {
   UI_PATH_ACCESS,
+  UI_PATH_AGENTS,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
@@ -86,7 +88,10 @@ interface RespostaCapturada {
 interface Bancada {
   readonly clock: FakeClock
   readonly taps: Array<(html: string) => string>
+  /** As rotas EXACT (o despacho do host so as consulta na tabela exact). */
   readonly rotas: Map<string, UiContribRoute>
+  /** As rotas PREFIXO (consultadas so apos falha na tabela exact — o mesmo do host). */
+  readonly prefixos: Array<{ readonly path: string; readonly rota: UiContribRoute }>
   readonly emitidos: ControlIntent[]
   readonly noncesPedidos: ControlAction[]
   tapDesmontado: number
@@ -109,6 +114,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
   const clock = new FakeClock(1_000_000)
   const taps: Array<(html: string) => string> = []
   const rotas = new Map<string, UiContribRoute>()
+  const prefixos: Array<{ path: string; rota: UiContribRoute }> = []
   const emitidos: ControlIntent[] = []
   const noncesPedidos: ControlAction[] = []
   let ouvinte: ((broadcast: UiContribBroadcast) => void) | undefined
@@ -127,7 +133,10 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
       }
     },
     registerRoute: (rota) => {
-      rotas.set(rota.path, rota)
+      // O espelho do despacho do host: exact na tabela exact, prefixo na de
+      // prefixos (o MESMO `UiContribRoute.kind` do host, agora com os dois).
+      if (rota.kind === 'exact') rotas.set(rota.path, rota)
+      else prefixos.push({ path: rota.path, rota })
       return () => {
         rotaDesmontadas += 1
       }
@@ -172,6 +181,12 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
       sessoes: [],
       ipConfiavel: false,
     }),
+    // O bloco de AGENTES (Onda 6): a lista vazia e o noop idempotente por
+    // defeito; os testes do bloco fazem override com runs de exemplo.
+    agentsOps: {
+      listar: () => [],
+      cancelar: () => false,
+    },
     ...overrides,
   }
 
@@ -195,7 +210,13 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
     caminho: string,
     opcoes: { metodo?: string; token?: string; corpo?: unknown } = {},
   ): Promise<RespostaCapturada> => {
-    const rota = rotas.get(caminho)
+    // O espelho do despacho do host: tabela exact primeiro; a falha cai nos
+    // prefixos, onde o MAIS LONGO ganha.
+    const rota =
+      rotas.get(caminho) ??
+      prefixos
+        .filter((p) => caminho.startsWith(p.path))
+        .toSorted((a, b) => b.path.length - a.path.length)[0]?.rota
     assert.ok(rota !== undefined, `rota nao registada: ${caminho}`)
     const req = new EventEmitter() as unknown as IncomingMessage
     const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
@@ -231,6 +252,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
     clock,
     taps,
     rotas,
+    prefixos,
     emitidos,
     noncesPedidos,
     get tapDesmontado() {
@@ -276,7 +298,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 /* ========================================================================== */
 
 describe('registo da contribuicao', () => {
-  it('regista um tap, as rotas (telegram + reset + acesso + csrf) e a assinatura do broadcast', () => {
+  it('regista um tap, as rotas (telegram + reset + acesso + csrf + agentes) e a assinatura do broadcast', () => {
     const bancada = criarBancada()
     assert.equal(bancada.taps.length, 1)
     assert.deepEqual(
@@ -295,6 +317,7 @@ describe('registo da contribuicao', () => {
         UI_PATH_TOKEN_STATE,
         UI_PATH_PRIVACIDADE,
         UI_PATH_ACCESS,
+        UI_PATH_AGENTS,
         UI_PATH_CSRF,
         UI_PATH_PAIR,
         UI_PATH_PAIR_STATE,
@@ -303,13 +326,20 @@ describe('registo da contribuicao', () => {
     for (const rota of bancada.rotas.values()) {
       assert.equal(rota.kind, 'exact')
     }
+    // O cancelamento de agentes e a UNICA rota PREFIXO: o id curto vive no
+    // segmento do caminho (o despacho do host so consulta prefixos apos a
+    // tabela exact — o GET da lista nunca cai no cancelamento).
+    assert.deepEqual(
+      bancada.prefixos.map((p) => ({ path: p.path, kind: p.rota.kind })),
+      [{ path: UI_PATH_AGENTS, kind: 'prefix' }],
+    )
   })
 
   it('o disposer REVERTE tudo (tap reversivel — a propriedade que o spike S4 mediu)', () => {
     const bancada = criarBancada()
     bancada.superficie()
     assert.equal(bancada.tapDesmontado, 1)
-assert.equal(bancada.rotaDesmontadas, 16, 'as dezasseis rotas (telegram + token + privacidade + parear + acesso + csrf) sao removidas')
+assert.equal(bancada.rotaDesmontadas, 18, 'as dezoito rotas (telegram + token + privacidade + parear + acesso + csrf + agentes) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
@@ -364,6 +394,10 @@ assert.equal(bancada.rotaDesmontadas, 16, 'as dezasseis rotas (telegram + token 
         sessoes: [],
         ipConfiavel: false,
       }),
+      agentsOps: {
+        listar: () => [],
+        cancelar: () => false,
+      },
     }
     assert.throws(() => createNativeUiSurface(deps), /rota duplicada/u)
     assert.equal(rotasDesmontadas, 2)
@@ -791,5 +825,111 @@ describe('o provider atravessa a superficie ate o GET /telegram', () => {
     })
     const resposta = await bancada.enviar(UI_PATH_TELEGRAM)
     assert.deepEqual(resposta.corpo, { online: true, provider: 'discord', handle: 'meu_bot' })
+  })
+})
+
+/* ========================================================================== */
+/* O bloco de AGENTES (Onda 6 — /agents lista + cancelamento)                 */
+/* ========================================================================== */
+
+/**
+ * Os runs de exemplo — o MESMO `AgentRunReport` do contrato IPC (o que o
+ * registry do host devolve em `estado()`). O `summary` e texto do MODELO
+ * (S3: nao segredo) e o registry ja o capou em 300 chars.
+ */
+const RUNS_DE_EXEMPLO: readonly AgentRunReport[] = [
+  { id: 'ABCDEF12', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: INICIO },
+  { id: '3456CDEF', skill: 'surf-research-agent-skill', status: 'done', startedAt: INICIO - 5 * 60_000, summary: 'Resultado em duas paginas.' },
+  { id: '78GHIJKL', skill: 'surf-plan-agent-skill', status: 'failed', startedAt: INICIO - 20 * 60_000, summary: 'A skill nao existe.' },
+]
+
+describe('o bloco de agentes atravessa a superficie (UiContribDeps.agentsOps -> rotas)', () => {
+  it('GET /agents devolve a lista do agentsOps TAL QUAL (a fonte e o registry do host, nunca o IPC)', async () => {
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => RUNS_DE_EXEMPLO,
+        cancelar: () => false,
+      },
+    })
+    const resposta = await bancada.enviar(UI_PATH_AGENTS)
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, {
+      runs: [
+        { id: 'ABCDEF12', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: INICIO },
+        { id: '3456CDEF', skill: 'surf-research-agent-skill', status: 'done', startedAt: INICIO - 5 * 60_000, summary: 'Resultado em duas paginas.' },
+        { id: '78GHIJKL', skill: 'surf-plan-agent-skill', status: 'failed', startedAt: INICIO - 20 * 60_000, summary: 'A skill nao existe.' },
+      ],
+    })
+  })
+
+  it('GET /agents com lista vazia devolve runs: [] (o painel mostra «Nenhum agente rodando.»)', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_AGENTS)
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, { runs: [] })
+  })
+
+  it('POST /agents/:id/cancel com CSRF chega ao agentsOps e devolve o veredito', async () => {
+    const cancelados: string[] = []
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => [],
+        cancelar: (agentId) => {
+          cancelados.push(agentId)
+          return agentId === 'ABCDEF12'
+        },
+      },
+    })
+    const token = bancada.tokenDoUltimoTap()
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, {
+      metodo: 'POST',
+      token,
+      corpo: {},
+    })
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, { ok: true })
+    assert.deepEqual(cancelados, ['ABCDEF12'])
+
+    // Id desconhecido = noop idempotente (o mesmo do agent.cancel: `noop`).
+    const noop = await bancada.enviar(`${UI_PATH_AGENTS}/ZZZZZZZZ/cancel`, {
+      metodo: 'POST',
+      token,
+      corpo: {},
+    })
+    assert.equal(noop.status, 200)
+    assert.deepEqual(noop.corpo, { ok: false })
+  })
+
+  it('POST /agents/:id/cancel SEM CSRF e recusado com 403 e NADA e cancelado', async () => {
+    const cancelados: string[] = []
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => [],
+        cancelar: (agentId) => {
+          cancelados.push(agentId)
+          return true
+        },
+      },
+    })
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, { metodo: 'POST', corpo: {} })
+    assert.equal(resposta.status, 403)
+    assert.equal(resposta.corpo.erro, 'csrf-recusado')
+    assert.deepEqual(cancelados, [], 'o cancelamento nao pode ter saido sem CSRF')
+  })
+
+  it('o prefixo so conhece /<id>/cancel — qualquer outro caminho responde 404, nao 405', async () => {
+    const bancada = criarBancada()
+    for (const caminho of [`${UI_PATH_AGENTS}/lixo`, `${UI_PATH_AGENTS}/a/b/cancel`, `${UI_PATH_AGENTS}2/ABC/cancel`]) {
+      const resposta = await bancada.enviar(caminho, { metodo: 'GET' })
+      assert.equal(resposta.status, 404, `caminho ${caminho} deveria ser 404`)
+      assert.equal(resposta.corpo.erro, 'rota-nao-encontrada')
+    }
+  })
+
+  it('POST no caminho de cancelamento com o metodo errado responde 405 com allow: POST', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, { metodo: 'GET' })
+    assert.equal(resposta.status, 405)
+    assert.equal(resposta.cabecalhos.allow, 'POST')
   })
 })

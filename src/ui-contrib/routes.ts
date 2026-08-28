@@ -42,6 +42,25 @@
  *                                        (HIGH-2): fonte INDEPENDENTE do meta
  *                                        do indice antigo, para o painel novo.
  *
+ * DUAS rotas dos AGENTES (Onda 6 — o painel espelha /agentes e /parar-agente):
+ *   GET  /__guard-ui/api/agents     — a lista de runs do dispatcher (id, skill,
+ *                                        status, startedAt, summary). A fonte e
+ *                                        o REGISTRY do HOST em memoria (a MESMA
+ *                                        do `agent.report`), fiado pela costura
+ *                                        via `agentsOps` — esta superficie NUNCA
+ *                                        toca no canal IPC.
+ *   POST /__guard-ui/api/agents/:id/cancel — cancela um run pelo id CURTO (8
+ *                                        chars). REDUZ exposicao (CTL-024, o
+ *                                        mesmo do STOP): CSRF basta, NAO exige
+ *                                        nonce. Id desconhecido/ja terminal =
+ *                                        noop idempotente (o mesmo do
+ *                                        `agent.cancel` do IPC). Regista como
+ *                                        rota PREFIXO no MESMO caminho da lista
+ *                                        (o id vive no segmento do caminho); o
+ *                                        despacho do host so consulta prefixos
+ *                                        depois de falhar a tabela exact, logo
+ *                                        o GET da lista nunca cai aqui.
+ *
  * Toda rota POST exige o token anti-CSRF desta superficie (cabecalho
  * `x-dsh-csrf` ou campo `csrf` do corpo) — doutrina NIST SP 800-63B-4 5.1.1.
  * O metodo errado responde 405 (o despacho do host e por caminho, nao por
@@ -51,6 +70,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { ControlAction, ControlIntent, ControlResultado, Nonce } from '../contracts/control.ts'
+import type { AgentRunReport } from '../contracts/ipc.ts'
 import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import { CSRF_FIELD_NAME, CSRF_HEADER_NAME, type CsrfGuard } from './csrf.ts'
 import { createClientScript } from './html.ts'
@@ -91,6 +111,14 @@ export const UI_PATH_CSRF = `${UI_PREFIX}/api/csrf`
 export const UI_PATH_PAIR = `${UI_PREFIX}/api/pair`
 /** O estado do pareamento (pareado? handle? código ativo) — GET, só leitura. */
 export const UI_PATH_PAIR_STATE = `${UI_PREFIX}/api/pair-state`
+/**
+ * O bloco de AGENTES (Onda 6): a MESMA string serve as DUAS rotas —
+ * `GET /__guard-ui/api/agents` (exact, a lista) e
+ * `POST /__guard-ui/api/agents/<id>/cancel` (PREFIXO no mesmo caminho: o id
+ * curto do run vive no segmento; o despacho do host so consulta prefixos
+ * depois de falhar a tabela exact, logo a lista nunca cai no cancelamento).
+ */
+export const UI_PATH_AGENTS = `${UI_PREFIX}/api/agents`
 
 /** O vinculo do token anti-CSRF: a superficie inteira. */
 export const UI_CSRF_BINDING = 'ui-contrib'
@@ -106,7 +134,12 @@ export type UiContribRequestHandler = (
 ) => void | Promise<void>
 
 export interface UiContribRoute {
-  readonly kind: 'exact'
+  /**
+   * O MESMO union do host (`WebRouteKind`): `exact` casa o caminho verbatim;
+   * `prefix` casa `p` e `p/<algo>` (usado pelo cancelamento de agentes, cujo
+   * id curto vive no segmento do caminho).
+   */
+  readonly kind: 'exact' | 'prefix'
   readonly path: string
   readonly handler: UiContribRequestHandler
 }
@@ -162,6 +195,13 @@ export interface UiContribCore {
    * proxy do tunel e a lista de sessoes vivas, ja com os metadados de acesso.
    */
   readonly acesso: () => UiAcessoBruto
+  /**
+   * Operacoes dos AGENTES (o dispatcher da Onda 4), fiadas pela costura em
+   * `src/index.ts`. A fonte e o REGISTRY do HOST em memoria — a MESMA do
+   * `agent.report` do IPC; este modulo nunca toca no canal. O `cancelar`
+   * REDUZ exposicao (mata um run), por isso a rota dispensa nonce (CSRF so).
+   */
+  readonly agentsOps: UiAgentOps
   readonly csrf: CsrfGuard
   readonly now: () => number
   readonly requestedBy: string
@@ -270,6 +310,29 @@ export interface UiPairOps {
     | { readonly ok: true; readonly codigo: string; readonly expiraEm: number }
     | { readonly ok: false; readonly erro: 'ja-pareado' | 'sem-token' | 'worker-indisponivel' | 'interno' }
   >
+}
+
+/**
+ * O servico de AGENTES fiado a superficie. Cada operacao e executada pela
+ * costura em `src/index.ts` (que detem o `AgentRegistry` do host — o mesmo
+ * dispatcher que alimenta o `agent.report`); este modulo so orquestra o HTTP.
+ * O run e EFEMERO por desenho (vive em memoria; um reinicio do DSH derruba-o),
+ * e o `summary` e texto do MODELO — nunca segredo (S3: o request do agente nao
+ * recebe token nem credencial, logo o que ele devolve nao pode conter segredo).
+ */
+export interface UiAgentOps {
+  /**
+   * A lista COMPLETA dos runs em memoria (vivos + terminais) — a MESMA fonte
+   * do `agent.report` do IPC. O registry ja capou o historico e o `summary`;
+   * esta superficie apenas a reexpede, sem tocar em nada.
+   */
+  readonly listar: () => readonly AgentRunReport[]
+  /**
+   * Cancela um run pelo id CURTO (8 caracteres). `false` = id desconhecido ou
+   * run ja terminal — noop idempotente, nunca um erro (o mesmo do
+   * `agent.cancel` do IPC: `accepted`/`noop`, nunca um `error`).
+   */
+  readonly cancelar: (agentId: string) => boolean
 }
 
 /** Uma sessao viva, ja redigida, com os metadados de acesso capturados. */
@@ -921,6 +984,90 @@ export function createPairHandler(core: UiContribCore): UiContribRequestHandler 
       return
     }
     json(res, 200, { codigo: resultado.codigo, expiraEm: resultado.expiraEm })
+  }
+}
+
+/* ========================================================================== */
+/* Os AGENTES (Onda 6) — lista (GET) e cancelamento (POST)                    */
+/* ========================================================================== */
+
+/**
+ * Projeta a lista de runs para o corpo da rota. FUNCAO PURA e exportada: e o
+ * coracao da pergunta falsificavel "o corpo da rota e EXATAMENTE o estado do
+ * registry do host?" — cada campo do `AgentRunReport` passa tal qual (o
+ * registry ja capou o `summary` em 300 chars e o historico em 32 runs), o
+ * vazio e `runs: []` (o painel mostra «Nenhum agente rodando.»), e nenhum
+ * campo a mais entra no corpo.
+ */
+export function projetarAgentes(runs: readonly AgentRunReport[]): Record<string, unknown> {
+  return {
+    runs: runs.map((run) => ({
+      id: run.id,
+      skill: run.skill,
+      status: run.status,
+      startedAt: run.startedAt,
+      ...(run.summary === undefined ? {} : { summary: run.summary }),
+    })),
+  }
+}
+
+/**
+ * GET /__guard-ui/api/agents — a lista de runs do dispatcher. SO LE (GET sem
+ * CSRF, como as demais leituras): a costura le o registry do HOST em memoria
+ * (`agentsOps.listar`) — a MESMA fonte do `agent.report`, nunca o canal IPC.
+ */
+export function createAgentsHandler(core: UiContribCore): UiContribRequestHandler {
+  return (req, res) => {
+    if (!exigeMetodo(req, res, 'GET')) return
+    json(res, 200, projetarAgentes(core.agentsOps.listar()))
+  }
+}
+
+/**
+ * Extrai o id curto de `POST /__guard-ui/api/agents/<id>/cancel`. FUNCAO PURA
+ * e exportada: e o coracao da pergunta falsificavel "o prefixo so conhece a
+ * forma /<id>/cancel" — um segmento nao-vazio basta (o id e OPACO para esta
+ * superficie; quem o valida e o registry, com noop idempotente). `undefined`
+ * = o caminho nao e desta rota (404, nao 405: o prefixo engoliu um pedido que
+ * nao e nosso).
+ */
+export function extrairIdDeCancelamentoDeAgente(caminho: string): string | undefined {
+  const m = /^\/__guard-ui\/api\/agents\/([^/]+)\/cancel$/u.exec(caminho)
+  return m?.[1]
+}
+
+/**
+ * POST /__guard-ui/api/agents/:id/cancel — cancela um run pelo id CURTO.
+ *
+ * REDUZ exposicao (mata a execucao) -> dispensa nonce (CTL-024, o mesmo do
+ * STOP: em panico, o botao funciona de primeira). Exige o token anti-CSRF da
+ * superficie como qualquer POST (NIST SP 800-63B-4 5.1.1). O corpo devolve
+ * `{ok}`: `true` = cancelado; `false` = id desconhecido/ja terminal (noop
+ * idempotente — o mesmo do `agent.cancel` do IPC, nunca um erro). A rota e
+ * PREFIXO no caminho da lista: o id vive no segmento do caminho, e o
+ * despacho do host so consulta prefixos depois de falhar a tabela exact.
+ */
+export function createAgentsCancelHandler(core: UiContribCore): UiContribRequestHandler {
+  return async (req, res) => {
+    const caminho = new URL(req.url ?? '/', 'http://localhost').pathname
+    const agentId = extrairIdDeCancelamentoDeAgente(caminho)
+    if (agentId === undefined) {
+      // O prefixo so conhece /<id>/cancel; o resto NAO e esta rota.
+      json(res, 404, { erro: 'rota-nao-encontrada' })
+      return
+    }
+    if (!exigeMetodo(req, res, 'POST')) return
+    const corpo = await lerCorpo(req)
+    if (!corpo.ok) {
+      json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' })
+      return
+    }
+    if (!csrfValido(core, req, corpo.corpo)) {
+      recusarCsrf(res)
+      return
+    }
+    const cancelado = core.agentsOps.cancelar(agentId)
+    json(res, 200, { ok: cancelado })
   }
 }
 

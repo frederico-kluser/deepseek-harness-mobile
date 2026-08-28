@@ -42,6 +42,8 @@ import { createCsrfGuard, type CsrfGuard } from './csrf.ts'
 import { createIndexTap } from './html.ts'
 import {
   createAccessHandler,
+  createAgentsCancelHandler,
+  createAgentsHandler,
   createClientHandler,
   createConfirmHandler,
   createCsrfHandler,
@@ -59,6 +61,7 @@ import {
   createTokenStateHandler,
   UI_CSRF_BINDING,
   UI_PATH_ACCESS,
+  UI_PATH_AGENTS,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
@@ -75,6 +78,7 @@ import {
   UI_PATH_TOKEN,
   UI_PATH_TOKEN_STATE,
   type UiAcessoBruto,
+  type UiAgentOps,
   type UiContribCore,
   type UiContribRoute,
   type ProviderDoBot,
@@ -148,6 +152,13 @@ export interface UiContribDeps {
    * proxy + sessoes vivas com os metadados de acesso.
    */
   readonly acesso: () => UiAcessoBruto
+  /**
+   * O servico de AGENTES (o dispatcher da Onda 4), fiado pela costura em
+   * `src/index.ts`. A fonte e o REGISTRY do HOST em memoria (a MESMA do
+   * `agent.report`) — a superficie so lista e cancela; o `cancelar` reduz
+   * exposicao e por isso dispensa nonce (so CSRF).
+   */
+  readonly agentsOps: UiAgentOps
 }
 
 /** A origem que o audit log escreve para esta superficie (03-ONDAS 10, item 7). */
@@ -188,6 +199,7 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     tokenOps: deps.tokenOps,
     pairOps: deps.pairOps,
     acesso: deps.acesso,
+    agentsOps: deps.agentsOps,
     csrf,
     now: deps.now,
     requestedBy,
@@ -219,6 +231,12 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     { kind: 'exact', path: UI_PATH_PAIR_STATE, handler: createPairStateHandler(core) },
     // As metricas de acesso (GET, so leitura).
     { kind: 'exact', path: UI_PATH_ACCESS, handler: createAccessHandler(core) },
+    // Os AGENTES (Onda 6): a lista (GET, exact) e o cancelamento (POST com
+    // CSRF — PREFIXO no MESMO caminho: o id curto do run vive no segmento, e
+    // o despacho do host so consulta prefixos depois de falhar a tabela
+    // exact, logo o GET da lista nunca cai no cancelamento).
+    { kind: 'exact', path: UI_PATH_AGENTS, handler: createAgentsHandler(core) },
+    { kind: 'prefix', path: UI_PATH_AGENTS, handler: createAgentsCancelHandler(core) },
     // O token anti-CSRF fresco para o bundle (HIGH-2) — GET, so le. Sempre
     // registado: e o que o bundle novo usa em cada POST por fora do meta antigo.
     { kind: 'exact', path: UI_PATH_CSRF, handler: createCsrfHandler(core) },
@@ -260,6 +278,7 @@ export type {
   FonteDoToken,
   RegistroAcessoBruto,
   UiAcessoBruto,
+  UiAgentOps,
   UiPrivacidade,
   UiPairOps,
   UiTokenOps,

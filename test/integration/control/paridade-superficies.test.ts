@@ -234,6 +234,12 @@ function superficieUi(b: Bancada): Superficie {
       sessoes: [],
       ipConfiavel: false,
     }),
+    // O bloco de AGENTES (Onda 6): esta superficie de teste nao dispara runs —
+    // a lista vazia e o noop idempotente sao os defaults honestos.
+    agentsOps: {
+      listar: () => [],
+      cancelar: () => false,
+    },
   }
   const startHandler = createStartHandler(core)
   const confirmHandler = createConfirmHandler(core)

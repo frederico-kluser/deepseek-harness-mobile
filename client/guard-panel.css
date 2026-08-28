@@ -774,3 +774,93 @@
   border-radius: 12px;
   padding: 12px 14px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Bloco "Agentes" — a lista de runs do dispatcher (id, skill, status PT-BR,
+ * há quanto tempo, resumo cortado) + o botão "Cancelar" por run ativo.
+ * ---------------------------------------------------------------- */
+
+/* O chip de status com tom de ERRO (falhou) — o 3.º tom dos chips de estado. */
+.guard-chip-error {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* A lista de runs — uma linha delgada por run, como a lista de sessões. */
+.guard-agents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* O corpo do cartão (nota de erro + lista / vazio). */
+.guard-agents-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* UMA linha de run: id, corpo (skill · status · há quanto / resumo) e ação. */
+.guard-agent {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* O id CURTO do run — badge mono como o id de sessão. */
+.guard-agent-id {
+  flex: none;
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 4px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* O corpo da linha (o que estica e corta). */
+.guard-agent-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A linha "skill · status · há quanto tempo". */
+.guard-agent-linha {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* A skill disparada (kebab-case) — destaque da linha. */
+.guard-agent-skill {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* O resumo cortado do run (texto do modelo, nunca segredo). */
+.guard-agent-summary {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

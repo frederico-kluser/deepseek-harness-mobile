@@ -129,6 +129,10 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
       ],
       ipConfiavel: false,
     }),
+    agentsOps: {
+      listar: () => [],
+      cancelar: () => false,
+    },
   }
   void createNativeUiSurface(deps)
 

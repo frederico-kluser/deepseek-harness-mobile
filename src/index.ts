@@ -92,7 +92,7 @@ import { createCsrfGuard } from './panel/csrf.ts'
 import { createPanelRouter, PANEL_PREFIX } from './panel/routes.ts'
 import { createOneTimeTokenStore } from './secret/ott.ts'
 import { createMagicStore } from './session/magic.ts'
-import { createNativeUiSurface, type FonteDoToken, type UiAcessoBruto } from './ui-contrib/surface.ts'
+import { createNativeUiSurface, UI_REQUESTED_BY, type FonteDoToken, type UiAcessoBruto } from './ui-contrib/surface.ts'
 import type { UiPrivacidade } from './ui-contrib/routes.ts'
 import type { SessaoDePareamento } from './telegram/pairing.ts'
 import { criarSessaoDePareamento } from './telegram/pairing.ts'
@@ -1406,6 +1406,17 @@ export function apply(
           })),
           ipConfiavel: mayTrustEdgeClientIp(exposure, true),
         }
+      },
+      // O DISPATCHER DE AGENTES (Onda 4): o painel lista e cancela runs do
+      // REGISTRY do HOST em memoria — a MESMA fonte do `agent.report`, nunca o
+      // canal IPC. LAZY de proposito: o registry so nasce no efeito
+      // 'dsh-guard.agentes' (registado depois deste) — as closures leem a
+      // variavel no momento do pedido HTTP, nunca no arranque. O `cancelar`
+      // REDUZ exposicao (CTL-024): a rota dispensa nonce (so CSRF), e a origem
+      // do audit e a mesma desta superficie ('ui:native').
+      agentsOps: {
+        listar: () => registryDeAgentes?.estado() ?? [],
+        cancelar: (agentId) => registryDeAgentes?.cancelar(agentId, UI_REQUESTED_BY) ?? false,
       },
     })
 

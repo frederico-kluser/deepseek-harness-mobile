@@ -222,6 +222,37 @@ interface EstadoPareamento {
   readonly expiraEm?: number
 }
 
+/**
+ * O status de um run de agente — o MESMO vocabulario FECHADO do contrato IPC
+ * (`AgentRunStatus`); o backend e quem o valida, o painel so o rotula. O
+ * `cancelled` e o resultado de um cancelamento explicito; `failed` e o resto
+ * dos stopReason do harness (error/max-tokens/refusal).
+ */
+export type StatusDeRun = 'running' | 'done' | 'failed' | 'cancelled'
+
+/**
+ * UMA linha da lista de agentes devolvida por GET /agents (espelho do
+ * `AgentRunReport` do contrato). O `summary` e texto do MODELO (S3: nao
+ * segredo — o request do agente nunca recebe token nem credencial) e o host
+ * ja o capou em 300 caracteres; o painel corta-o de novo para a linha.
+ */
+export interface RunDeAgente {
+  /** Id CURTO (8 caracteres da parte aleatoria do ULID do run). */
+  readonly id: string
+  /** A skill disparada (kebab-case). */
+  readonly skill: string
+  readonly status: StatusDeRun
+  /** Epoch ms do inicio do run. */
+  readonly startedAt: number
+  /** Resumo curto do resultado, presente sse o run terminou e ha texto. */
+  readonly summary?: string
+}
+
+/** O corpo de GET /agents: a lista COMPLETA (vivos + terminais em memoria). */
+interface EstadoAgentes {
+  readonly runs: readonly RunDeAgente[]
+}
+
 type FeedbackDeForm = {
   readonly tipo: 'ok' | 'erro' | 'aviso'
   readonly texto: string
@@ -249,6 +280,58 @@ export function formatarContagem(expiraEm: number, agoraMs: number): string {
   const minutos = Math.floor(falta / 60)
   const segundos = falta % 60
   return `${minutos}:${segundos.toString().padStart(2, '0')}`
+}
+
+/* ========================================================================== */
+/* O bloco "Agentes" — rotulos e o relogio (o MESMO do /agentes do bot)       */
+/* ========================================================================== */
+
+/**
+ * Os rotulos PT-BR do status de um run — os MESMOS literais do /agentes do
+ * bot (Onda 5, `worker/surface/text.ts`): rodando/concluído/falhou/cancelado.
+ * O payload usa o enum fechado `StatusDeRun`; o rotulo e texto de UI.
+ */
+const ROTULOS_DE_STATUS_DE_AGENTE: Readonly<Record<StatusDeRun, string>> = Object.freeze({
+  running: 'rodando',
+  done: 'concluído',
+  failed: 'falhou',
+  cancelled: 'cancelado',
+})
+
+/**
+ * O rotulo PT-BR de um status de run. Exportada para o teste do bundle
+ * exercitar os QUATRO rotulos (a mesma fidelidade do /agentes do bot).
+ */
+export function rotuloDeStatus(status: StatusDeRun): string {
+  return ROTULOS_DE_STATUS_DE_AGENTE[status]
+}
+
+/**
+ * «há quanto tempo» a partir do `startedAt` epoch ms — o MESMO relogio do
+ * /agentes do bot (Onda 5): «agora mesmo» (um run acabado de nascer nunca
+ * pode ler «há agora»), «há menos de 1 min», «há 2 min», «há 1 h 30 min».
+ * Exportada para o teste do bundle exercitar as bordas sem montar React.
+ */
+export function formatarHaQuanto(startedAt: number, agoraMs: number): string {
+  const ms = agoraMs - startedAt
+  if (ms <= 0) return 'agora mesmo'
+  if (ms < 60_000) return 'há menos de 1 min'
+  const minutos = Math.floor(ms / 60_000)
+  if (minutos < 60) return `há ${String(minutos)} min`
+  const horas = Math.floor(minutos / 60)
+  const resto = minutos % 60
+  return resto === 0 ? `há ${String(horas)} h` : `há ${String(horas)} h ${String(resto)} min`
+}
+
+/**
+ * O teto do resumo exibido na linha do run. O host ja capou o `summary` em
+ * 300 chars; aqui corta-se de novo para a linha nao estourar o cartao.
+ */
+const MAX_RESUMO_EXIBIDO = 120
+
+/** Corta o resumo para a linha — o MESMO espirito do cortarTexto do bot. */
+function resumoExibido(summary: string): string {
+  return summary.length <= MAX_RESUMO_EXIBIDO ? summary : `${summary.slice(0, MAX_RESUMO_EXIBIDO - 1)}…`
 }
 
 /* ========================================================================== */
@@ -842,6 +925,92 @@ function espacarCodigo(codigo: string): string {
 }
 
 /* ========================================================================== */
+/* O bloco "Agentes" — a lista de runs do dispatcher (Onda 6)                 */
+/* ========================================================================== */
+
+/**
+ * O chip de status de UM run: pontinho + rotulo PT-BR. TONS: rodando =
+ * neutro (a atencao vai para o que terminou), concluido = verde, falhou =
+ * vermelho (o dono precisa de saber), cancelado = neutro.
+ */
+function ChipDeStatusDeAgente({ status }: { readonly status: StatusDeRun }): React.ReactNode {
+  const extra = status === 'done' ? ' guard-chip-success' : status === 'failed' ? ' guard-chip-error' : ''
+  return h('span', { className: `guard-chip${extra}` },
+    h('span', { className: 'guard-chip-dot' }),
+    rotuloDeStatus(status),
+  )
+}
+
+/**
+ * O bloco "🤖 Agentes" — abaixo da trilha. Espelha o /agentes e o
+ * /parar-agente do bot: a lista de runs do HOST (id, skill, status PT-BR,
+ * ha quanto tempo, resumo cortado) e o botao "Cancelar" por run ATIVO.
+ *
+ * Estados (fallback seguro: uma falha de fetch nunca quebra o painel):
+ *  - ainda a carregar (null, sem erro)      → "A carregar os agentes…";
+ *  - fetch falhou sem dados                 → a mensagem de erro;
+ *  - lista vazia                            → o MESMO vazio do /agentes do
+ *    bot: "Nenhum agente rodando.";
+ *  - com runs                               → uma linha por run; o erro de um
+ *    refresh falhado aparece em cima da lista (mantemos o ultimo resultado
+ *    honesto, nunca um vazio inventado).
+ */
+function CartaoAgentes(props: {
+  readonly estado: EstadoAgentes | null
+  readonly erro: string | null
+  readonly cancelandoId: string | null
+  readonly agora: number
+  readonly aoCancelar: (id: string) => void
+}): React.ReactNode {
+  const titulo = h('span', { className: 'guard-card-title' }, '🤖 Agentes')
+  const notaDeErro = props.erro !== null ? paragrafo('guard-error', props.erro) : null
+
+  const corpo =
+    props.estado === null
+      ? props.erro === null
+        ? paragrafo('guard-intro', 'A carregar os agentes…')
+        : h('div', { className: 'guard-agents-body' }, notaDeErro)
+      : props.estado.runs.length === 0
+        ? h('div', { className: 'guard-agents-body' },
+            notaDeErro,
+            paragrafo('guard-intro', 'Nenhum agente rodando.'),
+          )
+        : h('div', { className: 'guard-agents-body' },
+            notaDeErro,
+            h('ul', { className: 'guard-agents' },
+              props.estado.runs.map((run) =>
+                h('li', { className: 'guard-agent', key: run.id },
+                  h('code', { className: 'guard-agent-id' }, run.id),
+                  h('div', { className: 'guard-agent-body' },
+                    h('div', { className: 'guard-agent-linha' },
+                      h('span', { className: 'guard-agent-skill' }, run.skill),
+                      h(ChipDeStatusDeAgente, { status: run.status }),
+                      h('span', { className: 'guard-muted' }, formatarHaQuanto(run.startedAt, props.agora)),
+                    ),
+                    run.summary !== undefined && run.summary.length > 0
+                      ? h('div', { className: 'guard-agent-summary' }, resumoExibido(run.summary))
+                      : null,
+                  ),
+                  // O botao so existe para runs ATIVOS; o cancelar REDUZ
+                  // exposicao e por isso nao pede confirmacao (CTL-024).
+                  run.status === 'running'
+                    ? h('button', {
+                        type: 'button',
+                        className: 'guard-btn-sm',
+                        'data-guard-cancel-agent': run.id,
+                        disabled: props.cancelandoId === run.id,
+                        onClick: () => props.aoCancelar(run.id),
+                      }, props.cancelandoId === run.id ? 'Cancelando…' : 'Cancelar')
+                    : null,
+                ),
+              ),
+            ),
+          )
+
+  return h('div', { className: 'guard-card' }, titulo, corpo)
+}
+
+/* ========================================================================== */
 /* O PAINEL — a section `settings.section`                                    */
 /* ========================================================================== */
 
@@ -863,6 +1032,12 @@ function TelegramGuardSection(): React.ReactNode {
   // A checagem AO VIVO de descoberta (GET /api/privacidade); `null` = ainda a
   // carregar (ou o fetch falhou e mantemos o último resultado honesto).
   const [privacidade, setPrivacidade] = useState<EstadoPrivacidade | null>(null)
+  // A lista de AGENTES (GET /agents); `null` = ainda a carregar. Em falha de
+  // fetch mantemos o último resultado honesto e anotamos o erro em baixo.
+  const [agentes, setAgentes] = useState<EstadoAgentes | null>(null)
+  const [agentesErro, setAgentesErro] = useState<string | null>(null)
+  // O id do run cujo cancelamento está em voo (o botão mostra "Cancelando…").
+  const [cancelandoId, setCancelandoId] = useState<string | null>(null)
 
   // Formulário de token.
   const [valor, setValor] = useState('')
@@ -936,9 +1111,49 @@ function TelegramGuardSection(): React.ReactNode {
     }
   }, [])
 
+  // A lista de AGENTES (GET /agents): a MESMA fonte do /agentes do bot — o
+  // registry do host (memoria), servida pelo backend. Em falha de fetch
+  // mantemos o último resultado honesto e anotamos o erro para o bloco.
+  const buscarAgentes = React.useCallback(async (): Promise<void> => {
+    try {
+      const dados = await apiGet<EstadoAgentes>('/agents')
+      if (vivo.current) {
+        setAgentes(dados)
+        setAgentesErro(null)
+      }
+    } catch {
+      if (vivo.current) setAgentesErro('não foi possível carregar os agentes — servidor inacessível')
+    }
+  }, [])
+
+  // Cancela um run ATIVO (POST /agents/:id/cancel com CSRF) e re-lê a lista.
+  // REDUZ exposição, por isso o backend dispensa nonce — só CSRF.
+  const cancelarAgente = React.useCallback(
+    async (id: string): Promise<void> => {
+      if (!vivo.current) return
+      setCancelandoId(id)
+      const r = await apiPost(`/agents/${id}/cancel`, {}, document)
+      setCancelandoId(null)
+      if (!vivo.current) return
+      if (r.csrfIndisponivel) {
+        setAgentesErro('CSRF indisponível — recarregue a página e tente de novo.')
+        return
+      }
+      if (r.status !== 200) {
+        // O run pode ter terminado entre o poll e o clique (noop {ok:false}
+        // nao e erro): a mensagem so aparece em falha real de transporte.
+        setAgentesErro('Não foi possível cancelar o agente. Tente de novo.')
+        return
+      }
+      setAgentesErro(null)
+      await buscarAgentes()
+    },
+    [buscarAgentes],
+  )
+
   const recarregarTudo = React.useCallback(async (): Promise<void> => {
-    await Promise.all([buscarToken(), buscarTelegrama(), buscarPrivacidade(false)])
-  }, [buscarToken, buscarTelegrama, buscarPrivacidade])
+    await Promise.all([buscarToken(), buscarTelegrama(), buscarPrivacidade(false), buscarAgentes()])
+  }, [buscarToken, buscarTelegrama, buscarPrivacidade, buscarAgentes])
 
   // Sonda /pair-state a cada ~3s enquanto houver um código a aguardar (ou a
   // gerar), até o `pareado:true` chegar (o dono digitou /parear no Telegram).
@@ -1278,6 +1493,15 @@ function TelegramGuardSection(): React.ReactNode {
       })
     : null
 
+  // --- Bloco de AGENTES (abaixo da trilha — sempre visível) -------------
+  const blocoAgentes = h(CartaoAgentes, {
+    estado: agentes,
+    erro: agentesErro,
+    cancelandoId,
+    agora,
+    aoCancelar: (id) => void cancelarAgente(id),
+  })
+
   return h('div', { className: 'guard-section' },
     // --- Bloco de marca (logo do plugin) --------------------------------
     h('div', { className: 'guard-brand' },
@@ -1297,6 +1521,7 @@ function TelegramGuardSection(): React.ReactNode {
     passo2Concluido,
     passo3,
     caixaConfirmacao,
+    blocoAgentes,
   )
 }
 

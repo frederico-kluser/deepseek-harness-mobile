@@ -78,6 +78,42 @@ export function apiPost(caminho: string, corpo: Record<string, unknown>, documen
 export function formatarContagem(expiraEm: number, agoraMs: number): string
 
 /**
+ * O status de um run de agente — o MESMO vocabulário FECHADO do contrato IPC
+ * (`AgentRunStatus`); o backend é quem o valida, o painel só o rotula.
+ */
+export type StatusDeRun = 'running' | 'done' | 'failed' | 'cancelled'
+
+/**
+ * UMA linha da lista de agentes devolvida por `GET /agents` (espelho do
+ * `AgentRunReport` do contrato). O `summary` é texto do MODELO (S3: não
+ * segredo) e o host já o capou em 300 caracteres; o painel corta-o para a
+ * linha do cartão.
+ */
+export interface RunDeAgente {
+  /** Id CURTO (8 caracteres da parte aleatória do ULID do run). */
+  readonly id: string
+  /** A skill disparada (kebab-case). */
+  readonly skill: string
+  readonly status: StatusDeRun
+  /** Epoch ms do início do run. */
+  readonly startedAt: number
+  /** Resumo curto do resultado, presente sse o run terminou e há texto. */
+  readonly summary?: string
+}
+
+/**
+ * O rótulo PT-BR de um status de run — os MESMOS literais do /agentes do bot
+ * (rodando/concluído/falhou/cancelado).
+ */
+export function rotuloDeStatus(status: StatusDeRun): string
+
+/**
+ * «há quanto tempo» a partir do `startedAt` epoch ms — o MESMO relógio do
+ * /agentes do bot: «agora mesmo», «há menos de 1 min», «há 2 min», «há 1 h».
+ */
+export function formatarHaQuanto(startedAt: number, agoraMs: number): string
+
+/**
  * O provedor de mensageria ATIVO do host. O host ainda NÃO emite o campo
  * `provider` no GET /telegram (a paridade vem na onda do host); o painel
  * consome-o quando existir e cai no default `'telegram'` sem ele.

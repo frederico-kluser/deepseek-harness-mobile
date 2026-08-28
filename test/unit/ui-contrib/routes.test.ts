@@ -22,6 +22,7 @@ import { describe, it } from 'node:test'
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ControlIntent, ControlResultado } from '../../../src/contracts/control.ts'
+import type { AgentRunReport } from '../../../src/contracts/ipc.ts'
 import {
   createNativeUiSurface,
   type UiContribBroadcast,
@@ -32,6 +33,7 @@ import {
   CSRF_HEADER_NAME,
 } from '../../../src/ui-contrib/csrf.ts'
 import {
+  UI_PATH_AGENTS,
   UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
@@ -41,6 +43,8 @@ import {
   UI_PATH_RESET_CONFIRM,
   UI_PATH_START,
   UI_PATH_STOP,
+  extrairIdDeCancelamentoDeAgente,
+  projetarAgentes,
   projetarEstadoTelegrama,
 } from '../../../src/ui-contrib/routes.ts'
 import { UI_CSRF_BINDING } from '../../../src/ui-contrib/routes.ts'
@@ -72,6 +76,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
 } {
   const clock = new FakeClock(1_000_000)
   const rotas = new Map<string, { handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }>()
+  const prefixos: Array<{ path: string; handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }> = []
   const emitidos: ControlIntent[] = []
   const noncesPedidos: string[] = []
   const resultadoEmit: ControlResultado = { estado: 'STOPPED', idempotente: false }
@@ -85,7 +90,10 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
       return () => undefined
     },
     registerRoute: (rota) => {
-      rotas.set(rota.path, { handler: rota.handler })
+      // O espelho do despacho do host: exact na tabela exact, prefixo na de
+      // prefixos (o cancelamento de agentes vive no segmento do caminho).
+      if (rota.kind === 'exact') rotas.set(rota.path, { handler: rota.handler })
+      else prefixos.push({ path: rota.path, handler: rota.handler })
       return () => undefined
     },
     emit: async (intent) => {
@@ -124,6 +132,12 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
       sessoes: [],
       ipConfiavel: false,
     }),
+    // O bloco de AGENTES (Onda 6): a lista vazia e o noop idempotente por
+    // defeito; os testes do bloco fazem override com runs de exemplo.
+    agentsOps: {
+      listar: () => [],
+      cancelar: () => false,
+    },
     ...overrides,
   }
   void createNativeUiSurface(deps)
@@ -132,7 +146,13 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
     caminho: string,
     opcoes: { metodo?: string; cabecalhos?: Readonly<Record<string, string>>; pedacos?: readonly (string | Buffer)[] } = {},
   ): Promise<RespostaCapturada> => {
-    const rota = rotas.get(caminho)
+    // Tabela exact primeiro; a falha cai nos prefixos (o MAIS LONGO ganha —
+    // o mesmo despacho do host).
+    const rota =
+      rotas.get(caminho) ??
+      prefixos
+        .filter((p) => caminho.startsWith(p.path))
+        .toSorted((a, b) => b.path.length - a.path.length)[0]
     assert.ok(rota !== undefined, `rota nao registada: ${caminho}`)
     const req = new EventEmitter() as unknown as IncomingMessage
     const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
@@ -561,5 +581,187 @@ describe('projetarEstadoTelegrama (funcao pura)', () => {
     const onlineComHandle = projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'discord')
     assert.deepEqual(Object.keys(onlineComHandle).toSorted(), ['handle', 'online', 'provider'])
     assert.ok(!JSON.stringify([offline, onlineSemHandle, onlineComHandle]).includes('AA'), 'nenhum padrao de chave real no corpo')
+  })
+})
+
+/* ========================================================================== */
+/* O bloco de AGENTES (Onda 6 — GET /agents + POST /agents/:id/cancel)        */
+/* ========================================================================== */
+
+/**
+ * Os runs de exemplo — o MESMO `AgentRunReport` do contrato IPC (o que o
+ * registry do host devolve em `estado()`). O `summary` e texto do MODELO
+ * (S3: nao segredo) e o registry ja o capou em 300 chars.
+ */
+const RUNS_DE_EXEMPLO: readonly AgentRunReport[] = [
+  { id: 'ABCDEF12', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: 1_000_000 },
+  {
+    id: '3456CDEF',
+    skill: 'surf-research-agent-skill',
+    status: 'done',
+    startedAt: 1_000_000 - 5 * 60_000,
+    summary: 'Resultado em duas paginas.',
+  },
+]
+
+describe('projetarAgentes (funcao pura)', () => {
+  it('devolve runs TAL QUAL do registry (cada campo passa, o summary so quando presente)', () => {
+    assert.deepEqual(projetarAgentes(RUNS_DE_EXEMPLO), {
+      runs: [
+        { id: 'ABCDEF12', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: 1_000_000 },
+        {
+          id: '3456CDEF',
+          skill: 'surf-research-agent-skill',
+          status: 'done',
+          startedAt: 1_000_000 - 5 * 60_000,
+          summary: 'Resultado em duas paginas.',
+        },
+      ],
+    })
+  })
+
+  it('a lista vazia devolve runs: [] (o painel mostra «Nenhum agente rodando.»)', () => {
+    assert.deepEqual(projetarAgentes([]), { runs: [] })
+  })
+
+  it('o corpo tem EXATAMENTE as chaves do contrato — sem summary, sem a chave', () => {
+    const projeto = projetarAgentes([RUNS_DE_EXEMPLO[0] ?? { id: 'ABCDEF12', skill: 'x', status: 'running', startedAt: 1 }])
+    const primeiro = (projeto['runs'] as Record<string, unknown>[])[0]
+    assert.ok(primeiro !== undefined)
+    assert.deepEqual(Object.keys(primeiro).toSorted(), ['id', 'skill', 'startedAt', 'status'])
+  })
+})
+
+describe('extrairIdDeCancelamentoDeAgente (funcao pura)', () => {
+  it('extrai o id de /__guard-ui/api/agents/<id>/cancel', () => {
+    assert.equal(extrairIdDeCancelamentoDeAgente('/__guard-ui/api/agents/ABCDEF12/cancel'), 'ABCDEF12')
+  })
+
+  it('undefined para qualquer outro caminho (o prefixo nao conhece a forma)', () => {
+    for (const caminho of [
+      '/__guard-ui/api/agents',
+      '/__guard-ui/api/agents/',
+      '/__guard-ui/api/agents/ABC/cancel/extra',
+      '/__guard-ui/api/agents/lixo',
+      '/__guard-ui/api/agents/a/b/cancel',
+      '/__guard-ui/agents/ABC/cancel',
+      '/__guard-ui/api/agentes/ABC/cancel',
+    ]) {
+      assert.equal(extrairIdDeCancelamentoDeAgente(caminho), undefined, `caminho ${caminho}`)
+    }
+  })
+})
+
+describe('GET /__guard-ui/api/agents', () => {
+  it('devolve a lista do agentsOps TAL QUAL — a fonte e o registry do host, nunca o IPC', async () => {
+    const bancada = criarBancada({
+      agentsOps: { listar: () => RUNS_DE_EXEMPLO, cancelar: () => false },
+    })
+    const resposta = await bancada.enviar(UI_PATH_AGENTS, { metodo: 'GET', pedacos: [] })
+    assert.equal(resposta.status, 200)
+    assert.equal(resposta.cabecalhos['cache-control'], 'no-store')
+    assert.deepEqual(resposta.corpo, {
+      runs: [
+        { id: 'ABCDEF12', skill: 'deep-orchestrator-agent-skill', status: 'running', startedAt: 1_000_000 },
+        {
+          id: '3456CDEF',
+          skill: 'surf-research-agent-skill',
+          status: 'done',
+          startedAt: 1_000_000 - 5 * 60_000,
+          summary: 'Resultado em duas paginas.',
+        },
+      ],
+    })
+  })
+
+  it('metodo errado responde 405 com allow: GET', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(UI_PATH_AGENTS, { metodo: 'POST', pedacos: ['{}'] })
+    assert.equal(resposta.status, 405)
+    assert.equal(resposta.cabecalhos.allow, 'GET')
+  })
+})
+
+describe('POST /__guard-ui/api/agents/:id/cancel', () => {
+  it('cancela com CSRF e devolve o veredito do registry ({ok:true} cancelado)', async () => {
+    const cancelados: string[] = []
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => [],
+        cancelar: (agentId) => {
+          cancelados.push(agentId)
+          return agentId === 'ABCDEF12'
+        },
+      },
+    })
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{}'],
+    })
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, { ok: true })
+    assert.deepEqual(cancelados, ['ABCDEF12'])
+  })
+
+  it('id desconhecido/ja terminal = noop idempotente {ok:false}, nunca um erro (o mesmo do agent.cancel)', async () => {
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => [],
+        cancelar: () => false,
+      },
+    })
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ZZZZZZZZ/cancel`, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{}'],
+    })
+    assert.equal(resposta.status, 200)
+    assert.deepEqual(resposta.corpo, { ok: false })
+  })
+
+  it('SEM CSRF e recusado com 403 e NADA e cancelado (o cancelar REDUZ exposicao mas e escrita)', async () => {
+    const cancelados: string[] = []
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => [],
+        cancelar: (agentId) => {
+          cancelados.push(agentId)
+          return true
+        },
+      },
+    })
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, { metodo: 'POST', pedacos: ['{}'] })
+    assert.equal(resposta.status, 403)
+    assert.equal(resposta.corpo.erro, 'csrf-recusado')
+    assert.deepEqual(cancelados, [], 'o cancelamento nao pode ter saido sem CSRF')
+  })
+
+  it('caminho fora da forma /<id>/cancel responde 404 (o prefixo so conhece a forma)', async () => {
+    const bancada = criarBancada()
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/lixo`, { metodo: 'POST', pedacos: ['{}'] })
+    assert.equal(resposta.status, 404)
+    assert.equal(resposta.corpo.erro, 'rota-nao-encontrada')
+  })
+
+  it('corpo malformado responde 400 sem chegar ao cancelar', async () => {
+    const cancelados: string[] = []
+    const bancada = criarBancada({
+      agentsOps: {
+        listar: () => [],
+        cancelar: (agentId) => {
+          cancelados.push(agentId)
+          return true
+        },
+      },
+    })
+    const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, {
+      metodo: 'POST',
+      cabecalhos: { [CSRF_HEADER_NAME]: bancada.token() },
+      pedacos: ['{nao-e-json'],
+    })
+    assert.equal(resposta.status, 400)
+    assert.equal(resposta.corpo.erro, 'corpo-invalido')
+    assert.deepEqual(cancelados, [])
   })
 })

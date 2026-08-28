@@ -906,4 +906,113 @@ test('client.d.ts (espelho) declara a superficie provider-aware do fonte', () =>
     'rotulosDoProvider com fallback tipado no espelho',
   )
   assert.match(espelho, /export function normalizarProvider\(valor: unknown\): TipoProvider/u)
+
+  // O bloco de AGENTES (Onda 6): o espelho declara o contrato novo do fonte —
+  // os QUATRO exports novos (StatusDeRun, RunDeAgente, rotuloDeStatus,
+  // formatarHaQuanto) — com o summary OPCIONAL (o registry so o emite quando
+  // o run terminou e ha texto).
+  assert.match(
+    espelho,
+    /export type StatusDeRun = 'running' \| 'done' \| 'failed' \| 'cancelled'/u,
+    'o union fechado do StatusDeRun no espelho',
+  )
+  assert.match(espelho, /export interface RunDeAgente/u, 'RunDeAgente no espelho')
+  assert.match(espelho, /readonly summary\?: string/u, 'o summary opcional de RunDeAgente no espelho')
+  assert.match(espelho, /export function rotuloDeStatus\(status: StatusDeRun\): string/u, 'rotuloDeStatus no espelho')
+  assert.match(
+    espelho,
+    /export function formatarHaQuanto\(startedAt: number, agoraMs: number\): string/u,
+    'formatarHaQuanto no espelho',
+  )
+})
+
+/**
+ * Onda 6 — o bloco "Agentes" (abaixo da trilha): a lista de runs do host e o
+ * cancelamento, verificados como conteúdo compilado do bundle (mesma
+ * fidelidade de smoke dos restantes cartões). O esbuild foge os caracteres
+ * não-ASCII, por isso as assertions usam SUBSTRINGS ASCII-ONLY.
+ *
+ *  - o bloco consulta a rota /agents (a MESMA fonte do /agentes do bot — o
+ *    registry do host, servida pelo backend);
+ *  - o vazio é o TEXTO EXACTO do /agentes: «Nenhum agente rodando.»;
+ *  - o cancelamento: um botão por run ATIVO (`data-guard-cancel-agent` +
+ *    "Cancelar" → "Cancelando…" durante o POST);
+ *  - os QUATRO rótulos PT-BR de status (rodando/concluído/falhou/cancelado);
+ *  - o relógio «há quanto tempo» (agora mesmo / há menos de 1 min).
+ */
+test('bundle: o bloco Agentes — lista, vazio, cancelar e os rótulos PT-BR (Onda 6)', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // O bloco consulta a rota /agents (a fonte do registry do host). O caminho
+  // COMPLETO e composto em runtime (`API_BASE + caminho`); no bundle ficam os
+  // literais '/agents' (a GET da lista) e '/agents/' (a concat do POST).
+  assert.ok(codigo.includes('/agents'), 'o bundle deve consultar a rota /agents')
+  assert.ok(codigo.includes('/agents/'), 'o POST de cancelamento deve montar o caminho /agents/<id>/cancel')
+
+  // O vazio EXACTO do /agentes do bot e o estado de carregamento inicial.
+  assert.ok(codigo.includes('Nenhum agente rodando'), 'o vazio deve ser o mesmo do /agentes do bot')
+  assert.ok(codigo.includes('A carregar os agentes'), 'o bundle deve conter o estado de carregamento inicial')
+
+  // O cancelamento: o botão por run ativo (marcador data-) e o estado em voo.
+  assert.ok(codigo.includes('data-guard-cancel-agent'), 'o bundle deve marcar o botão de cancelar por run')
+  assert.ok(codigo.includes('Cancelando'), 'o bundle deve conter o estado "Cancelando…" do botão')
+  assert.ok(codigo.includes('Cancelar'), 'o bundle deve conter o rótulo do botão "Cancelar"')
+
+  // Os QUATRO rótulos PT-BR (o 'conclu' é o prefixo ASCII de 'concluído' —
+  // o esbuild foge o acento mas preserva o prefixo).
+  assert.ok(codigo.includes('rodando'), 'o rótulo de running deve estar no bundle')
+  assert.ok(codigo.includes('conclu'), 'o rótulo de done (concluído) deve estar no bundle')
+  assert.ok(codigo.includes('falhou'), 'o rótulo de failed deve estar no bundle')
+  assert.ok(codigo.includes('cancelado'), 'o rótulo de cancelled deve estar no bundle')
+
+  // O relógio «há quanto tempo» do /agentes.
+  assert.ok(codigo.includes('agora mesmo'), 'o relógio deve conter o "agora mesmo" do /agentes')
+  assert.ok(codigo.includes('menos de 1 min'), 'o relógio deve conter o "há menos de 1 min" do /agentes')
+})
+
+/**
+ * Onda 6 — `rotuloDeStatus`: a função pura exportada exercitada nos QUATRO
+ * status do vocabulário FECHADO (os MESMOS literais do /agentes do bot,
+ * `worker/surface/text.ts`). Um status fora do union não compila; o contrato
+ * é fechado por construção.
+ */
+test('bundle: rotuloDeStatus — os quatro rótulos PT-BR do /agentes', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const rotulo = modulo.rotuloDeStatus as (status: unknown) => string
+
+  assert.equal(rotulo('running'), 'rodando')
+  assert.equal(rotulo('done'), 'concluído')
+  assert.equal(rotulo('failed'), 'falhou')
+  assert.equal(rotulo('cancelled'), 'cancelado')
+  void chamadas
+})
+
+/**
+ * Onda 6 — `formatarHaQuanto`: o relógio «há quanto tempo» (o MESMO do
+ * /agentes do bot) com as bordas: run a nascer/futuro → "agora mesmo"
+ * (nunca "há agora"); < 1 min → "há menos de 1 min"; minutos; horas exatas
+ * e com resto ("há 1 h 30 min").
+ */
+test('bundle: formatarHaQuanto — bordas do relógio do /agentes', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const fmt = modulo.formatarHaQuanto as (startedAt: number, agoraMs: number) => string
+  const AGORA = 1_000_000_000
+
+  // No prazo (agora) e com o relógio a andar para trás (startedAt no futuro).
+  assert.equal(fmt(AGORA, AGORA), 'agora mesmo')
+  assert.equal(fmt(AGORA + 10_000, AGORA), 'agora mesmo')
+  // Menos de um minuto inteiro → "há menos de 1 min" (incl. o limiar 59.999).
+  assert.equal(fmt(AGORA - 30_000, AGORA), 'há menos de 1 min')
+  assert.equal(fmt(AGORA - 59_999, AGORA), 'há menos de 1 min')
+  // Minutos: o limiar exato de 1 min e o último antes da hora.
+  assert.equal(fmt(AGORA - 60_000, AGORA), 'há 1 min')
+  assert.equal(fmt(AGORA - 2 * 60_000, AGORA), 'há 2 min')
+  assert.equal(fmt(AGORA - 59 * 60_000, AGORA), 'há 59 min')
+  // Horas: exatas e com resto.
+  assert.equal(fmt(AGORA - 60 * 60_000, AGORA), 'há 1 h')
+  assert.equal(fmt(AGORA - 90 * 60_000, AGORA), 'há 1 h 30 min')
+  assert.equal(fmt(AGORA - 3 * 3_600_000, AGORA), 'há 3 h')
+  void chamadas
 })

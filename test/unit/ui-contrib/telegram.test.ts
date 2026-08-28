@@ -109,6 +109,10 @@ function criarBancada(provider: ProviderId = 'telegram'): Bancada {
       sessoes: [],
       ipConfiavel: false,
     }),
+    agentsOps: {
+      listar: () => [],
+      cancelar: () => false,
+    },
   }
   void createNativeUiSurface(deps)
 
