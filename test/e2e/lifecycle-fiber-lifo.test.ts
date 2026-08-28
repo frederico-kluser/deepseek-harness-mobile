@@ -3,19 +3,19 @@
  * T6.4 -- O DISPOSER DA FIBER EM LIFO, sobre o Cordis REAL.
  * =============================================================================
  *
- * `src/index.ts` regista cinco efeitos numa ordem DELIBERADA (veto, auth-check,
- * barreira, controlador, worker) porque os disposers do Cordis correm em LIFO:
- * quando a Fiber transita para DISPOSED, o WORKER e o primeiro a ser erradicado
- * e so depois a barreira e levantada. Na ordem inversa haveria uma janela em
- * que o plano de controlo responde sem credencial enquanto o worker ainda esta
- * vivo -- o furo que este plugin existe para fechar.
+ * `src/index.ts` regista seis efeitos numa ordem DELIBERADA (veto, auth-check,
+ * barreira, controlador, agentes, worker) porque os disposers do Cordis correm
+ * em LIFO: quando a Fiber transita para DISPOSED, o WORKER e o primeiro a ser
+ * erradicado e so depois a barreira e levantada. Na ordem inversa haveria uma
+ * janela em que o plano de controlo responde sem credencial enquanto o worker
+ * ainda esta vivo -- o furo que este plugin existe para fechar.
  *
  * O que os testes unitarios provam com o FakeContext, este ficheiro prova com o
  * Cordis REAL (`@deepseek-ai/cordis@4.0.1`, instalado): uma Fiber de verdade,
  * os seus efeitos e os seus disposers, e um PROCESSO REAL a ser morto pela
  * ordem dos disposers.
  *
- *   Parte A: registam-se os CINCO efeitos com os MESMOS nomes e na MESMA ordem
+ *   Parte A: registam-se os SEIS efeitos com os MESMOS nomes e na MESMA ordem
  *   de `apply()`; o efeito do worker cria um processo REAL e o seu disposer
  *   mata-o. Ao descarregar a Fiber, a sequencia observada tem de ser a ordem
  *   inversa exata, e o disposer da barreira tem de ver o processo do worker JA
@@ -82,18 +82,20 @@ after(() => {
 /**
  * A ORDEM registada por `apply()` (ver `test/unit/index.test.ts` e
  * `test/support/fixtures.ts`: EFFECT = { veto: 0, authCheck: 1, barreira: 2,
- * controlador: 3, worker: 4 }). A sequencia completa esperada do descarrego.
+ * controlador: 3, agentes: 4, worker: 5 }). A sequencia completa esperada do
+ * descarrego.
  */
 const ORDEM_EFEITOS = [
   'dsh-guard.veto-de-permissao',
   'dsh-guard.auth-check',
   'dsh-guard.barreira',
   'dsh-guard.controlador',
+  'dsh-guard.agentes',
   'dsh-guard.worker',
 ] as const
 
 /* ========================================================================== */
-/* Parte A: a Fiber REAL, os cinco efeitos na ordem de apply, um processo REAL */
+/* Parte A: a Fiber REAL, os seis efeitos na ordem de apply, um processo REAL */
 /* ========================================================================== */
 
 describe('disposer da Fiber em LIFO (Cordis real)', { skip: process.platform === 'win32' ? POSIX_REASON : false }, () => {
@@ -105,8 +107,8 @@ describe('disposer da Fiber em LIFO (Cordis real)', { skip: process.platform ===
     let workerDisposerCorreuAntes: boolean | undefined
 
     // A MESMA sequencia de ctx.effect de src/index.ts (veto, auth-check,
-    // barreira, controlador, worker) -- e cada um devolve um disposer SINCRONO,
-    // como o plugin exige (Q-2).
+    // barreira, controlador, agentes, worker) -- e cada um devolve um disposer
+    // SINCRONO, como o plugin exige (Q-2).
     ctx.effect((): (() => void) => {
       ordem.push('efeito.veto')
       return (): void => {
@@ -139,6 +141,17 @@ describe('disposer da Fiber em LIFO (Cordis real)', { skip: process.platform ===
         ordem.push('disposer.controlador')
       }
     }, 'dsh-guard.controlador')
+
+    // EMENDA ONDA-4-AGENTS-HOST: o dispatcher de agentes, registado entre o
+    // controlador e o worker -- no descarrego LIFO ele morre a seguir ao
+    // worker e antes do controlador, abortando os runs vivos enquanto o plano
+    // de controlo ainda esta de pe.
+    ctx.effect((): (() => void) => {
+      ordem.push('efeito.agentes')
+      return (): void => {
+        ordem.push('disposer.agentes')
+      }
+    }, 'dsh-guard.agentes')
 
     ctx.effect((): (() => void) => {
       ordem.push('efeito.worker')
@@ -173,8 +186,10 @@ describe('disposer da Fiber em LIFO (Cordis real)', { skip: process.platform ===
       'efeito.auth-check',
       'efeito.barreira',
       'efeito.controlador',
+      'efeito.agentes',
       'efeito.worker',
       'disposer.worker',
+      'disposer.agentes',
       'disposer.controlador',
       'disposer.barreira',
       'disposer.auth-check',
@@ -231,7 +246,7 @@ function instalar(overrides: Partial<Config> = {}): Instalacao {
   return { ctx, webServer, subprocess, config, despachoOriginal }
 }
 
-/** Os cinco efeitos do plugin, na ordem em que a Fiber REAL os registou. */
+/** Os seis efeitos do plugin, na ordem em que a Fiber REAL os registou. */
 function efeitosDoPlugin(ctx: Context): string[] {
   return ctx.fiber
     .getEffects()
@@ -240,7 +255,7 @@ function efeitosDoPlugin(ctx: Context): string[] {
 }
 
 describe('apply() real sobre a Fiber real', { skip: process.platform === 'win32' ? POSIX_REASON : false }, () => {
-  it('loopback: regista os cinco efeitos na ordem documentada e o descarrego derruba tudo', async () => {
+  it('loopback: regista os seis efeitos na ordem documentada e o descarrego derruba tudo', async () => {
     const { ctx, webServer, subprocess, despachoOriginal } = instalar()
 
     // A Fiber REAL reporta os efeitos vivos e a sua ordem (getEffects).
