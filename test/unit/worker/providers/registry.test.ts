@@ -63,6 +63,7 @@ describe('worker/providers/registry — resolucao do provedor (fail-closed)', ()
         }
         assert.match(error.message, /whatsapp/u)
         assert.match(error.message, /telegram/u, 'nomeia os antecipados')
+        assert.match(error.message, /discord/u, 'nomeia os antecipados')
         assert.match(error.message, /DSH_GUARD_PROVIDER/u, 'nomeia a variavel')
         return true
       },
@@ -82,6 +83,37 @@ describe('worker/providers/registry — resolucao do provedor (fail-closed)', ()
 function provToken(): string {
   return '123456789:AAHfalso-so-para-teste_0123456789abcd'
 }
+
+describe('worker/providers/registry — discord REGISTRADO (Onda 3)', () => {
+  it('discord explicito resolve para a tabela (e o create e o do discord)', () => {
+    const prov = resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: 'discord' })
+    assert.equal(prov.id, 'discord')
+    assert.equal(PROVIDERS.discord, prov, 'a tabela e a unica fonte da descricao')
+    assert.equal(typeof prov.create, 'function')
+    assert.equal(typeof prov.lerToken, 'function')
+    assert.equal(typeof prov.assertTokenNaoEmArgv, 'function')
+  })
+
+  it('o lerToken do discord le a SUA variavel (DISCORD_BOT_TOKEN), nao a do telegram', () => {
+    const prov = resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: 'discord' })
+    assert.throws(() => prov.lerToken({}), /DISCORD_BOT_TOKEN/u)
+    assert.equal(
+      prov.lerToken({ DISCORD_BOT_TOKEN: '  token-do-discord  ' }),
+      'token-do-discord',
+    )
+  })
+
+  it('o assert do discord recusa um token com FORMA discord em argv (TG-069)', () => {
+    const prov = resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: 'discord' })
+    assert.throws(() =>
+      prov.assertTokenNaoEmArgv([...ARGV_LIMPO, 'MzQ0NTAzMDA4MzYyODU0NzE2OTk1Njk3OTIzNDU2Nzg5MDEyMzQ1Ng']),
+    )
+  })
+
+  it('a tabela continua fechada: telegram e discord, e so', () => {
+    assert.deepEqual(Object.keys(PROVIDERS).toSorted(), ['discord', 'telegram'])
+  })
+})
 
 describe('worker/providers/registry — a ponte de intent monta o envelope STRING (V2)', () => {
   it('monta v:2, type:intent, e from/chat STRING a partir das chaves string', () => {

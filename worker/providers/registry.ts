@@ -55,6 +55,12 @@ import { gerarRequestId } from '../surface/tokens.ts'
 import { createTelegramProvider, type TelegramAdapter } from './telegram/adapter.ts'
 import { assertTokenNotInArgv, lerTokenDoAmbiente } from './telegram/token.ts'
 
+import { createDiscordProvider, type DiscordAdapter } from './discord/adapter.ts'
+import {
+  assertTokenNotInArgv as assertDiscordTokenNotInArgv,
+  lerTokenDoAmbiente as lerTokenDiscordDoAmbiente,
+} from './discord/token.ts'
+
 /* ========================================================================== */
 /* 1. O ROTULO DO PROVEDOR (D1)                                               */
 /* ========================================================================== */
@@ -62,8 +68,8 @@ import { assertTokenNotInArgv, lerTokenDoAmbiente } from './telegram/token.ts'
 /** Nome que o HOST escreve no ambiente do worker. Contrato com o host. */
 export const WORKER_PROVIDER_ENV_VAR = 'DSH_GUARD_PROVIDER'
 
-/** O identificador fechado do provedor ativo. Hoje so `telegram`. */
-export type ProviderId = 'telegram'
+/** O identificador fechado do provedor ativo. `telegram` e `discord`. */
+export type ProviderId = 'telegram' | 'discord'
 
 /** O default fechado (D1): ausente em config/estado = telegram. */
 export const DEFAULT_PROVIDER_ID: ProviderId = 'telegram'
@@ -125,9 +131,18 @@ const DESCRICAO_TELEGRAM: ProvedorDescrito = {
     assertTokenNotInArgv(argv, token),
 }
 
+const DESCRICAO_DISCORD: ProvedorDescrito = {
+  id: 'discord',
+  create: (deps: ProvedorCreateDeps): DiscordAdapter => createDiscordProvider(deps),
+  lerToken: (env: NodeJS.ProcessEnv): string => lerTokenDiscordDoAmbiente(env),
+  assertTokenNaoEmArgv: (argv: readonly string[], token?: string): void =>
+    assertDiscordTokenNotInArgv(argv, token),
+}
+
 /** A tabela FECHADA provedor -> descricao. Acrescentar um provedor = +1 linha. */
 export const PROVIDERS: Readonly<Record<ProviderId, ProvedorDescrito>> = Object.freeze({
   telegram: DESCRICAO_TELEGRAM,
+  discord: DESCRICAO_DISCORD,
 })
 
 /**
