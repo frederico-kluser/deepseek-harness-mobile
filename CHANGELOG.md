@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+### Minor Changes
+
+- ba01991: Arquitetura de provedores de mensageria: o worker do bot passou a ser **neutro ao provedor** — o
+  núcleo (roteador comando→intent, allowlist de dois eixos, pareamento, outbox, autolink e
+  pendentes) vive em `worker/surface/**` e o Telegram, hoje o único fornecedor, está isolado no
+  **adaptador** `worker/providers/telegram/**` (única carga de `grammY`). O boot é genérico e lê o
+  provedor ativo por `DSH_GUARD_PROVIDER` (`config.worker.provider`, default `telegram`). Para o
+  utilizador **nada muda**: o token continua em `TELEGRAM_BOT_TOKEN`, o pareamento e os comandos do
+  bot são os mesmos. Manual completo com o checklist de um provedor novo em `docs/PROVIDERS.md`.
+
+### Patch Changes
+
+- 3233c54: O `dsh-guard-setup` agora provisiona e mostra a **senha do portão HTTP** (texto agrupado + QR ASCII, uma única vez) na primeira execução — mesmo sem bot do Telegram configurado — antes de anunciar o passo seguinte do onboarding. Antes, a senha só era mostrada no estado `PRONTO` (Telegram pareado), o que deixava uma instalação nova sem bot trancada no portão `401` sem qualquer forma de obter a senha, contradizendo o `INSTALL.md` (Passo 4: o portão funciona só com a senha, sem Telegram). `hasSecret()` mantém a idempotência (TG-067) e `rotate()` continua fora do CLI. INSTALL.md ganhou o Passo 2.5 documentando a obtenção da senha via `dsh-guard-setup`.
+
 ## 0.1.1
 
 ### Patch Changes
