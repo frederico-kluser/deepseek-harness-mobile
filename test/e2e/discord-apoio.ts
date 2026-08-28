@@ -226,6 +226,23 @@ export async function aguardar(
   }
 }
 
+/**
+ * Espera que o worker tenha APLICADO o seed `pairing.owner` (o
+ * `auth.semearDono` correu): a linha `dono persistido re-montado` no stderr,
+ * emitida SINCRONA no fim de `onOwner` (`worker/surface/core.ts`) — a
+ * presenca dela prova que o auth ja admite o dono nos dois eixos.
+ *
+ * E a barreira anti-FLAKE do e2e: sem ela, o teste pode enfileirar um evento
+ * do gateway ANTES de o seed chegar pelo IPC — o auth nega em fail-closed
+ * (`deny:not-configured`) e a intent nunca sai (timeout).
+ */
+export async function aguardarDonoSemeado(filho: WorkerFilho): Promise<void> {
+  await aguardar(
+    () => filho.stderr().includes('dono persistido re-montado'),
+    'o worker re-monta o dono persistido (pairing.owner aplicado)',
+  )
+}
+
 /** As chamadas REST de um prefixo de path, na ordem em que chegaram. */
 export function chamadasDe(srv: FakeDiscordE2E, prefixo: string): FakeDiscordE2E['calls'] {
   return srv.calls.filter((call) => call.path.startsWith(prefixo))

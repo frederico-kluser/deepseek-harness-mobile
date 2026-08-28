@@ -23,6 +23,7 @@ import { after, describe, it } from 'node:test'
 
 import {
   aguardar,
+  aguardarDonoSemeado,
   assertSemTokenRealNoAmbiente,
   chamadasDe,
   DONO,
@@ -81,6 +82,12 @@ describe('e2e discord — boot do processo real', () => {
       pairedAt: 1_700_000_000_000,
     })
 
+    // BARREIRA anti-FLAKE (Onda 3-validation): o MESSAGE_CREATE so pode ser
+    // enfileirado DEPOIS de o worker aplicar o seed — senao o auth nega em
+    // fail-closed (`deny:not-configured`) e a intent nunca sai. A linha
+    // `dono persistido re-montado` no stderr e sincrona com o semearDono.
+    await aguardarDonoSemeado(filho)
+
     // O gateway entrega uma mensagem de texto do dono.
     srv.enfileirarEvento({
       t: 'MESSAGE_CREATE',
@@ -137,6 +144,10 @@ describe('e2e discord — boot do processo real', () => {
       chat: DONO.chat,
       pairedAt: 1_700_000_000_000,
     })
+
+    // Mesma barreira do teste `/status`: o seed tem de estar aplicado antes
+    // de o clique entrar (senao a intent nunca sai, fail-closed).
+    await aguardarDonoSemeado(filho)
 
     // O botao do cartao: custom_id na gramatica g1 (token opaco S5).
     srv.enfileirarEvento({
