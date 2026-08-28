@@ -224,6 +224,19 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"done","startedAt":1,"summary":"a\\u0007b"}]}',
     '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"S","status":"done","startedAt":1}]}',
     '{"v":2,"type":"agent.report","runs":42}',
+    // VALIDAS de agente: o veredito ok (e a RECONSTRUCAO, comparada por
+    // deepEqual) tem de ser identico nos dois codecs — a paridade prende
+    // tambem o que PASSA, nao so o que cai.
+    '{"v":2,"type":"intent","intent":"agent.dispatch","requestId":"r","from":"1","chat":"1","nonce":"n","params":{"skill":"deep-orchestrator-agent-skill","prompt":"faz isto"}}',
+    '{"v":2,"type":"intent","intent":"agent.cancel","requestId":"r","from":"1","chat":"1","params":{"agentId":"ABCD1234"}}',
+    '{"v":2,"type":"intent","intent":"agent.status","requestId":"r","from":"1","chat":"1"}',
+    // params numa intent de TUNEL: descartado pela reconstrucao nos DOIS lados.
+    '{"v":2,"type":"intent","intent":"tunnel.up","requestId":"r","from":"1","chat":"1","params":{"skill":"s","prompt":"p"}}',
+    '{"v":2,"type":"agent.report","runs":[]}',
+    '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"deep-orchestrator-agent-skill","status":"done","startedAt":1,"summary":"resumo"}]}',
+    '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"running","startedAt":1}]}',
+    // Uma ENTRADA do array que nao e objeto: forma-invalida nos dois lados.
+    '{"v":2,"type":"agent.report","runs":[1]}',
   ]
   // As linhas NO LIMITE dos tetos (64 chars de id, 128 de nonce, 4096 de
   // mensagem, URL de 2048) — montadas em runtime para o literal nao ter

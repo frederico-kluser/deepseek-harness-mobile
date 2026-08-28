@@ -1238,3 +1238,243 @@ describe('agent.report (host -> worker)', () => {
     assert.throws(() => serializeIpcMessage(mensagem, 'to-host'), IpcChannelError)
   })
 })
+
+/* ========================================================================== */
+/* Os ultimos caminhos de falha do canal (Onda 4)                              */
+/* ========================================================================== */
+
+describe('o handler de pairing.success que LANCA (fail-closed e visivel)', () => {
+  it('vira error INTERNAL SEM requestId, e o defeito e registado', async () => {
+    const { log, linhas } = makeLog()
+    const entrada = new PassThrough()
+    const saida = new PassThrough()
+    const canal = createHostIpcChannel({
+      input: entrada,
+      output: saida,
+      log,
+      secrets: (): readonly string[] => [],
+      onIntent: (): IpcMessageToWorker => ({
+        v: 2,
+        type: 'ack',
+        requestId: 'r',
+        result: 'accepted',
+        state: 'STARTING',
+      }),
+      onPairingSuccess: (): IpcMessageToWorker => {
+        throw new Error('pareamento avariado')
+      },
+    })
+    const aviso: IpcPairingSuccessMessage = {
+      v: 2,
+      type: 'pairing.success',
+      from: '111',
+      chat: '222',
+      pairedAt: 1_700_000_000_000,
+    }
+    entrada.write(serializeIpcMessage(aviso, 'to-host'))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const linha = saida.read()?.toString() ?? ''
+    const resposta = JSON.parse(linha) as { type: string; code: string; requestId?: unknown }
+    assert.equal(resposta.type, 'error')
+    assert.equal(resposta.code, 'INTERNAL')
+    assert.equal('requestId' in resposta, false, 'sem requestId: o erro nao e de uma intent')
+    assert.equal(
+      linhas.some((e) => e.level === 'error' && e.message.includes('O decisor de intencoes lancou')),
+      true,
+      'o defeito do handler e registado (mascarado)',
+    )
+    canal.dispose()
+  })
+})
+
+/* ========================================================================== */
+/* O drain que chega com a fila AINDA acima do teto suave                      */
+/* ========================================================================== */
+
+/** Um `state` READY com URL comprida (~200 bytes) — passa o teto suave. */
+function estadoLongo(seq: number): IpcStateMessage {
+  return {
+    v: 2,
+    type: 'state',
+    state: 'READY',
+    seq,
+    url: `https://${'u'.repeat(120)}.trycloudflare.com`,
+    expiresAt: 7,
+  }
+}
+
+describe('o drain que chega com a fila AINDA acima do teto suave', () => {
+  it('rearma o drain em vez de entregar a difusao retida fora do espaco', async () => {
+    const { log } = makeLog()
+    const entrada = new PassThrough()
+    // Um Writable cujos `callback` o teste liberta UM de cada vez — o modelo de
+    // um pipe cujo leitor voltou a ler SO UMA PARTE do que estava na fila.
+    const pendentes: Array<() => void> = []
+    const partes: string[] = []
+    const saida = new Writable({
+      highWaterMark: 64,
+      write(chunk, _encoding, callback): void {
+        partes.push(String(chunk))
+        pendentes.push(callback as () => void)
+      },
+    })
+    const libertarUm = (): void => {
+      pendentes.shift()?.()
+    }
+    const canal = createHostIpcChannel({
+      input: entrada,
+      output: saida,
+      log,
+      secrets: (): readonly string[] => [],
+      // Teto suave TINUSCULO: qualquer mensagem que fique na fila o ultrapassa.
+      maxPendingBytes: 16,
+      onIntent: (intent): IpcMessageToWorker => ({
+        v: 2,
+        type: 'ack',
+        requestId: intent.requestId,
+        result: 'noop',
+        state: 'STOPPED',
+      }),
+    })
+
+    // 1. estado longo (~200 bytes) entra DIRETO e fica pendurado no `_write`
+    //    (leitor parado); a escrita cruza o highWaterMark e arma o needDrain.
+    assert.equal(canal.send(estadoLongo(1)), true)
+    // 2. um `notify` ESCREVE SEMPRE (nao coalesce): ~28 bytes na fila — o
+    //    "resto" que o leitor ainda nao leu.
+    assert.equal(canal.send({ v: 2, type: 'notify', texto: 'x' }), true)
+    // 3. os `state` seguintes COALESCEM: a fila ja passou o teto suave (16). O
+    //    primeiro entra como difusao PENDENTE; o segundo SUBSTITUI-o (o
+    //    coalesced so conta a partir do segundo).
+    assert.equal(canal.send(estadoLongo(2)), true)
+    assert.equal(canal.send(estadoLongo(3)), true)
+    assert.equal(canal.stats.coalesced >= 1, true)
+
+    // O leitor volta a ler o estado longo: writableLength cai para os ~28 do
+    // notify — abaixo do highWaterMark (64) mas AINDA acima do teto suave
+    // (16). O 'drain' dispara e esvaziar TEM de rearmar em vez de entregar a
+    // difusao retida.
+    libertarUm()
+    for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+    const aposODrainParcial = partes.join('')
+    assert.equal(
+      aposODrainParcial.includes('"seq":3'),
+      false,
+      'a difusao retida NAO sai num drain que ainda esta acima do teto suave',
+    )
+    assert.equal(aposODrainParcial.includes('"type":"notify"'), true, 'o notify ja tinha saido (escreve sempre)')
+
+    // O leitor avanca mais um pouco e o host volta a escrever (um ack — que
+    // ESCREVE SEMPRE): a fila cruza o highWaterMark de novo. Quando o notify e
+    // o ack saem, o drain seguinte chega com a fila DENTRO do teto suave e a
+    // difusao retida (a MAIS RECENTE) e entregue.
+    assert.equal(canal.send({ v: 2, type: 'ack', requestId: 'r', result: 'noop', state: 'STOPPED' }), true)
+    libertarUm() // o notify
+    libertarUm() // o ack
+    for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const final = partes.join('')
+    const estados = final
+      .split('\n')
+      .filter((l) => l !== '')
+      .map((l) => JSON.parse(l) as { type: string; seq?: number })
+      .filter((m) => m.type === 'state')
+    assert.deepEqual(
+      estados.map((e) => e.seq),
+      [1, 3],
+      'a sequencia e: estado 1 (direto) e estado 3 (a MAIS RECENTE, entregue no drain certo)',
+    )
+    canal.dispose()
+  })
+})
+
+describe('a difusao retida quando o output MORRE a meio do episodio', () => {
+  it('esvaziar com o output ja nao escrevivel desiste em silencio (a difusao perde-se, o canal nao)', async () => {
+    const { log, linhas } = makeLog()
+    const entrada = new PassThrough()
+    const { stream, libertar, escrito } = saidaControlada()
+    const canal = createHostIpcChannel({
+      input: entrada,
+      output: stream,
+      log,
+      secrets: (): readonly string[] => [],
+      maxPendingBytes: 64,
+      onIntent: (intent): IpcMessageToWorker => ({
+        v: 2,
+        type: 'ack',
+        requestId: intent.requestId,
+        result: 'accepted',
+        state: 'STARTING',
+      }),
+    })
+
+    // Enche a fila e retem uma difusao (o padrao do episodio de saturacao).
+    for (let seq = 0; seq < 200; seq += 1) canal.send({ v: 2, type: 'state', state: 'STOPPED', seq })
+    assert.ok(canal.stats.coalesced > 0, 'a difusao esta retida')
+    assert.equal(canal.stats.dropped, 0)
+
+    // O OUTPUT MORRE antes de drenar: o 'drain' que chegar nao tem para onde
+    // escrever — esvaziar desiste em silencio em vez de lancar.
+    stream.destroy()
+    libertar()
+    stream.emit('drain')
+    for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+
+    assert.equal(escrito().includes('"seq":199'), false, 'a difusao nao saiu (nao ha para onde)')
+    assert.equal(
+      linhas.some((e) => e.level === 'error'),
+      false,
+      'desistir de escrever para um stream morto NAO e um erro do canal',
+    )
+    canal.dispose()
+  })
+})
+
+describe('o rearm do drain com teto suave DEGENERADO (defesa em profundidade)', () => {
+  it('com maxPendingBytes negativo, o drain com a fila vazia REARMA em vez de entregar', async () => {
+    // No Node 24 o 'drain' so dispara com a fila COMPLETAMENTE vazia — logo o
+    // ramo `porEscrever() > maxPendingBytes` de esvaziar so e alcancavel com um
+    // teto suave degenerado (negativo): mesmo vazio, "nao ha espaco". A guarda
+    // rearma e nao entrega nada — nao assume que ha espaco so porque drenou.
+    const { log } = makeLog()
+    const entrada = new PassThrough()
+    const { stream, libertar, escrito } = saidaControlada()
+    const canal = createHostIpcChannel({
+      input: entrada,
+      output: stream,
+      log,
+      secrets: (): readonly string[] => [],
+      maxPendingBytes: -1,
+      onIntent: (intent): IpcMessageToWorker => ({
+        v: 2,
+        type: 'ack',
+        requestId: intent.requestId,
+        result: 'accepted',
+        state: 'STARTING',
+      }),
+    })
+
+    // Acks pendurados na fila ate cruzarem o highWaterMark (256): e a cruzada
+    // que arma o needDrain — sem ela o 'drain' nunca e emitido pelo Node.
+    for (let i = 0; i < 5; i += 1) {
+      canal.send({ v: 2, type: 'ack', requestId: `r${i}`, result: 'accepted', state: 'STARTING' })
+    }
+    // A fila fica "saturada" mesmo vazia: cada estado coalesce de imediato.
+    canal.send({ v: 2, type: 'state', state: 'STOPPED', seq: 1 })
+    canal.send({ v: 2, type: 'state', state: 'STOPPED', seq: 2 })
+    assert.ok(canal.stats.coalesced >= 1, 'a difusao esta retida mesmo com a fila vazia')
+
+    // O leitor volta a ler: o 'drain' chega com a fila em ZERO — e ainda assim
+    // esvaziar rearma (0 > -1) em vez de entregar a difusao retida.
+    libertar()
+    for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+
+    assert.equal(
+      escrito().includes('"seq":2'),
+      false,
+      'com o teto degenerado o drain rearma e NAO entrega a difusao retida',
+    )
+    canal.dispose()
+  })
+})

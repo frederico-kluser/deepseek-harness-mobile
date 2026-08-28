@@ -449,3 +449,53 @@ describe('o eixo agents -- allowlist e teto do dispatcher (Onda 4)', () => {
     )
   })
 })
+
+describe('as formas NAO-objeto dos eixos — fail loud com o caminho da chave no erro', () => {
+  it('exposure/tunnel/control/agents a NULL recusam com config.<eixo> (o ramo null, nao o tipo)', () => {
+    // O ramo `value === null` dos assertores de eixo: `null` e `object` no
+    // typeof mas nao e um objeto utilizavel — a mesma recusa do caminho.
+    assert.throws(() => assertValidConfig(makeConfig({ exposure: null as never })), /config\.exposure/u)
+    assert.throws(() => assertValidConfig(makeConfig({ tunnel: null as never })), /config\.tunnel/u)
+    assert.throws(() => assertValidConfig(makeConfig({ control: null as never })), /config\.control/u)
+    assert.throws(() => assertValidConfig(makeConfig({ agents: null as never })), /config\.agents/u)
+  })
+
+  it('worker a NULL e worker.backoff a NULL recusam com o caminho', () => {
+    const semWorker = makeConfig()
+    ;(semWorker as { worker?: unknown }).worker = null
+    assert.throws(() => assertValidConfig(semWorker as never), /config\.worker/u)
+
+    const backoffNulo = makeConfig()
+    backoffNulo.worker.backoff = null as never
+    assert.throws(() => assertValidConfig(backoffNulo), /worker\.backoff/u)
+  })
+
+  it('tunnel.backoff a NULL e metricsPort invalido (0, fracionario) recusam', () => {
+    assert.throws(
+      () =>
+        assertValidConfig(
+          makeConfig({ tunnel: { ...TUNEL_VALIDO, backoff: null } as unknown as TunnelConfig }),
+        ),
+      /tunnel\.backoff/u,
+    )
+    // assertPositiveInteger: 0 e 1.5 nao sao tetos de porta — recusados.
+    assert.throws(
+      () => assertValidConfig(makeConfig({ tunnel: { ...TUNEL_VALIDO, metricsPort: 0 } as unknown as TunnelConfig })),
+      /metricsPort/u,
+    )
+    assert.throws(
+      () =>
+        assertValidConfig(
+          makeConfig({ tunnel: { ...TUNEL_VALIDO, metricsPort: 1.5 } as unknown as TunnelConfig }),
+        ),
+      /metricsPort/u,
+    )
+  })
+
+  it('um array de strings com um nao-string recusa (assertStringArray, o ramo do some)', () => {
+    assert.throws(
+      () => assertValidConfig(makeConfig({ trustedRemotes: ['127.0.0.1', 42] as never })),
+      /trustedRemotes/u,
+    )
+  })
+})

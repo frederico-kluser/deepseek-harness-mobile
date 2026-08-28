@@ -45,7 +45,7 @@ import type {
   HarnessSubagentStartRequest,
 } from '../../../src/agents/harness.ts'
 import { FakeClock } from '../../support/clock.ts'
-import { createFakeLogger } from '../../support/ctx-double.ts'
+import { createFakeLogger, type FakeLoggerService } from '../../support/ctx-double.ts'
 import { flush } from '../../support/fixtures.ts'
 
 /* ========================================================================== */
@@ -137,6 +137,8 @@ interface Bancada {
   harness: HarnessFake
   auditoria: AuditEvent[]
   relatorios: Array<ReturnType<AgentRegistry['estado']>>
+  /** O logger da bancada (para prender as mensagens de efeitos colaterais). */
+  log: FakeLoggerService
   clock: FakeClock
   /** Prende o proximo `start` e devolve o run publicado que o teste controla. */
   publicarProximoStart(): RunFake
@@ -147,11 +149,16 @@ function fazerBancada(opcoes: {
   skills?: string[]
   maxRuns?: number
   harness?: HarnessFake
+  /** `audit.append` LANCAA — para prender os catch dos efeitos colaterais. */
+  auditQueLanca?: boolean
+  /** `enviarRelatorio` LANCA — para prender o catch best-effort da difusao. */
+  relatorioQueLanca?: boolean
 } = {}): Bancada {
   const clock = new FakeClock(1_000)
   const auditoria: AuditEvent[] = []
   const relatorios: Array<ReturnType<AgentRegistry['estado']>> = []
   const harness = opcoes.harness ?? fazerHarness()
+  const log = createFakeLogger()
 
   const registry = createAgentRegistry({
     skillsPermitidas: opcoes.skills ?? [],
@@ -160,10 +167,18 @@ function fazerBancada(opcoes: {
     subagents: () => harness.subagents,
     agentesDoHarness: () => harness.agentes,
     skillsDoHarness: () => harness.skills,
-    audit: { append: (evento) => auditoria.push(evento) },
-    log: createFakeLogger()('agents'),
+    audit: {
+      append: (evento) => {
+        if (opcoes.auditQueLanca === true) throw new Error('audit fora do ar')
+        auditoria.push(evento)
+      },
+    },
+    log: log('agents'),
     now: () => clock.now(),
-    enviarRelatorio: (relatorio) => relatorios.push(relatorio),
+    enviarRelatorio: (relatorio) => {
+      if (opcoes.relatorioQueLanca === true) throw new Error('canal em baixo')
+      relatorios.push(relatorio)
+    },
   })
 
   return {
@@ -171,6 +186,7 @@ function fazerBancada(opcoes: {
     harness,
     auditoria,
     relatorios,
+    log,
     clock,
     publicarProximoStart() {
       const publicado = runPublicado('run-harness-1')
@@ -657,5 +673,266 @@ describe('o relatorio capado no teto do canal (MAX_RUNS_PER_REPORT)', () => {
       true,
       'as difusoes proativas tambem saem capadas',
     )
+  })
+})
+
+/* ========================================================================== */
+/* OS EFEITOS COLATERAIS AVARIADOS — best-effort, nunca derrubar (fail-closed) */
+/* ========================================================================== */
+
+describe('os efeitos colaterais avariados nunca derrubam o registry (best-effort)', () => {
+  it('a difusao que LANCA e logada e o run termina na mesma (o canal em baixo nao mata o run)', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], relatorioQueLanca: true })
+    const publicado = h.publicarProximoStart()
+    h.dispatch('deep-orchestrator-agent-skill')
+    await flush()
+    publicado.resolver({ output: [{ type: 'text', text: 'feito' }], stopReason: 'completed' })
+    await flush()
+
+    assert.equal(h.registry.estado()[0]?.status, 'done', 'o run encerra apesar da difusao avariada')
+    assert.equal(h.log.has('error', 'difusao de agent.report falhou'), true)
+  })
+
+  it('o audit que LANCA na recusa da ALLOWLIST nao muda o veredito (recusa mantida, logada)', () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], auditQueLanca: true })
+
+    const veredito = h.dispatch('surf-research-agent-skill')
+
+    assert.deepEqual(veredito, { ok: false, motivo: 'skill-nao-permitida' })
+    assert.equal(h.log.has('error', 'falha ao auditar a recusa do agente'), true)
+  })
+
+  it('o audit que LANCA na recusa do TETO nao muda o veredito', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], maxRuns: 1, auditQueLanca: true })
+    h.publicarProximoStart()
+    h.dispatch('deep-orchestrator-agent-skill')
+    await flush()
+
+    const veredito = h.dispatch('deep-orchestrator-agent-skill')
+
+    assert.deepEqual(veredito, { ok: false, motivo: 'teto-atingido' })
+    assert.equal(h.log.has('error', 'falha ao auditar o teto de agentes'), true)
+  })
+
+  it('o audit que LANCA no despacho PERMITIDO nao desfaz o ack (o run nasce na mesma)', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], auditQueLanca: true })
+    h.publicarProximoStart()
+
+    const veredito = h.dispatch('deep-orchestrator-agent-skill')
+
+    assert.deepEqual(veredito, { ok: true })
+    await flush()
+    assert.equal(h.registry.estado().length, 1)
+    assert.equal(h.log.has('error', 'falha ao auditar o despacho do agente'), true)
+  })
+
+  it('o audit que LANCA no FIM do run nao impede o encerramento', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], auditQueLanca: true })
+    const publicado = h.publicarProximoStart()
+    h.dispatch('deep-orchestrator-agent-skill')
+    await flush()
+    publicado.resolver({ output: [], stopReason: 'completed' })
+    await flush()
+
+    assert.equal(h.registry.estado()[0]?.status, 'done')
+    assert.equal(h.log.has('error', 'falha ao auditar o fim do agente'), true)
+  })
+
+  it('o audit que LANCA no CANCELAMENTO nao impede o cancelamento', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], auditQueLanca: true })
+    h.publicarProximoStart()
+    h.dispatch('deep-orchestrator-agent-skill')
+    await flush()
+    const id = h.registry.estado()[0]?.id
+    assert.ok(id !== undefined)
+
+    const cancelado = h.registry.cancelar(id, 'telegram:123')
+
+    assert.equal(cancelado, true)
+    assert.equal(h.registry.estado()[0]?.status, 'cancelled')
+    assert.equal(h.log.has('error', 'falha ao auditar o cancelamento do agente'), true)
+  })
+})
+
+/* ========================================================================== */
+/* S3: o request do filho NUNCA carrega segredo (criterio de aceite do        */
+/* contrato — "o request NUNCA recebe token de nada")                         */
+/* ========================================================================== */
+
+describe('S3: o request do filho nunca carrega token/segredo', () => {
+  it('tem EXATAMENTE os 4 campos do contrato e nenhum valor suspeito em lado nenhum', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'] })
+    h.publicarProximoStart()
+    h.dispatch('deep-orchestrator-agent-skill', 'faz o resumo do dia')
+    await flush()
+
+    const registo = h.harness.subagents.starts[0]
+    assert.ok(registo !== undefined)
+    const request = registo.request
+    // O pedido e construido pelo registry com O QUE O CONTRATO DIZ — label,
+    // prompt, parent e signal. Um campo novo (token, secret, credential...)
+    // neste request falha este teste DE PROPOSITO.
+    assert.deepEqual(
+      Object.keys(request).toSorted(),
+      ['label', 'parent', 'prompt', 'signal'],
+      'o request carrega so os campos do contrato — nada de credenciais',
+    )
+    const json = JSON.stringify(request).toLowerCase()
+    for (const suspeito of [
+      'token',
+      'secret',
+      'password',
+      'senha',
+      'authorization',
+      'encodedauthstring',
+      'credential',
+    ]) {
+      assert.equal(json.includes(suspeito), false, `'${suspeito}' nao pode viajar no request do filho`)
+    }
+  })
+})
+
+/* ========================================================================== */
+/* A PODA DO HISTORICO — o run terminal mais antigo sai da tabela             */
+/* ========================================================================== */
+
+describe('a poda do historico (a outra rede do relatorio capado)', () => {
+  it('expulsa o run TERMINAL mais antigo quando a tabela passa de MAX_RUNS_HISTORY', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'], maxRuns: MAX_RUNS_HISTORY + 1 })
+    const publicados: RunFake[] = []
+    h.harness.subagents.start = async (name, request): Promise<RunFake['run']> => {
+      h.harness.subagents.starts.push({ name, request })
+      const publicado = runPublicado(`run-harness-${publicados.length}`)
+      publicados.push(publicado)
+      return publicado.run
+    }
+
+    // 33 vivos: a tabela interna passa de 32 e a poda ja corre — sem expulsar
+    // ninguem (o mais antigo esta VIVO).
+    for (let i = 0; i < MAX_RUNS_HISTORY + 1; i++) {
+      assert.deepEqual(h.dispatch('deep-orchestrator-agent-skill'), { ok: true })
+      await flush()
+    }
+    // O primeiro VIVO da tabela (o run 31): sobrevive a poda que vem a seguir.
+    const idDoPrimeiroVivo = h.registry.estado()[MAX_RUNS_HISTORY - 2]?.id
+    assert.ok(idDoPrimeiroVivo !== undefined)
+
+    // Resolve os 30 MAIS ANTIGOS e despacha mais um: a tabela chega a 34 com o
+    // topo TERMINAL — a poda expulsa os terminais da FRENTE ate a tabela caber
+    // no historico (32; o contrato: o run terminal mais antigo sai QUANDO o
+    // teto e atingido — nunca abaixo dele).
+    for (let i = 0; i < 30; i++) {
+      publicados[i]?.resolver({ output: [], stopReason: 'completed' })
+    }
+    await flush()
+    assert.deepEqual(h.dispatch('deep-orchestrator-agent-skill'), { ok: true })
+    await flush()
+
+    const estado = h.registry.estado()
+    assert.equal(estado.length, MAX_RUNS_HISTORY, 'a tabela interna nunca passa do historico (32)')
+    assert.equal(
+      estado.filter((run) => run.status === 'running').length,
+      4,
+      'os 4 runs vivos sobrevivem (3 antigos + o novo)',
+    )
+    assert.equal(
+      estado.filter((run) => run.status === 'done').length,
+      MAX_RUNS_HISTORY - 4,
+      'os 2 terminais MAIS ANTIGOS sairam; os 28 seguintes ficam (a poda para no teto)',
+    )
+    // O primeiro VIVO (capturado em runs[30] antes da poda) desloca para a
+    // posicao 28 apos a expulsao dos 2 terminais — e sobrevive.
+    assert.equal(estado[MAX_RUNS_HISTORY - 4]?.id, idDoPrimeiroVivo, 'o primeiro VIVO sobrevive a poda')
+  })
+})
+
+/* ========================================================================== */
+/* O DISPOSE DO HANDLE QUE REJEITA — best-effort nos dois pontos               */
+/* ========================================================================== */
+
+describe('o dispose do harness que REJEITA', () => {
+  /** Um run publicado cujo `dispose` sempre rejeita (o handle avariado). */
+  function publicarRunComDisposeAvariado(h: Bancada): void {
+    h.harness.subagents.start = async (name, request): Promise<RunFake['run']> => {
+      h.harness.subagents.starts.push({ name, request })
+      return {
+        id: 'run-avariado',
+        result: new Promise<HarnessSubagentResult>(() => {
+          // Nunca resolve: o run continua vivo ate ao cancelamento/disposer.
+        }),
+        dispose: async (): Promise<void> => {
+          throw new Error('dispose avariado')
+        },
+      }
+    }
+  }
+
+  it('no CANCELAMENTO: o erro e logado e o cancelamento nao e desfeito', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'] })
+    publicarRunComDisposeAvariado(h)
+    h.dispatch('deep-orchestrator-agent-skill')
+    await flush()
+    const id = h.registry.estado()[0]?.id
+    assert.ok(id !== undefined)
+
+    const cancelado = h.registry.cancelar(id, 'telegram:123')
+
+    assert.equal(cancelado, true)
+    assert.equal(h.registry.estado()[0]?.status, 'cancelled', 'o status muda na mesma')
+    await flush()
+    assert.equal(h.log.has('error', 'falha ao dispor o run cancelado'), true)
+  })
+
+  it('no DISPOSER: o erro e engolido em silencio e o disposer nao lanca', async () => {
+    const h = fazerBancada({ skills: ['deep-orchestrator-agent-skill'] })
+    publicarRunComDisposeAvariado(h)
+    h.dispatch('deep-orchestrator-agent-skill')
+    await flush()
+
+    assert.doesNotThrow(() => h.registry.dispose(), 'o disposer nao pode lanca (Q-2: sincrono)')
+    assert.equal(h.registry.estado()[0]?.status, 'cancelled')
+  })
+})
+
+/* ========================================================================== */
+/* OS SERVICOS QUE SOMEM DEPOIS DO ACK — o run nasce e termina failed, honesto */
+/* ========================================================================== */
+
+describe('os servicos do harness desaparecem DEPOIS do ack (a checagem fina de executar)', () => {
+  it('o run nasce e termina failed com o motivo no summary — nunca inventa', async () => {
+    const clock = new FakeClock(1_000)
+    const log = createFakeLogger()
+    const harness = fazerHarness()
+    // A PRIMEIRA leitura (a checagem sincrona do despacho) ve os servicos; a
+    // SEGUNDA (executar, depois do ack) ja nao — a corrida que os getters lazy
+    // existem para governar.
+    let leituras = 0
+    const registry = createAgentRegistry({
+      skillsPermitidas: ['deep-orchestrator-agent-skill'],
+      maxRuns: 1,
+      providerName: 'spawn',
+      subagents: () => (leituras++ === 0 ? harness.subagents : undefined),
+      agentesDoHarness: () => harness.agentes,
+      skillsDoHarness: () => harness.skills,
+      audit: { append: (): void => {} },
+      log: log('agents'),
+      now: () => clock.now(),
+    })
+
+    assert.deepEqual(
+      registry.despachar({ skill: 'deep-orchestrator-agent-skill', prompt: 'p', origem: 'telegram:123' }),
+      { ok: true },
+      'a checagem SINCRONA passa — os servicos ainda estao la',
+    )
+    await flush()
+
+    const estado = registry.estado()
+    assert.equal(estado[0]?.status, 'failed')
+    assert.equal(
+      estado[0]?.summary,
+      'O harness nao esta disponivel para disparar agentes.',
+      'o run termina honesto, nunca inventa',
+    )
+    assert.equal(harness.subagents.starts.length, 0, 'nada foi spawnado')
   })
 })
