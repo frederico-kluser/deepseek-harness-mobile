@@ -16,8 +16,14 @@ import {
   cortarTexto,
   formatarDuracao,
   formatarHora,
+  haQuantoTempo,
+  linhaDeRun,
+  ROTULOS_DE_STATUS_DE_AGENTE,
+  sanearUmaLinha,
   textoDeEstado,
   textoDeEstadoCurto,
+  textoDeFimDeRuns,
+  textoDeRelatorioDeAgentes,
 } from '../../../../worker/surface/text.ts'
 
 /* ========================================================================== */
@@ -125,6 +131,115 @@ describe('textoDeEstado', () => {
     )
     assert.ok(!texto.includes(digest), 'o digest nao pode aparecer')
     assert.ok(!texto.includes('sha256'), 'nenhum material de verificacao')
+  })
+})
+
+/* ========================================================================== */
+/* Onda 5 — OS AGENTES: rotulos, ha-quanto, linhas e o relatorio              */
+/* ========================================================================== */
+
+describe('Onda 5: ROTULOS_DE_STATUS_DE_AGENTE — o vocabulario PT-BR fechado', () => {
+  it('cobre os QUATRO status do contrato (AgentRunStatus), e so', () => {
+    assert.deepEqual(ROTULOS_DE_STATUS_DE_AGENTE, {
+      running: 'rodando',
+      done: 'concluído',
+      failed: 'falhou',
+      cancelled: 'cancelado',
+    })
+  })
+})
+
+describe('Onda 5: haQuantoTempo — a forma PT-BR do /agentes', () => {
+  it('cobre o agora, minutos e horas', () => {
+    assert.equal(haQuantoTempo(0), 'agora mesmo')
+    assert.equal(haQuantoTempo(-5), 'agora mesmo')
+    assert.equal(haQuantoTempo(30_000), 'há menos de 1 min')
+    assert.equal(haQuantoTempo(2 * 60_000), 'há 2 min')
+    assert.equal(haQuantoTempo(90 * 60_000), 'há 1 h 30 min')
+  })
+})
+
+describe('Onda 5: linhaDeRun — id, skill, status, ha-quanto e resumo', () => {
+  const run = {
+    id: '01HZABCD',
+    skill: 'eco',
+    status: 'done' as const,
+    startedAt: 1_000,
+  }
+
+  it('sem summary: uma linha so', () => {
+    assert.equal(linhaDeRun(run, 121_000), '• 01HZABCD — eco — concluído há 2 min')
+  })
+
+  it('com summary: a linha do resumo do modelo em baixo', () => {
+    assert.equal(
+      linhaDeRun({ ...run, summary: 'disse oi' }, 121_000),
+      '• 01HZABCD — eco — concluído há 2 min\n   💬 disse oi',
+    )
+  })
+
+  it('os quatro status aparecem com o rotulo PT-BR exacto', () => {
+    assert.match(linhaDeRun({ ...run, status: 'running' }, 60_000), /rodando/u)
+    assert.match(linhaDeRun({ ...run, status: 'done' }, 60_000), /concluído/u)
+    assert.match(linhaDeRun({ ...run, status: 'failed' }, 60_000), /falhou/u)
+    assert.match(linhaDeRun({ ...run, status: 'cancelled' }, 60_000), /cancelado/u)
+  })
+})
+
+describe('Onda 5: textoDeRelatorioDeAgentes — a resposta de /agentes', () => {
+  it('lista vazia: «Nenhum agente rodando.»', () => {
+    assert.equal(textoDeRelatorioDeAgentes([], 1_000), 'Nenhum agente rodando.')
+  })
+
+  it('lista com runs: titulo + uma linha por run, na ordem', () => {
+    const agora = 10 * 60_000
+    const texto = textoDeRelatorioDeAgentes(
+      [
+        { id: '01HZAAAA', skill: 'eco', status: 'running', startedAt: agora - 60_000 },
+        {
+          id: '01HZBBBB',
+          skill: 'dataviz',
+          status: 'done',
+          startedAt: agora - 3 * 60_000,
+          summary: 'gráfico pronto',
+        },
+      ],
+      agora,
+    )
+    assert.equal(
+      texto,
+      '🤖 Agentes:\n' +
+        '• 01HZAAAA — eco — rodando há 1 min\n' +
+        '• 01HZBBBB — dataviz — concluído há 3 min\n' +
+        '   💬 gráfico pronto',
+    )
+  })
+
+  it('nunca expoe segredo (S3): so id/skill/status/tempo e o summary do modelo', () => {
+    const texto = textoDeRelatorioDeAgentes(
+      [{ id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: 1_000, summary: 'sem credenciais' }],
+      121_000,
+    )
+    assert.ok(!texto.includes('token'), 'nenhum material de segredo')
+    assert.ok(!texto.includes('sha256'))
+  })
+})
+
+describe('Onda 5: textoDeFimDeRuns — a notificacao proativa', () => {
+  it('titulo proprio + as linhas dos runs que terminaram', () => {
+    const texto = textoDeFimDeRuns(
+      [{ id: '01HZAAAA', skill: 'eco', status: 'failed', startedAt: 1_000 }],
+      121_000,
+    )
+    assert.equal(texto, '🤖 Atualização de agentes:\n• 01HZAAAA — eco — falhou há 2 min')
+  })
+})
+
+describe('Onda 5: sanearUmaLinha — controlos viram espaco (o codec recusa no prompt)', () => {
+  it('quebras de linha e tabs viram espaco; o resto intacto', () => {
+    assert.equal(sanearUmaLinha('primeira\nsegunda'), 'primeira segunda')
+    assert.equal(sanearUmaLinha('a\tb'), 'a b')
+    assert.equal(sanearUmaLinha('sem controlos'), 'sem controlos')
   })
 })
 

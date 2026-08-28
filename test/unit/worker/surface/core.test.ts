@@ -19,6 +19,7 @@ import type { IpcStateMessage } from '../../../../src/contracts/ipc.ts'
 import type { SurfaceActionEvent } from '../../../../worker/surface/contract.ts'
 import {
   extrairNomeDeComando,
+  runsTerminadosDesde,
   textoDeRecusa,
   type ComandoPublicado,
 } from '../../../../worker/surface/core.ts'
@@ -752,6 +753,8 @@ describe('CONTRATO §4/: cartao de controlo (/menu), ajudas e navegacao local', 
       ['🟢 Ligar'],
       ['🔴 Desligar'],
       ['📶 Status'],
+      // Onda 5: os agentes ganham botao proprio (a resposta e o agent.report).
+      ['🤖 Agentes'],
       ['🔗 Link de acesso'],
       ['⇄ Nova chave'],
       ['🚨 Emergência'],
@@ -911,6 +914,364 @@ describe('CONTRATO §4 Regra 4 / Onda 5: cancelamento local das confirmacoes', (
     const resp = bancada.sender.respostas.at(-1)
     assert.equal(resp?.outras, undefined, 'answer VAZIO para o estranho — sem oraculo')
     assert.match(bancada.log.all(), /deny:not-allowlisted/u)
+  })
+})
+
+/* ========================================================================== */
+/* runsTerminadosDesde — a base da difusao proativa (teste directo)           */
+/* ========================================================================== */
+
+/** Um run sintetico para o teste directo do diff de terminados. */
+function corrido(id: string, status: 'running' | 'done' | 'failed' | 'cancelled') {
+  return { id, skill: 'eco', status, startedAt: 1_000 }
+}
+
+describe('runsTerminadosDesde — quais runs contam como «terminados»', () => {
+  it('sem historico (primeiro report), todos os terminais contam; os vivos nao', () => {
+    const terminados = runsTerminadosDesde(undefined, [
+      corrido('A', 'done'),
+      corrido('B', 'running'),
+      corrido('C', 'failed'),
+    ])
+    assert.deepEqual(terminados.map((r) => r.id), ['A', 'C'])
+  })
+
+  it('com historico, so os que mudaram de vivo (ou ausente) para terminal contam', () => {
+    const anterior = [corrido('A', 'running'), corrido('B', 'done'), corrido('D', 'cancelled')]
+    const terminados = runsTerminadosDesde(anterior, [
+      corrido('A', 'done'), // mudou: conta
+      corrido('B', 'done'), // ja estava terminal: nao conta
+      corrido('C', 'failed'), // ausente antes (podado): conta
+      corrido('D', 'cancelled'), // ja estava: nao conta
+      corrido('E', 'running'), // vivo: nao conta
+    ])
+    assert.deepEqual(terminados.map((r) => r.id), ['A', 'C'])
+  })
+
+  it('status terminal -> running (impossivel no host, mas defensivo) nao conta', () => {
+    const terminados = runsTerminadosDesde(
+      [corrido('A', 'done')],
+      [corrido('A', 'running')],
+    )
+    assert.equal(terminados.length, 0)
+  })
+})
+
+/* ========================================================================== */
+/* Onda 5 — OS AGENTES NA SUPERFICIE: /agente, /agentes, /parar-agente e a   */
+/* difusao proativa do agent.report                                           */
+/* ========================================================================== */
+
+describe('Onda 5: /agente — 2 etapas com nonce, dispatch com params, ack final', () => {
+  it('confirma o /agente: o clique envia agent.dispatch com nonce + params e o ack edita a confirmacao', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agente eco diz oi'))
+    assert.equal(bancada.ipc.intents.length, 0, 'a 1a etapa nao envia intent (2 etapas)')
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    assert.match(confirmacao.texto, /Disparar o agente "eco"\?/u)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'agent.dispatch')
+    assert.equal(botao.label, '✅ Sim, disparar')
+
+    await bancada.tratar(accaoDoDono('agent.dispatch', botao.token, confirmacao.id))
+
+    assert.equal(bancada.ipc.intents.length, 1, 'so o dispatch apos a confirmacao')
+    const intent = bancada.ipc.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.dispatch')
+    assert.equal(intent.nonce, botao.token, 'o nonce (o token do botao) viaja OPACO (S5)')
+    assert.deepEqual(intent.params, { skill: 'eco', prompt: 'diz oi' })
+    assert.equal(bancada.sender.respostas.length, 1, 'o clique foi respondido (TG-027)')
+
+    // O ack accepted edita a MENSAGEM DA CONFIRMACAO in-place (TG-028).
+    const requestId = intent.requestId
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId, result: 'accepted', state: 'STOPPED' })
+    await tick()
+    const edicao = bancada.sender.edicoes.at(-1)
+    assert.ok(edicao !== undefined)
+    assert.equal(edicao.messageId, confirmacao.id)
+    assert.equal(edicao.texto, 'Agente disparado. O resultado chega aqui quando terminar.')
+  })
+
+  it('o `✕ Não` da confirmacao do /agente cancela SEM intent (Regra 4)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agente eco diz oi'))
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const cancel = confirmacao.opcoes?.actionRows?.[0]?.find((b) => b.action === 'cancel')
+    assert.ok(cancel !== undefined)
+
+    await bancada.tratar(accaoDoDono('cancel', cancel.token, confirmacao.id))
+
+    assert.equal(bancada.ipc.intents.length, 0, 'cancelar nao envia intent')
+    assert.equal(bancada.sender.respostas.at(-1)?.outras?.text, 'Ok, cancelado.')
+  })
+
+  it('/agente sem skill mostra a instrucao de uso, sem intent', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agente'))
+
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.equal(
+      bancada.sender.mensagens.at(-1)?.texto,
+      'Uso: /agente <skill> <o que o agente deve fazer>',
+    )
+  })
+
+  it('/agente sem prompt mostra a instrucao de uso, sem intent', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agente eco'))
+
+    assert.equal(bancada.ipc.intents.length, 0)
+    // O duplo responde com o uso; a distincao EXACTA (Falta o prompt vs uso) e
+    // do modulo real de comandos (commands.test.ts) — aqui so o funil importa.
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Uso: \/agente/u)
+  })
+
+  it('sem nonce do host, /agente falha FECHADO (CTL-023) — sem intent nem botao', async () => {
+    const bancada = montarBancada({ emitirNonce: async () => undefined })
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agente eco diz oi'))
+
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Não foi possível obter a confirmação/u)
+  })
+})
+
+describe('Onda 5: /agentes — a resposta e o agent.report, o ack e silencioso', () => {
+  it('pede agent.status e, quando o report chega, renderiza a lista numa mensagem propria', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+
+    await bancada.tratar(comandoDoDono('/agentes'))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.status')
+    assert.equal(Object.hasOwn(intent, 'nonce'), false, 'leitura pura')
+
+    // O host difunde a lista ANTES do ack (o padrao do tunnel.status).
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'running', startedAt: agora - 2 * 60_000 },
+        {
+          id: '01HZBBBB',
+          skill: 'dataviz',
+          status: 'done',
+          startedAt: agora - 5 * 60_000,
+          summary: 'gráfico gerado',
+        },
+      ],
+    })
+    await tick()
+
+    const msg = bancada.sender.mensagens.at(-1)
+    assert.ok(msg !== undefined)
+    assert.match(msg.texto, /🤖 Agentes:/u)
+    assert.match(msg.texto, /01HZAAAA — eco — rodando há 2 min/u)
+    assert.match(msg.texto, /01HZBBBB — dataviz — concluído há 5 min/u)
+    assert.match(msg.texto, /💬 gráfico gerado/u)
+    // Mensagem PROPIA: nunca edita o painel de estado com a lista.
+    assert.equal(bancada.sender.edicoes.length, 0, 'a lista e enviada, nao editada por cima do cartao')
+
+    // O ack noop de agent.status NAO renderiza nada por cima da lista.
+    const antes = bancada.sender.mensagens.length
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' })
+    await tick()
+    assert.equal(bancada.sender.mensagens.length, antes, 'o ack de agent.status e silencioso')
+  })
+
+  it('lista vazia: «Nenhum agente rodando.»', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agentes'))
+    bancada.nucleo.onAgentReport({ v: 2, type: 'agent.report', runs: [] })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Nenhum agente rodando.')
+  })
+})
+
+describe('Onda 5: difusao proativa — um run termina e o dono e avisado', () => {
+  it('report SEM agent.status pendente notifica so os runs que TERMINARAM desde o ultimo', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+
+    // 1o report: resposta a /agentes — a lista completa (2 runs, 1 terminal).
+    await bancada.tratar(comandoDoDono('/agentes'))
+    const requestDoStatus = bancada.ipc.intents.at(-1)?.requestId
+    assert.ok(requestDoStatus !== undefined)
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'running', startedAt: agora - 60_000 },
+        { id: '01HZBBBB', skill: 'dataviz', status: 'done', startedAt: agora - 3 * 60_000, summary: 'ok' },
+      ],
+    })
+    await tick()
+    const depoisDaResposta = bancada.sender.mensagens.length
+
+    // O ack de agent.status retira o pendente (em producao o host difunde a
+    // lista e responde noop a seguir) — a partir daqui o report e difusao.
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: requestDoStatus, result: 'noop', state: 'STOPPED' })
+    await tick()
+
+    // 2o report: difusao PROATIVA (nenhum pendente) — so o 01HZAAAA terminou.
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'done', startedAt: agora - 60_000, summary: 'feito' },
+        { id: '01HZBBBB', skill: 'dataviz', status: 'done', startedAt: agora - 3 * 60_000, summary: 'ok' },
+      ],
+    })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.length, depoisDaResposta + 1, 'uma notificacao proativa')
+    const notificacao = bancada.sender.mensagens.at(-1)
+    assert.ok(notificacao !== undefined)
+    assert.match(notificacao.texto, /🤖 Atualização de agentes:/u)
+    assert.match(notificacao.texto, /01HZAAAA — eco — concluído há 1 min/u)
+    assert.match(notificacao.texto, /💬 feito/u)
+    assert.ok(!notificacao.texto.includes('01HZBBBB'), 'o run que ja estava terminal nao repete')
+  })
+
+  it('o primeiro report proativo (sem historico) notifica os terminais que traz', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZAAAA', skill: 'eco', status: 'failed', startedAt: agora - 60_000 },
+        { id: '01HZCCCC', skill: 'eco', status: 'running', startedAt: agora - 60_000 },
+      ],
+    })
+    await tick()
+
+    const notificacao = bancada.sender.mensagens.at(-1)
+    assert.ok(notificacao !== undefined)
+    assert.match(notificacao.texto, /01HZAAAA — eco — falhou há 1 min/u)
+    assert.ok(!notificacao.texto.includes('01HZCCCC'), 'o run vivo nao notifica')
+  })
+
+  it('difusao sem mudanca terminal nao notifica nada', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+    const antes = bancada.sender.mensagens.length
+
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZAAAA', skill: 'eco', status: 'running', startedAt: agora }],
+    })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.length, antes, 'solo runs vivos: sem notificacao')
+  })
+})
+
+describe('Onda 5: /parar-agente — o ack decide o texto com o id do run', () => {
+  it('id valido: agent.cancel com params {agentId}; ack accepted responde «Agente <id> cancelado.»', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/parar-agente 01HZABCD'))
+
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.cancel')
+    assert.deepEqual(intent.params, { agentId: '01HZABCD' })
+    assert.equal(Object.hasOwn(intent, 'nonce'), false, 'CTL-024: cancelar dispensa nonce')
+
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STOPPED' })
+    await tick()
+
+    // Mensagem PROPIA — nunca edita o painel de estado.
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Agente 01HZABCD cancelado.')
+    assert.equal(bancada.sender.edicoes.length, 0, 'a resposta do cancel e enviada, nao editada')
+  })
+
+  it('ack noop: «Agente <id> não encontrado.»', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/parar-agente 01HZABCD'))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Agente 01HZABCD não encontrado.')
+  })
+
+  it('id fora da forma: recusado antes de ir ao host, com o uso', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/parar-agente 12345'))
+
+    assert.equal(bancada.ipc.intents.length, 0)
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /Id inválido/u)
+  })
+})
+
+describe('Onda 5: o cartao de controlo ganha o botao de Agentes', () => {
+  it('o botao `🤖 Agentes` DO CARTAO acusa e pede a lista (agent.status)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('/menu'))
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined)
+    const botao = cartao.opcoes?.actionRows?.flat().find((b) => b.label === '🤖 Agentes')
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'agent.status')
+
+    await bancada.tratar(accaoDoDono('agent.status', botao.token, cartao.id))
+
+    assert.equal(bancada.sender.respostas.at(-1)?.outras?.text, 'A consultar…', 'toast do §4 no clique')
+    assert.equal(bancada.ipc.intents.at(-1)?.intent, 'agent.status', 'pediu a lista ao host')
+  })
+
+  it('um clique solto de agent.status fora do cartao e descartado (sem botao renderizado)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.ipc.intents.length
+
+    await bancada.tratar(accaoDoDono('agent.status', 'tok-solto', undefined))
+
+    assert.equal(bancada.ipc.intents.length, antes, 'nenhum intent inventado')
+    assert.equal(bancada.sender.respostas.length, 1, 'TG-027: o girador fecha')
+  })
+
+  it('um clique solto de agent.cancel (sem botao que o produza) e descartado', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.ipc.intents.length
+
+    await bancada.tratar(accaoDoDono('agent.cancel', 'tok-solto', undefined))
+
+    assert.equal(bancada.ipc.intents.length, antes, 'sem intent inventado')
+    assert.equal(bancada.sender.respostas.length, 1, 'TG-027')
   })
 })
 

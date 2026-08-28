@@ -207,6 +207,10 @@ export function montarEnvelopeDeIntent(pedido: IntencaoNeutra): IpcIntentMessage
     from: pedido.userKey,
     chat: pedido.chatKey,
     ...(pedido.nonce === undefined ? {} : { nonce: pedido.nonce }),
+    // EMENDA ONDA-5-AGENTS-SUPERFICIE: o payload ADITIVO das intencoes de
+    // agente (dispatch/cancel) viaja como veio da superficie NEUTRA — o codec
+    // do canal valida a forma por intent e reconstroi so o que a intent exige.
+    ...(pedido.params === undefined ? {} : { params: pedido.params }),
   }
 }
 
@@ -257,6 +261,11 @@ export const NONCE_REQUEST_TIMEOUT_MS = 5_000
 const ACAO_PARA_NONCE: Readonly<Partial<Record<SurfaceAction, ControlAction>>> = {
   'tunnel.up': 'start',
   'secret.rotate': 'reset',
+  // EMENDA ONDA-5-AGENTS-SUPERFICIE: o dispatch EXECUTA codigo no host
+  // (AUMENTA exposicao) e consome o nonce com a acao 'reset' — a MESMA ponte
+  // do /rotacionar (o vocabulario de ControlAction e fechado no PREP 5 e o
+  // host consome 'reset' em `src/control/surface-ipc.ts`).
+  'agent.dispatch': 'reset',
 }
 
 export interface PonteDeNonce {

@@ -447,11 +447,22 @@ export interface DespachoObservado {
     answerTarget: string
     messageTarget: string | undefined
   }>
+  readonly confirmarDispatch: Array<{
+    identidade: SurfaceIdentity
+    token: string
+    answerTarget: string
+    messageTarget: string | undefined
+  }>
 }
 
 /** Duplo do {@link SurfaceComandos}: regista e executa a logica minima. */
 export class FakeComandos implements SurfaceComandos {
-  readonly estado: DespachoObservado = { chamadas: [], confirmarDesligar: [] }
+  readonly estado: DespachoObservado = { chamadas: [], confirmarDesligar: [], confirmarDispatch: [] }
+  /**
+   * O despacho em espera do /agente (Onda 5), CHAVEADO pelo token OPACO do
+   * botao (o nonce do host) — o mesmo desenho do modulo real de comandos.
+   */
+  private despachos = new Map<string, { skill: string; prompt: string }>()
   readonly contextos: SurfaceCommandContext[] = []
   private ctx: SurfaceCommandContext | undefined
 
@@ -570,6 +581,104 @@ export class FakeComandos implements SurfaceComandos {
     })
     await this.ctx?.enviar(identidade.chatKey, '🚨 Emergência disparada. Túnel a desligar e este bot vai encerrar.')
     await this.ctx?.parar()
+  }
+
+  async agente(identidade: SurfaceIdentity, argumentos: string): Promise<void> {
+    this.estado.chamadas.push({ nome: 'agente', identidade })
+    // A forma minima do duplo: skill + prompt, sem a validacao completa dos
+    // comandos reais (isso e do commands.test.ts).
+    const espaco = argumentos.search(/\s/u)
+    const skill = espaco === -1 ? argumentos : argumentos.slice(0, espaco)
+    const prompt = espaco === -1 ? '' : argumentos.slice(espaco + 1).trim()
+    if (skill.length === 0 || prompt.length === 0 || !/^[a-z0-9-]+$/u.test(skill)) {
+      await this.ctx?.enviar(identidade.chatKey, 'Uso: /agente <skill> <o que o agente deve fazer>')
+      return
+    }
+    const nonce = await this.ctx?.emitirNonce('agent.dispatch')
+    if (nonce === undefined) {
+      await this.ctx?.enviar(
+        identidade.chatKey,
+        'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.',
+      )
+      return
+    }
+    this.despachos.set(nonce, { skill, prompt })
+    const corpo: SurfaceSendOptions = {
+      actionRows: [
+        [
+          { label: '✅ Sim, disparar', action: 'agent.dispatch', token: nonce, kind: 'confirm' },
+          { label: '✕ Não', action: 'cancel', token: gerarTokenOpaque(), kind: 'confirm' },
+        ],
+      ],
+    }
+    await this.ctx?.enviar(
+      identidade.chatKey,
+      `🤖 Disparar o agente "${skill}"?\nEle executa código na tua máquina com este prompt:\n"${prompt}"`,
+      corpo,
+    )
+  }
+
+  async agentes(identidade: SurfaceIdentity): Promise<void> {
+    this.estado.chamadas.push({ nome: 'agentes', identidade })
+    const intent: IntencaoNeutra = {
+      intent: 'agent.status',
+      requestId: gerarTokenOpaque(),
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+    }
+    const aceite = this.ctx?.ipc.send(intent) ?? false
+    if (aceite) {
+      this.ctx?.pendente.registar(intent.requestId, identidade.chatKey, 'agent.status', undefined)
+    }
+  }
+
+  async pararAgente(identidade: SurfaceIdentity, argumentos: string): Promise<void> {
+    this.estado.chamadas.push({ nome: 'pararAgente', identidade })
+    const agentId = argumentos.trim()
+    if (!/^[0-9A-HJKMNP-TV-Z]{8}$/u.test(agentId)) {
+      await this.ctx?.enviar(identidade.chatKey, 'Id inválido. Uso: /parar-agente <id> — os ids aparecem em /agentes.')
+      return
+    }
+    const intent: IntencaoNeutra = {
+      intent: 'agent.cancel',
+      requestId: gerarTokenOpaque(),
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+      params: { agentId },
+    }
+    const aceite = this.ctx?.ipc.send(intent) ?? false
+    if (aceite) {
+      this.ctx?.pendente.registar(intent.requestId, identidade.chatKey, 'agent.cancel', undefined, agentId)
+    }
+  }
+
+  async confirmarDispatch(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void> {
+    this.estado.confirmarDispatch.push({ identidade, token, answerTarget, messageTarget })
+    const registado = this.despachos.get(token)
+    if (registado === undefined) {
+      // TG-027: responder SEMPRE ao clique — inclusive na negacao.
+      await this.ctx?.responder(answerTarget)
+      return
+    }
+    this.despachos.delete(token)
+    await this.ctx?.responder(answerTarget)
+    const intent: IntencaoNeutra = {
+      intent: 'agent.dispatch',
+      requestId: gerarTokenOpaque(),
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+      nonce: token,
+      params: { skill: registado.skill, prompt: registado.prompt },
+    }
+    const aceite = this.ctx?.ipc.send(intent) ?? false
+    if (aceite) {
+      this.ctx?.pendente.registar(intent.requestId, identidade.chatKey, 'agent.dispatch', messageTarget)
+    }
   }
 
   private emergenciaDisparada = false

@@ -245,10 +245,12 @@ export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<nu
         ponte?.onMessage(msg)
         return
       case 'agent.report':
-        // EMENDA ONDA-4-AGENTS-HOST: a lista de runs chega (resposta a
-        // agent.status e difusao proativa). O codec VALIDA-a; a RENDERIZACAO
-        // e da Onda 5 (superficie) — ate la, a mensagem e descartada de
-        // proposito (S4: o desconhecido nao derruba o canal).
+        // EMENDA ONDA-5-AGENTS-SUPERFICIE: a lista de runs chega (resposta a
+        // /agentes e difusao proativa quando um run termina). O NUCLEO decide:
+        // com `agent.status` pendente renderiza a lista como resposta; sem
+        // pendente, notifica o dono com os runs que terminaram (S4: nunca
+        // derruba o canal).
+        n.onAgentReport(msg)
         return
     }
   }

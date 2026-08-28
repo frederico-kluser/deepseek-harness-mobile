@@ -151,6 +151,35 @@ describe('worker/providers/registry — a ponte de intent monta o envelope STRIN
     assert.equal(envelope.nonce, 'abc-xyz-nonce-opaco')
   })
 
+  it('EMENDA ONDA-5: os params de agente viajam no envelope (dispatch/cancel)', () => {
+    const envelope = montarEnvelopeDeIntent({
+      intent: 'agent.dispatch',
+      requestId: '01HZ4444444444444444444444',
+      userKey: '111',
+      chatKey: '222',
+      nonce: 'nonce-opaco',
+      params: { skill: 'eco', prompt: 'diz oi' },
+    })
+    assert.deepEqual(envelope.params, { skill: 'eco', prompt: 'diz oi' })
+
+    const cancel = montarEnvelopeDeIntent({
+      intent: 'agent.cancel',
+      requestId: '01HZ5555555555555555555555',
+      userKey: '111',
+      chatKey: '222',
+      params: { agentId: '01HZABCD' },
+    })
+    assert.deepEqual(cancel.params, { agentId: '01HZABCD' })
+    // Sem params, o campo NAO aparece (a forma e aditiva).
+    const status = montarEnvelopeDeIntent({
+      intent: 'agent.status',
+      requestId: '01HZ6666666666666666666666',
+      userKey: '111',
+      chatKey: '222',
+    })
+    assert.equal('params' in status, false, 'agent.status nao transporta params')
+  })
+
   it('um id NAO-numerico (snowflake do Discord) atravessa INTACTO — sem Number(...) nem NaN', () => {
     // 1057992969437413409 > Number.MAX_SAFE_INTEGER: o antigo `Number(userKey)`
     // da V1 perdia precisao silenciosamente. Em V2 nao ha conversao.
@@ -277,6 +306,21 @@ describe('worker/providers/registry — a ponte de nonce (EMENDA-COSTURA-5)', ()
     const ponte = criarPonteDeNonce({ log: loggerMudo(), time: new RelogioVazio(), ipc })
     void ponte.emitir('secret.rotate')
     assert.equal(enviados[0]?.acao, 'reset')
+  })
+
+  it('EMENDA ONDA-5: `agent.dispatch` pede `reset` (a MESMA acao do /rotacionar)', () => {
+    const enviados: Array<{ acao?: string }> = []
+    const ipc: WorkerIpc = {
+      send: (m) => {
+        enviados.push(m as { acao?: string })
+        return true
+      },
+      log: () => undefined,
+      dispose: () => undefined,
+    }
+    const ponte = criarPonteDeNonce({ log: loggerMudo(), time: new RelogioVazio(), ipc })
+    void ponte.emitir('agent.dispatch')
+    assert.equal(enviados[0]?.acao, 'reset', 'o host consome o nonce do dispatch com reset')
   })
 })
 /* ========================================================================== */

@@ -45,6 +45,7 @@ import type {
   SurfacePublishedCommand,
   SurfaceSendOptions,
 } from './contract.ts'
+import { cortarTexto, MAX_PROMPT_CHARS, sanearUmaLinha } from './text.ts'
 import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
 
 /* ========================================================================== */
@@ -107,7 +108,11 @@ export function comandoPublicado(): SurfacePublishedCommand[] {
 function emitirIntent(
   ctx: SurfaceCommandContext,
   identidade: SurfaceIdentity,
-  pedido: Omit<IntencaoNeutra, 'userKey' | 'chatKey'> & { readonly messageTarget?: string | undefined },
+  pedido: Omit<IntencaoNeutra, 'userKey' | 'chatKey'> & {
+    readonly messageTarget?: string | undefined
+    /** O `agentId` do run de um `agent.cancel` — o ack precisa dele para responder. */
+    readonly agentId?: string | undefined
+  },
 ): boolean {
   const pedidoNeutro: IntencaoNeutra = {
     intent: pedido.intent,
@@ -115,10 +120,11 @@ function emitirIntent(
     userKey: identidade.userKey,
     chatKey: identidade.chatKey,
     ...(pedido.nonce === undefined ? {} : { nonce: pedido.nonce }),
+    ...(pedido.params === undefined ? {} : { params: pedido.params }),
   }
   const aceite = ctx.ipc.send(pedidoNeutro)
   if (aceite) {
-    ctx.pendente.registar(pedido.requestId, identidade.chatKey, pedidoNeutro.intent, pedido.messageTarget)
+    ctx.pendente.registar(pedido.requestId, identidade.chatKey, pedidoNeutro.intent, pedido.messageTarget, pedido.agentId)
   } else {
     ctx.log.error('intent recusada pelo canal (host indisponivel ou fila cheia)', {
       intent: pedidoNeutro.intent,
@@ -369,6 +375,221 @@ export function criarStatus(ctx: SurfaceCommandContext): ComandosStatus {
 }
 
 /* ========================================================================== */
+/* 6b. OS COMANDOS DE AGENTES — /agente, /agentes, /parar-agente (Onda 5)     */
+/* ========================================================================== */
+
+/**
+ * A grammar de skill do harness — a MESMA do codec do canal
+ * (`^[a-z0-9]+(?:-[a-z0-9]+)*$`): uma skill que nao pode existir no harness
+ * nao viaja (fail-closed na forma, como o codec).
+ */
+const GRAMMAR_DE_SKILL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+
+/**
+ * O id CURTO de um run: 8 caracteres da parte aleatoria do ULID (contrato
+ * `AgentRunReport.id`). O dono copia-o do /agentes; qualquer outra forma nao
+ * designa um run e e recusada antes de ir ao host.
+ */
+const GRAMMAR_DE_ID_DE_RUN = /^[0-9A-HJKMNP-TV-Z]{8}$/u
+
+/** Teto defensivo do mapa de despachos em espera (um dono; 8 e folga de sobra). */
+const MAX_DESPACHOS_PENDENTES = 8
+
+/**
+ * TTL da confirmacao de dispatch — o mesmo espirito dos 60 s do nonce do host
+ * (o `ConfirmService` expira o nonce nesse prazo; o worker espelha-o para nao
+ * aceitar um clique de um teclado velho).
+ */
+export const TTL_CONFIRMACAO_DESPACHO_MS = 60_000
+
+/** O comando sem skill (ou sem prompt) nunca lista skills — a allowlist vive no HOST. */
+const USO_AGENTE = 'Uso: /agente <skill> <o que o agente deve fazer>'
+const SKILL_INVALIDA = `Skill inválida (kebab-case). ${USO_AGENTE}`
+const SEM_PROMPT = `Falta o prompt. ${USO_AGENTE}`
+const ID_AGENTE_INVALIDO = 'Id inválido. Uso: /parar-agente <id> — os ids aparecem em /agentes.'
+const CONFIRMACAO_DESPACHO_EXPIRADA = 'Confirmação expirada ou inválida. Mande /agente de novo.'
+
+/** O pedido guardado na 1a etapa do dispatch, para o clique confirmar. */
+interface DespachoEmEspera {
+  readonly skill: string
+  /** O prompt ja sanado e cortado (o que o HOST vai receber). */
+  readonly prompt: string
+  readonly userKey: string
+  readonly chatKey: string
+  readonly expiresAt: number
+}
+
+export interface ComandosAgentes {
+  /**
+   * `/agente <skill> <prompt...>` — valida a forma e abre a CONFIRMACAO em 2
+   * etapas (nonce.request com acao 'reset' — a mesma ponte do /rotacionar).
+   */
+  agente(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** `/agentes` — pede a lista de runs ao host; a resposta e o `agent.report`. */
+  agentes(identidade: SurfaceIdentity): Promise<void>
+  /** `/parar-agente <id>` — cancela UM run. REDUZ exposicao, sem nonce (CTL-024). */
+  pararAgente(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** O clique no botao de confirmacao do dispatch. Responde SEMPRE (TG-027). */
+  confirmarDispatch(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
+}
+
+/** Separa o primeiro token (a skill) do resto da linha (o prompt). */
+function partirSkillEPrompt(argumentos: string): { skill: string; prompt: string } {
+  const espaco = indiceDeEspacoAsciiLocal(argumentos)
+  if (espaco === -1) return { skill: argumentos, prompt: '' }
+  return { skill: argumentos.slice(0, espaco), prompt: argumentos.slice(espaco + 1).trim() }
+}
+
+/** Varrimento manual, como o do nucleo — sem regex sobre texto da internet. */
+function indiceDeEspacoAsciiLocal(valor: string): number {
+  for (let i = 0; i < valor.length; i += 1) {
+    const c = valor.charCodeAt(i)
+    if (c === 0x20 || (c >= 0x09 && c <= 0x0d)) return i
+  }
+  return -1
+}
+
+export function criarAgentes(ctx: SurfaceCommandContext): ComandosAgentes {
+  /**
+   * O pedido em espera CHAVEADO pelo token OPACO do botao (o nonce do host).
+   * NAO e validacao do nonce (S5): e a correlacao entre o clique e o pedido da
+   * 1a etapa — o token so viaja e volta, e o HOST valida o valor (a mesma
+   * mecanica do mapa local do /desligar, com o nonce a servir de chave).
+   */
+  const despachos = new Map<string, DespachoEmEspera>()
+
+  function registarDespacho(
+    identidade: SurfaceIdentity,
+    token: string,
+    skill: string,
+    prompt: string,
+  ): void {
+    if (despachos.size >= MAX_DESPACHOS_PENDENTES) {
+      const maisAntigo = despachos.keys().next().value
+      if (maisAntigo !== undefined) despachos.delete(maisAntigo)
+    }
+    despachos.set(token, {
+      skill,
+      prompt,
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+      expiresAt: ctx.time.now() + TTL_CONFIRMACAO_DESPACHO_MS,
+    })
+  }
+
+  return {
+    async agente(identidade, argumentos): Promise<void> {
+      const { skill, prompt } = partirSkillEPrompt(argumentos)
+      // Sem skill OU sem prompt: instrucao de uso. O worker NAO conhece a
+      // allowlist de skills (vive no host) — sem args nao ha lista a mostrar.
+      if (skill.length === 0) {
+        await ctx.enviar(identidade.chatKey, USO_AGENTE)
+        return
+      }
+      if (!GRAMMAR_DE_SKILL.test(skill)) {
+        await ctx.enviar(identidade.chatKey, SKILL_INVALIDA)
+        return
+      }
+      if (prompt.length === 0) {
+        await ctx.enviar(identidade.chatKey, SEM_PROMPT)
+        return
+      }
+      // O prompt viaja no `params` do intent (teto do codec = 4096): corta AQUI
+      // (TG-048) e sanear para UMA linha — o codec recusa controlos no campo.
+      const promptFinal = cortarTexto(sanearUmaLinha(prompt), MAX_PROMPT_CHARS)
+      // 1a etapa: o nonce do host, opaco (S5) — 2 etapas porque AUMENTA exposicao.
+      const nonce = await ctx.emitirNonce('agent.dispatch')
+      if (nonce === undefined) {
+        // Fail-closed (CTL-023): sem nonce nao ha confirmacao possivel.
+        await ctx.enviar(identidade.chatKey, SEM_NONCE)
+        return
+      }
+      registarDespacho(identidade, nonce, skill, promptFinal)
+      // 2a etapa: o teclado com o nonce opaco + o cancelamento (§4 Regra 4). O
+      // texto mostra o prompt QUE VAI (sanado/cortado) — o que se confirma e o
+      // que corre.
+      const acao: ActionRow = {
+        label: '✅ Sim, disparar',
+        action: 'agent.dispatch',
+        token: nonce,
+        kind: 'confirm',
+      }
+      await mostrarConfirmacao(
+        ctx,
+        identidade.chatKey,
+        undefined,
+        `🤖 Disparar o agente "${skill}"?\nEle executa código na tua máquina com este prompt:\n"${promptFinal}"`,
+        [[acao, linhaDeCancelar()]],
+      )
+    },
+
+    async agentes(identidade): Promise<void> {
+      // Leitura pura, sem nonce nem params: a resposta e o `agent.report` que o
+      // host difunde ANTES do ack — o pendente liga o report ao pedido.
+      const requestId = gerarRequestId(ctx.time.now())
+      emitirIntent(ctx, identidade, { intent: 'agent.status', requestId })
+    },
+
+    async pararAgente(identidade, argumentos): Promise<void> {
+      const agentId = argumentos.trim()
+      if (!GRAMMAR_DE_ID_DE_RUN.test(agentId)) {
+        await ctx.enviar(identidade.chatKey, ID_AGENTE_INVALIDO)
+        return
+      }
+      // REDUZ exposicao -> sem nonce (CTL-024), como /desligar. O id viaja no
+      // `params`; o ack decide a resposta (cancelado vs nao encontrado) e
+      // precisa do id — registado no pendente via `agentId`.
+      const requestId = gerarRequestId(ctx.time.now())
+      emitirIntent(ctx, identidade, {
+        intent: 'agent.cancel',
+        requestId,
+        params: { agentId },
+        agentId,
+      })
+    },
+
+    async confirmarDispatch(identidade, token, answerTarget, messageTarget): Promise<void> {
+      // TG-027: responder em TODOS os caminhos — inclusive no de recusa.
+      const registado = despachos.get(token)
+      if (registado === undefined) {
+        // Token desconhecido: teclado forjado (TG-025) ou fluxo ja evictado.
+        await ctx.responder(answerTarget)
+        return
+      }
+      const agora = ctx.time.now()
+      if (
+        agora >= registado.expiresAt ||
+        registado.userKey !== identidade.userKey ||
+        registado.chatKey !== identidade.chatKey
+      ) {
+        // Expirado (o espelho dos 60 s do nonce) ou apresentado por outro emissor.
+        despachos.delete(token)
+        await ctx.responder(answerTarget, { text: CONFIRMACAO_DESPACHO_EXPIRADA })
+        return
+      }
+      // Uso unico: consumido antes de qualquer efeito.
+      despachos.delete(token)
+      await ctx.responder(answerTarget)
+      const requestId = gerarRequestId(ctx.time.now())
+      // O dispatch AUMENTA exposicao: o nonce (o token do botao) viaja OPACO
+      // (S5) e o HOST consome-o com a acao 'reset' (a mesma ponte do /rotacionar).
+      emitirIntent(ctx, identidade, {
+        intent: 'agent.dispatch',
+        requestId,
+        nonce: token,
+        params: { skill: registado.skill, prompt: registado.prompt },
+        messageTarget,
+      })
+    },
+  }
+}
+
+/* ========================================================================== */
 /* 7. O OBJETO QUE AGRUPA OS COMANDOS (para o nucleo montar o roteador)       */
 /* ========================================================================== */
 
@@ -376,6 +597,7 @@ export interface ComandosDaSuperficie {
   readonly ligar: ComandosOnOff
   readonly access: ComandosAccess
   readonly status: ComandosStatus
+  readonly agentes: ComandosAgentes
 }
 
 export function criarComandosDaSuperficie(ctx: SurfaceCommandContext): ComandosDaSuperficie {
@@ -383,6 +605,7 @@ export function criarComandosDaSuperficie(ctx: SurfaceCommandContext): ComandosD
     ligar: criarOnOff(ctx),
     access: criarAccess(ctx),
     status: criarStatus(ctx),
+    agentes: criarAgentes(ctx),
   }
 }
 
@@ -413,12 +636,22 @@ export interface SurfaceComandosPlano {
   acessar(identidade: SurfaceIdentity): Promise<void>
   rotacionar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   emergencia(identidade: SurfaceIdentity): Promise<void>
+  agente(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  agentes(identidade: SurfaceIdentity): Promise<void>
+  pararAgente(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  confirmarDispatch(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
 }
 
 export function criarComandosDeSuperficie(ctx: SurfaceCommandContext): SurfaceComandosPlano {
   const onoff = criarOnOff(ctx)
   const access = criarAccess(ctx)
   const status = criarStatus(ctx)
+  const agentes = criarAgentes(ctx)
   return {
     ligar: (identidade, alvoDeEdicao) => onoff.ligar(identidade, alvoDeEdicao),
     desligar: (identidade, alvoDeEdicao) => onoff.desligar(identidade, alvoDeEdicao),
@@ -428,5 +661,10 @@ export function criarComandosDeSuperficie(ctx: SurfaceCommandContext): SurfaceCo
     acessar: (identidade) => access.acessar(identidade),
     rotacionar: (identidade, alvoDeEdicao) => access.rotacionar(identidade, alvoDeEdicao),
     emergencia: (identidade) => status.emergencia(identidade),
+    agente: (identidade, argumentos) => agentes.agente(identidade, argumentos),
+    agentes: (identidade) => agentes.agentes(identidade),
+    pararAgente: (identidade, argumentos) => agentes.pararAgente(identidade, argumentos),
+    confirmarDispatch: (identidade, token, answerTarget, messageTarget) =>
+      agentes.confirmarDispatch(identidade, token, answerTarget, messageTarget),
   }
 }

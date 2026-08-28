@@ -65,7 +65,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
 import type {
+  AgentRunReport,
   IpcAckMessage,
+  IpcAgentReportMessage,
   IpcErrorCode,
   IpcErrorMessage,
   IpcNotifyMessage,
@@ -99,6 +101,8 @@ import {
   estreitarEstado,
   formatarDuracao,
   textoDeEstadoCurto,
+  textoDeFimDeRuns,
+  textoDeRelatorioDeAgentes,
 } from './text.ts'
 import { criarOutbox } from './outbox.ts'
 import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
@@ -168,6 +172,12 @@ function indiceDeEspacoAscii(valor: string): number {
     if (c === 0x20 || (c >= 0x09 && c <= 0x0d)) return i
   }
   return -1
+}
+
+/** O resto da linha apos o nome do comando, aparado — '' sem argumentos. */
+function argumentosDe(texto: string): string {
+  const espaco = indiceDeEspacoAscii(texto)
+  return espaco === -1 ? '' : texto.slice(espaco + 1).trim()
 }
 
 /* ========================================================================== */
@@ -352,6 +362,19 @@ export interface SurfaceComandos {
   acessar(identidade: SurfaceIdentity): Promise<void>
   rotacionar(identidade: SurfaceIdentity, alvoDeEdicao?: string): Promise<void>
   emergencia(identidade: SurfaceIdentity): Promise<void>
+  /** `/agente <skill> <prompt...>` — `argumentos` e o resto da linha apos o nome. */
+  agente(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** `/agentes` — pede a lista de runs (a resposta e o `agent.report`). */
+  agentes(identidade: SurfaceIdentity): Promise<void>
+  /** O comando parar-agente <id> — `argumentos` e o resto da linha apos o nome. */
+  pararAgente(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** O clique no botao de confirmacao do dispatch (Onda 5). */
+  confirmarDispatch(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
 }
 
 /**
@@ -409,12 +432,35 @@ export interface Nucleo {
   onError(msg: IpcErrorMessage): void
   onNotify(msg: IpcNotifyMessage): void
   onPairingChallenge(msg: IpcPairingChallengeMessage): void
+  /** `agent.report` (host -> worker): resposta a /agentes E difusao proativa. */
+  onAgentReport(msg: IpcAgentReportMessage): void
   /** `pairing.owner` (host -> worker): re-montagem do dono persistido no boot. */
   onOwner(msg: IpcPairingOwnerMessage): void
 }
 
 function descrever(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Os runs que TERMINARAM desde o relatorio anterior — a base da notificacao
+ * proativa (Onda 5). Um run conta como terminado sse o status atual e terminal
+ * (done/failed/cancelled) e o anterior o mostrava vivo (ou o run nem existia —
+ * primeiro relatorio, ou foi podado do historico do host entre difusoes).
+ * Quando o relatorio anterior e `undefined` (worker acabou de nascer), todos
+ * os terminais do primeiro report contam — a primeira difusao e sempre a
+ * primeira noticia de agentes que o dono ve.
+ */
+export function runsTerminadosDesde(
+  anterior: readonly AgentRunReport[] | undefined,
+  atual: readonly AgentRunReport[],
+): readonly AgentRunReport[] {
+  const anteriorPorId = new Map((anterior ?? []).map((run) => [run.id, run] as const))
+  return atual.filter((run) => {
+    if (run.status === 'running') return false
+    const antes = anteriorPorId.get(run.id)
+    return antes === undefined || antes.status === 'running'
+  })
 }
 
 /**
@@ -430,20 +476,24 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
       return result === 'noop' ? 'Túnel já estava desligado.' : 'Túnel desligado. Nada ficou exposto.'
     case 'secret.rotate':
       return 'Chave nova gerada. O link antigo deixou de funcionar.'
+    case 'agent.dispatch':
+      // O ack de /agente confirmado: o run nasceu. O `noop` nao acontece no
+      // host (o dispatch cria SEMPRE um run novo quando aceite) — cobre o tipo.
+      return result === 'noop' ? 'Já estava assim.' : 'Agente disparado. O resultado chega aqui quando terminar.'
+    case 'agent.status':
+    case 'agent.cancel':
     case 'tunnel.status':
     case 'session.issue':
     case 'emergency':
-    case 'agent.dispatch':
-    case 'agent.status':
-    case 'agent.cancel':
     case 'menu':
     case 'ajuda':
     case 'inicio':
     case 'cancel':
       // Nav e leituras nao confirmam accao destrutiva; generico. O `cancel` e
       // navegacao local que nunca gera ack (nao envia intent); cobre o tipo.
-      // EMENDA ONDA-4-AGENTS-HOST: as tres intents de agente caem no generico
-      // ate a Onda 5 (superficie) lhes dar texto proprio.
+      // EMENDA ONDA-5-AGENTS-SUPERFICIE: `agent.status` e `agent.cancel` NAO
+      // chegam aqui (o onAck corta-os antes — a resposta do status e o
+      // agent.report e a do cancel carrega o id do run); cobrem o tipo.
       return result === 'noop' ? 'Já estava assim.' : 'Pedido aceite.'
   }
 }
@@ -452,6 +502,13 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
   const { log, time, limites } = deps
   const projecao = criarProjecao()
   const pendentes = new Map<string, SurfacePendingIntent>()
+  /**
+   * O ultimo relatorio de agentes visto (Onda 5) — a BASE da difusao proativa:
+   * quando um `agent.report` chega SEM `agent.status` pendente, os runs que
+   * mudaram para terminal desde este registo sao os que «terminaram» e sao
+   * notificados ao dono. O host e a fonte unica da verdade; aqui so se projeta.
+   */
+  let ultimoRelatorioDeAgentes: readonly AgentRunReport[] | undefined
   /** A ultima mensagem de ESTADO por chat — as difusoes editam-na in-place. */
   const ultimaMensagemDeEstado = new Map<string, string>()
   /**
@@ -603,12 +660,18 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
     mostrarEstado,
     responder: (answerTarget, outras) => deps.sender.answer(answerTarget, outras),
     pendente: {
-      registar: (requestId, chat, acao, messageTarget) => {
+      registar: (requestId, chat, acao, messageTarget, agentId) => {
         if (pendentes.size >= MAX_PENDENTES) {
           const maisAntigo = pendentes.keys().next().value
           if (maisAntigo !== undefined) pendentes.delete(maisAntigo)
         }
-        pendentes.set(requestId, { requestId, chatKey: chat, acao, messageTarget })
+        pendentes.set(requestId, {
+          requestId,
+          chatKey: chat,
+          acao,
+          messageTarget,
+          ...(agentId === undefined ? {} : { agentId }),
+        })
       },
       retirar: (requestId) => {
         const p = pendentes.get(requestId)
@@ -669,6 +732,9 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       [linhaDeBotao('🟢 Ligar', 'tunnel.up', 'confirm')],
       [linhaDeBotao('🔴 Desligar', 'tunnel.down', 'emergency')],
       [linhaDeBotao('📶 Status', 'tunnel.status')],
+      // Onda 5: os agentes ganham botao proprio no cartao (a resposta e o
+      // agent.report, como o Status responde pelo ack do tunnel.status).
+      [linhaDeBotao('🤖 Agentes', 'agent.status')],
       [linhaDeBotao('🔗 Link de acesso', 'session.issue', 'confirm')],
       [linhaDeBotao('⇄ Nova chave', 'secret.rotate', 'confirm')],
       [linhaDeBotao('🚨 Emergência', 'emergency', 'emergency')],
@@ -792,7 +858,11 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
 
   /* ---- o despacho de comandos (port fiel de `tratarComando`) -------------- */
 
-  async function tratarComando(nome: string | undefined, identidade: SurfaceIdentity): Promise<void> {
+  async function tratarComando(
+    nome: string | undefined,
+    identidade: SurfaceIdentity,
+    texto: string,
+  ): Promise<void> {
     switch (nome) {
       case 'ligar':
         await comandos.ligar(identidade)
@@ -811,6 +881,19 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         return
       case 'emergencia':
         await comandos.emergencia(identidade)
+        return
+      case 'agente':
+        // Onda 5: /agente <skill> <prompt...> — os argumentos sao o resto da
+        // linha; a forma (kebab-case, prompt <= teto) e validada nos comandos.
+        await comandos.agente(identidade, argumentosDe(texto))
+        return
+      case 'agentes':
+        // Onda 5: /agentes — a resposta e o `agent.report` que o host difunde.
+        await comandos.agentes(identidade)
+        return
+      case 'parar-agente':
+        // Onda 5: o comando parar-agente <id> — o id (8 chars) e validado nos comandos.
+        await comandos.pararAgente(identidade, argumentosDe(texto))
         return
       case 'start':
       case 'parear':
@@ -1007,14 +1090,28 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         await comandos.status(event.identity)
         return
       case 'agent.dispatch':
+        // EMENDA ONDA-5-AGENTS-SUPERFICIE: o clique no botao de CONFIRMACAO do
+        // /agente (a mensagem destacada — o dispatch nunca nasce do CARTAO,
+        // precisa de skill+prompt digitados). O token (o nonce do host) corre
+        // OPACO (S5); os params {skill, prompt} sao os guardados na 1a etapa.
+        await comandos.confirmarDispatch(event.identity, event.token, event.answerTarget, event.messageTarget)
+        return
       case 'agent.status':
+        // O botao `🤖 Agentes` DO CARTAO: acusa e pede a lista ao host (a
+        // resposta chega por agent.report — o toast evita o botao morto, o
+        // mesmo padrao do Link de acesso, TG-085 no espirito).
+        if (vindaDoCartao) {
+          await deps.sender.answer(event.answerTarget, { text: 'A consultar…' })
+          await comandos.agentes(event.identity)
+          return
+        }
+        log.warn('acao de botao sem botao renderizado; descartada', { action: event.action })
+        await deps.sender.answer(event.answerTarget)
+        return
       case 'agent.cancel':
-        // EMENDA ONDA-4-AGENTS-HOST: as acoes de agente existem no contrato
-        // IPC mas a SUPERFICIE (os comandos de agente do bot) e da Onda 5 —
-        // nenhum botao as produz nesta onda. Se um evento com estas acoes
-        // chegar (defeito/versao mista), a resposta de protocolo fecha o
-        // girador (TG-027) e NAO se envia intent nenhum: sem surface nao ha
-        // o que confirmar, e inventar um dispatch seria abrir a porta.
+        // Nenhum botao produz esta accao (o parar-agente e digitado): se um
+        // evento com ela chegar (defeito/versao mista), a resposta de protocolo
+        // fecha o girador (TG-027) e NAO se envia intent nenhum.
         await deps.sender.answer(event.answerTarget)
         return
       case 'emergency':
@@ -1259,7 +1356,7 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       return
     }
     auditoria({ outcome: 'permitido' })
-    await tratarComando(extrairNomeDeComando(event.text), event.identity)
+    await tratarComando(extrairNomeDeComando(event.text), event.identity, event.text)
   }
 
   /* ---- os tratadores do canal (S4: nunca lancam) -------------------------- */
@@ -1335,6 +1432,24 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         emSegundoPlano(pendente.chatKey, () =>
           mostrarEstado(pendente.chatKey, textoDeEstadoCurto(projecao.ler(), time.now())),
         )
+        return
+      }
+      if (pendente.acao === 'agent.status') {
+        // A resposta de /agentes e o `agent.report` — o host difunde a lista
+        // ANTES do ack (o mesmo padrao do tunnel.status: o estado completo vem
+        // pela difusao). O ack (noop) so retira o pendente: renderizar «Já
+        // estava assim.» por cima da lista seria destrocar a resposta.
+        return
+      }
+      if (pendente.acao === 'agent.cancel') {
+        // A resposta do parar-agente: mensagem PROPIA (nunca edita o painel de
+        // estado — e uma resposta de comando, nao estado do tunel, e o id do
+        // run viajou no pendente, porque o ack so traz o requestId).
+        const texto =
+          msg.result === 'accepted'
+            ? `Agente ${pendente.agentId ?? ''} cancelado.`
+            : `Agente ${pendente.agentId ?? ''} não encontrado.`
+        emSegundoPlano(pendente.chatKey, () => enviarPara(pendente.chatKey, texto))
         return
       }
       if (pendente.acao === 'session.issue') {
@@ -1427,6 +1542,40 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
     }
   }
 
+  /**
+   * O chat do PRIMEIRO `agent.status` pendente (quando /agentes foi pedido):
+   * a resposta do report e para quem pediu a lista. `undefined` = difusao.
+   */
+  function chatComStatusPendente(): string | undefined {
+    for (const p of pendentes.values()) {
+      if (p.acao === 'agent.status') return p.chatKey
+    }
+    return undefined
+  }
+
+  function onAgentReport(msg: IpcAgentReportMessage): void {
+    try {
+      const agora = time.now()
+      const terminados = runsTerminadosDesde(ultimoRelatorioDeAgentes, msg.runs)
+      ultimoRelatorioDeAgentes = msg.runs
+      const chat = chatComStatusPendente() ?? contexto.dono()
+      if (chat === undefined) return
+      if (chatComStatusPendente() !== undefined) {
+        // Resposta a /agentes: a lista COMPLETA, como mensagem propria — nunca
+        // edita o painel de estado (a lista nao e estado do tunel).
+        emSegundoPlano(chat, () => enviarPara(chat, textoDeRelatorioDeAgentes(msg.runs, agora)))
+        return
+      }
+      // Difusao proativa: um (ou mais) run terminou. Avisa o dono com as linhas
+      // dos runs que mudaram para terminal — best-effort (S4), o mesmo padrao
+      // do notify. NUNCA segredos (S3): o summary e texto do modelo.
+      if (terminados.length === 0) return
+      emSegundoPlano(chat, () => enviarPara(chat, textoDeFimDeRuns(terminados, agora)))
+    } catch (error) {
+      log.error('falha ao renderizar o relatorio de agentes', { detail: descrever(error) })
+    }
+  }
+
   function onOwner(msg: IpcPairingOwnerMessage): void {
     try {
       // `pairing.owner` (host -> worker): o dono PERSISTIDO no boot. Re-monta a
@@ -1442,5 +1591,5 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
     }
   }
 
-  return { tratarEvento, onState, onAck, onError, onNotify, onPairingChallenge, onOwner }
+  return { tratarEvento, onState, onAck, onError, onNotify, onPairingChallenge, onOwner, onAgentReport }
 }

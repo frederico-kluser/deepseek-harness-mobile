@@ -56,7 +56,7 @@
  * `callback_data` do Telegram — e a forma verifica-se por nos, o valor nao.
  */
 
-import type { IpcIntentName } from '../../src/contracts/ipc.ts'
+import type { IpcAgentIntentParams, IpcIntentName } from '../../src/contracts/ipc.ts'
 
 /* ========================================================================== */
 /* 1. IDENTIDADE NEUTRA (D4)                                                   */
@@ -380,6 +380,15 @@ export interface IntencaoNeutra {
   readonly chatKey: string
   /** Nas acoes que AUMENTAM exposicao. Opaco (S5) — nunca validado aqui. */
   readonly nonce?: string | undefined
+  /**
+   * EMENDA ONDA-4-AGENTS-HOST: o payload ADITIVO das intencoes de agente —
+   * `agent.dispatch` carrega `{ skill, prompt }` e `agent.cancel` `{ agentId }`
+   * (a forma e {@link IpcAgentIntentParams} de `src/contracts/ipc.ts`; quem
+   * impoe a presenca e o codec do canal, intent a intent). As restantes
+   * intents NAO transportam params. Nada disto e segredo (S3): skill, prompt e
+   * agentId sao dados do dono, nunca credenciais.
+   */
+  readonly params?: IpcAgentIntentParams | undefined
 }
 
 /**
@@ -414,6 +423,12 @@ export interface SurfacePendingIntent {
   readonly chatKey: string
   readonly acao: SurfaceAction
   readonly messageTarget: string | undefined
+  /**
+   * EMENDA ONDA-5-AGENTS-SUPERFICIE: o `agentId` do run de um `agent.cancel`
+   * pendente — o ack precisa dele para responder «Agente <id> cancelado.»
+   * (o ack so traz o `requestId`; o id viaja no `params` do intent, nao no ack).
+   */
+  readonly agentId?: string | undefined
 }
 
 /**
@@ -502,7 +517,14 @@ export interface SurfaceCommandContext {
     outras?: { readonly text?: string; readonly showAlert?: boolean },
   ): Promise<boolean>
   pendente: {
-    registar(requestId: string, chatKey: string, acao: SurfaceAction, messageTarget: string | undefined): void
+    registar(
+      requestId: string,
+      chatKey: string,
+      acao: SurfaceAction,
+      messageTarget: string | undefined,
+      /** EMENDA ONDA-5-AGENTS-SUPERFICIE: o `agentId` do run (so `agent.cancel`). */
+      agentId?: string | undefined,
+    ): void
     retirar(requestId: string): SurfacePendingIntent | undefined
   }
   projecao: { ler(): SurfaceProjectionState }

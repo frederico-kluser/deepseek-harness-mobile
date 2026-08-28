@@ -29,6 +29,7 @@ import {
   comandoPublicado,
   criarComandosDaSuperficie,
   criarComandosDeSuperficie,
+  TTL_CONFIRMACAO_DESPACHO_MS,
   TTL_TOKEN_DESLIGAR_MS,
   type ComandosDaSuperficie,
 } from '../../../../worker/surface/commands.ts'
@@ -309,6 +310,226 @@ describe('TG-087: /emergencia — derruba tunel e worker, idempotente', () => {
   })
 })
 
+/* ========================================================================== */
+/* Onda 5 — OS COMANDOS DE AGENTES: /agente, /agentes, /parar-agente          */
+/* ========================================================================== */
+
+describe('Onda 5: /agente — 1a etapa: forma + nonce do host + confirmacao', () => {
+  it('sem argumentos mostra a instrucao de uso — NAO lista skills (a allowlist vive no host)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, '')
+
+    assert.equal(bancada.canal.intents.length, 0, 'sem skill nao ha o que disparar')
+    assert.equal(
+      bancada.emissor.ultimaMensagem()?.texto,
+      'Uso: /agente <skill> <o que o agente deve fazer>',
+    )
+  })
+
+  it('skill fora da grammar kebab-case: recusada ANTES de pedir nonce', async () => {
+    let pedidosDeNonce = 0
+    const bancada = montarBancada({
+      emitirNonce: async () => {
+        pedidosDeNonce += 1
+        return 'NONCE'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'MinhaSkill faz isto')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.equal(pedidosDeNonce, 0, 'a forma invalida nao gasta confirmacao')
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Skill inválida \(kebab-case\)/u)
+  })
+
+  it('skill valida sem prompt: instrucao de uso', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Falta o prompt/u)
+  })
+
+  it('pede o nonce ao HOST com a acao agent.dispatch e mostra a confirmacao em 2 etapas', async () => {
+    const pedidos: string[] = []
+    const bancada = montarBancada({
+      emitirNonce: async (acao) => {
+        pedidos.push(acao)
+        return 'NONCE-1'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco diz oi')
+
+    assert.deepEqual(pedidos, ['agent.dispatch'], 'o dispatch pede o nonce (o host consome com reset)')
+    assert.equal(bancada.canal.intents.length, 0, 'so a confirmacao executa')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'agent.dispatch')
+    assert.equal(botao.label, '✅ Sim, disparar')
+    assert.equal(botao.kind, 'confirm')
+    assert.equal(botao.token, 'NONCE-1', 'o nonce do host viaja opaco no botao (S5)')
+    const linha = bancada.emissor.mensagens[0]?.opcoes?.actionRows?.[0]
+    assert.ok(linha !== undefined, 'a confirmacao tem a linha de acoes')
+    assert.equal(linha.map((b) => b.label).join(','), '✅ Sim, disparar,✕ Não', 'cancelamento ao lado do positivo')
+    assert.equal(linha.map((b) => b.action).join(','), 'agent.dispatch,cancel')
+    const texto = bancada.emissor.mensagens[0]?.texto ?? ''
+    assert.match(texto, /Disparar o agente "eco"\?/u)
+    assert.match(texto, /"diz oi"/u, 'o prompt que VAI aparece na confirmacao')
+  })
+
+  it('CTL-023 (face worker): sem nonce do host, /agente falha FECHADO — nenhum intent', async () => {
+    const bancada = montarBancada({ emitirNonce: async () => undefined })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco diz oi')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Não foi possível obter a confirmação/u)
+  })
+
+  it('o prompt acima do teto (4096) e cortado ANTES do intent (TG-048)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    const promptGigante = 'a'.repeat(5_000)
+    await comandos.agente(DM, `eco ${promptGigante}`)
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarDispatch(DM, botao.token, 'clique-1', 'msg-1')
+
+    const prompt = bancada.canal.intents[0]?.params?.prompt
+    assert.ok(prompt !== undefined)
+    assert.ok(prompt.length <= 4096, `prompt com ${String(prompt.length)} caracteres`)
+    assert.match(prompt, /…$/u, 'cortado com o marcador')
+  })
+
+  it('o prompt com quebra de linha e sanado para UMA linha (o codec recusa controlos)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco primeira\nsegunda')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarDispatch(DM, botao.token, 'clique-1', 'msg-1')
+
+    const prompt = bancada.canal.intents[0]?.params?.prompt
+    assert.equal(prompt, 'primeira segunda', 'o \n virou espaco antes do intent')
+  })
+})
+
+describe('Onda 5: confirmarDispatch — o clique no botao da confirmacao', () => {
+  it('envia agent.dispatch com nonce + params {skill, prompt} e responde ao clique', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarDispatch(DM, botao.token, 'clique-1', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 1)
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.dispatch')
+    assert.equal(intent.nonce, botao.token, 'o nonce (o token do botao) viaja OPACO (S5)')
+    assert.deepEqual(intent.params, { skill: 'eco', prompt: 'diz oi' })
+    assert.equal(bancada.emissor.respostas.length, 1, 'o clique foi respondido (TG-027)')
+  })
+
+  it('o token e de USO UNICO: o segundo clique nao envia nada', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarDispatch(DM, botao.token, 'clique-1', 'msg-1')
+    await comandos.confirmarDispatch(DM, botao.token, 'clique-2', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 1, 'replay do token: nenhum intent novo')
+  })
+
+  it('o token expira (TTL 60 s, relogio injetado): o clique morre com aviso', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    bancada.time.advance(TTL_CONFIRMACAO_DESPACHO_MS + 1)
+
+    await comandos.confirmarDispatch(DM, botao.token, 'clique-1', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.equal(bancada.emissor.respostas.length, 1, 'o answer sempre vem (TG-027)')
+    assert.match(bancada.emissor.respostas[0]?.outras?.text ?? '', /Confirmação expirada ou inválida/u)
+  })
+
+  it('token forjado (teclado alheio): descartado — nenhum intent, silencio de conteudo', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.confirmarDispatch(DM, 'TOKEN-FORJADO', 'clique-1', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 0, 'o botao forjado nao executa (TG-025)')
+    assert.equal(bancada.emissor.respostas.length, 1)
+    assert.equal(bancada.emissor.respostas[0]?.outras, undefined, 'sem oraculo para o teclado alheio')
+  })
+
+  it('TG-024: o despacho e ligado ao emissor — outro `userKey` nao executa', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agente(DM, 'eco diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarDispatch({ userKey: '222', chatKey: DM.chatKey }, botao.token, 'clique-1', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 0, 'o token nao viaja entre eixos')
+    assert.match(bancada.emissor.respostas.at(-1)?.outras?.text ?? '', /Confirmação expirada ou inválida/u)
+  })
+})
+
+describe('Onda 5: /agentes — leitura pura, sem nonce nem params', () => {
+  it('envia o intent agent.status e a resposta e o agent.report (nada renderizado aqui)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agentes(DM)
+
+    assert.equal(bancada.canal.intents.length, 1)
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.status')
+    assert.equal(Object.hasOwn(intent, 'nonce'), false, 'leitura pura nao exige nonce')
+    assert.equal(intent.params, undefined, 'agent.status nao transporta params')
+  })
+})
+
+describe('Onda 5: /parar-agente — valida a forma (8 chars) e cancela', () => {
+  it('id valido: agent.cancel com params {agentId}, SEM nonce (CTL-024)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.pararAgente(DM, '01HZABCD')
+
+    assert.equal(bancada.canal.intents.length, 1)
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.cancel')
+    assert.deepEqual(intent.params, { agentId: '01HZABCD' })
+    assert.equal(Object.hasOwn(intent, 'nonce'), false, 'a acao que reduz nao carrega nonce')
+  })
+
+  it('id fora da forma (8 chars do ULID): recusado antes de ir ao host, com o uso', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.pararAgente(DM, 'abc')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Id inválido/u)
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /\/agentes/u)
+  })
+})
+
 describe('gerarRequestId — ULID de 26 caracteres Crockford', () => {
   it('tem 26 caracteres do alfabeto Crockford (sem I/L/O/U)', () => {
     const id = gerarRequestId(1_700_000_000_000)
@@ -337,7 +558,7 @@ describe('criarComandosDeSuperficie — a factory PLANA que o nucleus consome (S
     assert.equal(bancada.canal.intents[0]?.intent, 'tunnel.down')
   })
 
-  it('tem as oito assinaturas directas exigidas pelo contrato SurfaceComandos', () => {
+  it('tem as doze assinaturas directas exigidas pelo contrato SurfaceComandos', () => {
     const bancada = montarBancada()
     const comandos = criarComandosDeSuperficie(bancada.ctx)
     for (const nome of [
@@ -348,6 +569,11 @@ describe('criarComandosDeSuperficie — a factory PLANA que o nucleus consome (S
       'acessar',
       'rotacionar',
       'emergencia',
+      // Onda 5: os comandos de agentes.
+      'agente',
+      'agentes',
+      'pararAgente',
+      'confirmarDispatch',
     ] as const) {
       assert.equal(typeof comandos[nome], 'function', `falta ${nome} na factory plana`)
     }

@@ -24,6 +24,7 @@
  * chega aqui por construcao — nao ha campo para ele em {@link SurfaceProjectionState}.
  */
 
+import type { AgentRunReport, AgentRunStatus } from '../../src/contracts/ipc.ts'
 import type { SurfaceProjectionState, SurfaceTunnelState } from './contract.ts'
 
 /* ========================================================================== */
@@ -165,4 +166,88 @@ export const MAX_TEXTO_MENSAGEM = 4_096
 /** Corta num limite de caracteres — nunca estoura na rede (TG-048). */
 export function cortarTexto(texto: string, max: number = MAX_TEXTO_MENSAGEM): string {
   return texto.length <= max ? texto : `${texto.slice(0, max - 1)}…`
+}
+
+/* ========================================================================== */
+/* 5. OS AGENTES — rotulos, relatorio e a notificacao proativa (Onda 5)      */
+/* ========================================================================== */
+
+/**
+ * Rotulos PT-BR do status de UM run de agente — texto de UI; o payload usa o
+ * enum `AgentRunStatus` de `src/contracts/ipc.ts` (o vocabulario e FECHADO por
+ * contrato: acrescentar um status e mudanca de contrato).
+ *
+ * O `summary` (quando presente) e texto do MODELO — nao segredo (S3): o
+ * request do agente nunca recebe token nem credencial deste plugin, logo o que
+ * ele devolve nao pode conter segredo nosso.
+ */
+export const ROTULOS_DE_STATUS_DE_AGENTE: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
+  running: 'rodando',
+  done: 'concluído',
+  failed: 'falhou',
+  cancelled: 'cancelado',
+})
+
+/**
+ * Teto do `prompt` do /agente — o MESMO do codec do canal (4096, o
+ * `MAX_MESSAGE_CHARS` de `src/ipc/channel.ts`): um prompt acima dele faria o
+ * intent ser recusado na FORMA. O corte acontece AQUI (o dono da forma), nunca
+ * apos a ida ao canal (TG-048 no espirito).
+ */
+export const MAX_PROMPT_CHARS = MAX_TEXTO_MENSAGEM
+
+/**
+ * Sanear para UMA linha: carateres de controlo viram espaco. O `prompt` viaja
+ * no `params` do intent e o codec do canal RECUSA controlos no campo
+ * (`isCleanText` — um `\n` de uma mensagem com quebras partiria a forma); aqui
+ * garante-se que o que o dono confirma e o que chega ao host, sem lixo de
+ * terminal no meio.
+ */
+export function sanearUmaLinha(texto: string): string {
+  let saida = ''
+  for (let i = 0; i < texto.length; i += 1) {
+    const codigo = texto.charCodeAt(i)
+    saida += codigo < 0x20 || codigo === 0x7f ? ' ' : texto[i]
+  }
+  return saida
+}
+
+/**
+ * «há quanto tempo» — o mesmo relogio de {@link formatarDuracao}, com a forma
+ * PT-BR do /agentes: «agora mesmo» (um run acabado de nascer/terminar nunca
+ * pode ler «há agora»), «há menos de 1 min», «há 2 min», «há 1 h 30 min».
+ */
+export function haQuantoTempo(ms: number): string {
+  if (ms <= 0) return 'agora mesmo'
+  return `há ${formatarDuracao(ms)}`
+}
+
+/**
+ * UMA linha de UM run no relatorio: id, skill, status PT-BR, ha quanto tempo e
+ * o resumo do modelo (1 linha, quando o run terminou e ha texto). NUNCA expoe
+ * segredo (S3): o que aqui entra sao dados do dono e texto do modelo.
+ */
+export function linhaDeRun(run: AgentRunReport, agora: number): string {
+  const base = `• ${run.id} — ${run.skill} — ${ROTULOS_DE_STATUS_DE_AGENTE[run.status]} ${haQuantoTempo(agora - run.startedAt)}`
+  if (run.summary === undefined || run.summary.length === 0) return base
+  return `${base}\n   💬 ${run.summary}`
+}
+
+/**
+ * A lista COMPLETA de runs — a resposta de /agentes (o `agent.report` que o
+ * host difunde). Vazia: o texto exacto «Nenhum agente rodando.». `agora` e o
+ * instante actual — injectado para ser deterministico em teste.
+ */
+export function textoDeRelatorioDeAgentes(runs: readonly AgentRunReport[], agora: number): string {
+  if (runs.length === 0) return 'Nenhum agente rodando.'
+  return `🤖 Agentes:\n${runs.map((run) => linhaDeRun(run, agora)).join('\n')}`
+}
+
+/**
+ * A notificacao PROATIVA quando um ou mais runs terminam (a difusao
+ * `agent.report` que chega SEM `agent.status` pendente): as linhas dos runs
+ * que mudaram para terminal. O titulo distingue-a da resposta a /agentes.
+ */
+export function textoDeFimDeRuns(runs: readonly AgentRunReport[], agora: number): string {
+  return `🤖 Atualização de agentes:\n${runs.map((run) => linhaDeRun(run, agora)).join('\n')}`
 }
