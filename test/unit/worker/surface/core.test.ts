@@ -1083,6 +1083,138 @@ describe('Onda 5: /agente — 2 etapas com nonce, dispatch com params, ack final
   })
 })
 
+describe('Onda 5 fix recusa visivel: a recusa de um intent de AGENTE chega ao dono SEMPRE', () => {
+  /**
+   * Dispara um /agente confirmado e devolve o requestId do dispatch pendente.
+   * A RECUSA do host (skill nao autorizada / teto / harness) chega como `error`
+   * COM esse requestId — e o pendente (guardado por `acao`) que o correlaciona.
+   */
+  async function dispararAgente(bancada: Bancada): Promise<string> {
+    await bancada.tratar(comandoDoDono('/agente eco diz oi'))
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'agent.dispatch')
+    await bancada.tratar(accaoDoDono('agent.dispatch', botao.token, confirmacao.id))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.dispatch')
+    return intent.requestId
+  }
+
+  it('com o cartao VISIVEL, a recusa de agent.dispatch chega ao dono como mensagem propria (nao so re-render)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    // /menu abre o cartao: dali em diante `mostrarEstado` re-renderiza-o e
+    // DESCARTE o texto — o bug reproduzido (0 mensagens, 1 re-render).
+    await bancada.tratar(comandoDoDono('/menu'))
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined)
+
+    const requestId = await dispararAgente(bancada)
+    const mensagensAntesDoErro = bancada.sender.mensagens.length
+    bancada.nucleo.onError({
+      v: 2,
+      type: 'error',
+      requestId,
+      code: 'INTERNAL',
+      message: 'A skill "eco" nao esta autorizada neste plugin (config agents.skills).',
+    })
+    await tick(6)
+
+    // A recusa e UMA mensagem propria NOVA, com o texto accionavel do host.
+    assert.equal(bancada.sender.mensagens.length, mensagensAntesDoErro + 1, 'a recusa sai como mensagem propria')
+    const recusa = bancada.sender.mensagens.at(-1)
+    assert.ok(recusa !== undefined)
+    assert.match(recusa.texto, /nao esta autorizada/u)
+    // NUNCA um re-render do cartao que engula o texto.
+    const reRenders = bancada.sender.edicoes.filter((e) => e.messageId === cartao.id)
+    assert.equal(reRenders.length, 0, 'o cartao nao e re-renderizado com a recusa')
+  })
+
+  it('sem cartao, a recusa de agent.dispatch chega ao dono como mensagem propria', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    const requestId = await dispararAgente(bancada)
+    bancada.nucleo.onError({
+      v: 2,
+      type: 'error',
+      requestId,
+      code: 'INTERNAL',
+      message: 'Ja ha agentes a correr ate o limite (config agents.maxRuns). Espera um terminar ou cancela um.',
+    })
+    await tick(6)
+
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /ate o limite/u)
+  })
+
+  it('o error de agent.status (botao Agentes DO CARTAO) tambem chega ao dono como mensagem propria', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('/menu'))
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined)
+    const botao = cartao.opcoes?.actionRows?.flat().find((b) => b.label === '🤖 Agentes')
+    assert.ok(botao !== undefined)
+
+    await bancada.tratar(accaoDoDono('agent.status', botao.token, cartao.id))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.status')
+    const mensagensAntes = bancada.sender.mensagens.length
+
+    bancada.nucleo.onError({
+      v: 2,
+      type: 'error',
+      requestId: intent.requestId,
+      code: 'INTERNAL',
+      message: 'Este comando ainda nao esta disponivel nesta instalacao.',
+    })
+    await tick(6)
+
+    assert.equal(bancada.sender.mensagens.length, mensagensAntes + 1, 'a recusa sai como mensagem propria')
+    assert.match(bancada.sender.mensagens.at(-1)?.texto ?? '', /nao esta disponivel/u)
+    const reRenders = bancada.sender.edicoes.filter((e) => e.messageId === cartao.id)
+    assert.equal(reRenders.length, 0, 'o cartao nao engole a recusa')
+  })
+
+  it('regressao zero: error de OUTRA intent (tunnel.status) com cartao visivel CONTINUA no comportamento atual (re-render, sem mensagem)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('/menu'))
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined)
+
+    await bancada.tratar(comandoDoDono('/status'))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'tunnel.status')
+    const mensagensAntes = bancada.sender.mensagens.length
+    const edicoesAntes = bancada.sender.edicoes.length
+
+    bancada.nucleo.onError({
+      v: 2,
+      type: 'error',
+      requestId: intent.requestId,
+      code: 'TUNNEL_FAILED',
+      message: 'o tunel caiu',
+    })
+    await tick(6)
+
+    // Comportamento atual PRESERVADO: nenhuma mensagem nova com o texto — o
+    // cartao e re-renderizado (uma edicao do proprio cartao, sem o texto).
+    assert.equal(bancada.sender.mensagens.length, mensagensAntes, 'nenhuma mensagem nova')
+    const reRender = bancada.sender.edicoes.slice(edicoesAntes)
+    assert.equal(reRender.length, 1, 'um re-render do cartao, como antes')
+    const reRenderDaRecusa = reRender[0]
+    assert.ok(reRenderDaRecusa !== undefined)
+    assert.equal(reRenderDaRecusa.messageId, cartao.id)
+    assert.ok(!reRenderDaRecusa.texto.includes('o tunel caiu'), 'o texto do erro nao aparece no cartao')
+  })
+})
+
 describe('Onda 5: /agentes — a resposta e o agent.report, o ack e silencioso', () => {
   it('pede agent.status e, quando o report chega, renderiza a lista numa mensagem propria', async () => {
     const bancada = montarBancada()

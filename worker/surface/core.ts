@@ -498,6 +498,20 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
   }
 }
 
+/**
+ * As accoes de AGENTE (Onda 5). EMENDA ONDA-5-FIX-RECUSA-VISIVEL: a recusa de
+ * politica do HOST a um intent de agente (skill nao autorizada / teto maxRuns /
+ * harness indisponivel) chega como `error` com uma `message` ACCIONAVEL — e uma
+ * RESPOSTA do intent, nao estado do tunel, e tem de chegar ao dono SEMPRE como
+ * mensagem propria. `mostrarEstado` NAO serve: com o cartao de controlo a vista
+ * ele re-renderiza o cartao e DESCARTE o texto — a recusa ficava invisivel ao
+ * dono (rev adversarial da Onda 5, HIGH). O pendente guarda a accao (`acao`),
+ * a correlacao mais simples e segura com o requestId do erro.
+ */
+function ehAcaoDeAgente(acao: SurfaceAction): boolean {
+  return acao === 'agent.dispatch' || acao === 'agent.status' || acao === 'agent.cancel'
+}
+
 export function criarNucleo(deps: NucleoDeps): Nucleo {
   const { log, time, limites } = deps
   const projecao = criarProjecao()
@@ -1482,9 +1496,15 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
           log.debug('erro sem intent pendente (duplicado ou orfao)', {
             requestId: msg.requestId,
           })
-        } else if (pendente.acao === 'session.issue') {
+        } else if (pendente.acao === 'session.issue' || ehAcaoDeAgente(pendente.acao)) {
           // O erro de /acessar E uma resposta do intent — mensagem PROPIA,
           // nunca edicao do painel de estado (o mesmo carve-out dos acks, A2).
+          // EMENDA ONDA-5-FIX-RECUSA-VISIVEL: o MESMO carve-out cobre os intents
+          // de AGENTE — a recusa de politica do host (skill nao autorizada /
+          // teto maxRuns / harness indisponivel) e uma RESPOSTA do intent com
+          // mensagem accionavel, e `mostrarEstado` descartaria o texto num
+          // re-render do cartao de controlo (rev adversarial da Onda 5, HIGH).
+          // A recusa chega ao dono SEMPRE, com o cartao visivel ou nao.
           emSegundoPlano(pendente.chatKey, () => enviarPara(pendente.chatKey, msg.message))
         } else {
           emSegundoPlano(pendente.chatKey, () => mostrarEstado(pendente.chatKey, msg.message))
