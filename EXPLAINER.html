@@ -1,634 +1,745 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
+<!doctype html>
+
+<html lang="pt-BR" data-bs-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EXPLAINER — Painel Remote Access do dsh-guard-messenger (2026-08-26)</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📡</text></svg>">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Diz ao navegador que a página é escura ANTES do CSS carregar: sem flash
+     branco, e os controles nativos (scrollbar, select, input) já nascem escuros. -->
+<meta name="color-scheme" content="dark">
+<title>EXPLAINER — deep-orchestrator · de-para da execução</title>
+
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+      crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+      integrity="sha384-CK2SzKma4jA5H/MXDUU7i1TqZlCFaD4T01vtyDFvPlD97JQyS+IsSh1nI2EFbpyk"
+      crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css"
+      integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH"
+      crossorigin="anonymous">
+
 <style>
+  /* ── Paleta do deep-orchestrator ──────────────────────────────────────────
+     Fundo #1a1a2e, accent #00d4ff (ciano), sucesso #00ff88, warning #ffaa00.
+     Tudo deriva destas variáveis — não cravamos hex no conteúdo. */
   :root {
-    --bg: #0f1420;
-    --bg-soft: #161d2e;
-    --card: #1b2438;
-    --card-2: #212c45;
-    --line: #2d3a5c;
-    --text: #e8edf7;
-    --text-dim: #a7b3cc;
-    --accent: #4f8cff;
-    --accent-2: #7fd8a4;
-    --warn: #ffc66d;
-    --danger: #ff7a7a;
-    --ok: #7fd8a4;
-    --off: #ff7a7a;
-    --code-bg: #0b1019;
-    --radius: 12px;
-    --mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    line-height: 1.65;
-    font-size: 16px;
-  }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 20px 80px; }
-
-  header.hero {
-    padding: 34px 0 26px;
-    border-bottom: 1px solid var(--line);
-    margin-bottom: 34px;
-  }
-  .hero .kicker {
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: 13px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    margin: 0 0 10px;
-  }
-  .hero h1 { font-size: clamp(26px, 4.4vw, 38px); line-height: 1.2; margin: 0 0 12px; }
-  .hero .sub { color: var(--text-dim); font-size: 17px; margin: 0 0 18px; max-width: 46em; }
-  .badges { display: flex; flex-wrap: wrap; gap: 10px; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 7px;
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: 999px; padding: 6px 13px; font-size: 13px; color: var(--text-dim);
-  }
-  .badge b { color: var(--text); font-weight: 600; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  .dot.ok { background: var(--ok); }
-  .dot.warn { background: var(--warn); }
-
-  section { margin: 42px 0; }
-  h2 {
-    font-size: 24px; margin: 0 0 16px; padding-bottom: 8px;
-    border-bottom: 2px solid var(--line);
-    display: flex; align-items: baseline; gap: 10px;
-  }
-  h2 .num {
-    font-family: var(--mono); color: var(--accent); font-size: 16px;
-  }
-  h3 { font-size: 18px; margin: 26px 0 10px; color: var(--accent-2); }
-  p { margin: 10px 0; }
-  a { color: var(--accent); }
-  code, .mono { font-family: var(--mono); font-size: 0.9em; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-  .highlight { background: rgba(79,140,255,.14); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
-  .highlight.green { background: rgba(127,216,164,.10); border-left-color: var(--ok); }
-  .highlight.red { background: rgba(255,122,122,.09); border-left-color: var(--off); }
-  .highlight.amber { background: rgba(255,198,109,.10); border-left-color: var(--warn); }
-
-  .card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 18px 20px; margin: 16px 0;
+    --do-bg: #1a1a2e;
+    --do-bg-soft: #16213e;
+    --do-card: #1e1e38;
+    --do-accent: #00d4ff;
+    --do-success: #00ff88;
+    --do-warning: #ffaa00;
+    --do-danger: #ff6b6b;
   }
 
-  details.fold {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); margin: 14px 0; overflow: hidden;
-  }
-  details.fold > summary {
-    cursor: pointer; padding: 12px 16px; font-weight: 600; color: var(--accent-2);
-    list-style: none; user-select: none;
-  }
-  details.fold > summary::-webkit-details-marker { display: none; }
-  details.fold > summary::before { content: "▸ "; color: var(--accent); }
-  details.fold[open] > summary::before { content: "▾ "; }
-  details.fold > .fold-body { padding: 2px 18px 16px; border-top: 1px solid var(--line); }
-  details.fold .fold-tag {
-    display: inline-block; font-size: 11px; font-family: var(--mono);
-    background: var(--card-2); color: var(--accent); border: 1px solid var(--line);
-    border-radius: 999px; padding: 1px 9px; margin-right: 8px;
+  [data-bs-theme="dark"] {
+    --bs-body-bg: var(--do-bg);
+    --bs-body-color: #dcdce8;
+    --bs-secondary-color: #8b8ba7;
+    --bs-border-color: #2e2e4a;
+    --bs-body-font-family: system-ui, -apple-system, 'Segoe UI', Roboto,
+                           'Helvetica Neue', Arial, sans-serif;
   }
 
-  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 15px; }
-  th, td { text-align: left; padding: 10px 12px; border: 1px solid var(--line); vertical-align: top; }
-  th { background: var(--card-2); font-weight: 600; color: var(--text); }
-  tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+  body { background-image: radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0,212,255,.07), transparent 60%); }
 
-  pre.diagram {
-    background: var(--code-bg); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 18px; overflow-x: auto;
-    font-family: var(--mono); font-size: 13.5px; line-height: 1.5;
-    color: #c9d6f2; margin: 16px 0 6px;
+  /* Âncora não fica escondida atrás da navbar fixa. */
+  [id] { scroll-margin-top: 5rem; }
+
+  a { color: var(--do-accent); }
+  a:hover { color: #4de0ff; }
+
+  .brand-accent, .stat-value { color: var(--do-accent); }
+
+  /* Navbar com borda inferior em tom de accent. */
+  .navbar { border-bottom: 1px solid rgba(0,212,255,.25); }
+
+  /* Hero com gradiente sutil: azul-noite para um leve toque ciano. */
+  .explainer-hero {
+    background: linear-gradient(135deg, #16213e 0%, #1a1a2e 55%, #0f3460 100%);
+    border: 1px solid var(--bs-border-color);
+    box-shadow: inset 0 0 2.5rem rgba(0,212,255,.05);
   }
-  figure { margin: 22px 0; }
-  figure figcaption {
-    font-size: 14px; color: var(--text-dim); margin-top: 10px;
-    border-left: 3px solid var(--accent); padding-left: 12px;
+
+  /* Título de seção com filete de gradiente sutil sob o texto. */
+  .pane-title { position: relative; padding-bottom: .5rem; }
+  .pane-title::after {
+    content: ''; position: absolute; left: 0; bottom: 0;
+    height: 2px; width: 4.5rem; border-radius: 2px;
+    background: linear-gradient(90deg, var(--do-accent), transparent);
   }
-  figure figcaption b { color: var(--text); }
 
-  ul.clean { padding-left: 22px; }
-  ul.clean li { margin: 6px 0; }
-  .commit-list { list-style: none; padding: 0; margin: 18px 0; }
-  .commit-list li {
-    background: var(--card); border: 1px solid var(--line);
-    border-left: 4px solid var(--accent);
-    border-radius: 10px; padding: 14px 16px; margin: 12px 0;
+  /* Cards e grupos de lista: tom levemente mais claro que o fundo. */
+  .card { --bs-card-bg: var(--do-card); --bs-card-border-color: var(--bs-border-color); }
+  .card-header {
+    background: linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,0));
+    border-bottom: 1px solid var(--bs-border-color);
   }
-  .commit-list .hash { font-family: var(--mono); color: var(--accent); font-size: 14px; }
-  .commit-list .msg { font-weight: 600; margin: 4px 0; }
-  .commit-list .files { font-size: 13px; color: var(--text-dim); font-family: var(--mono); }
+  .list-group-item { background-color: var(--do-card); }
 
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
-  .kv { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding: 8px 0; font-size: 15px; }
-  .kv b { color: var(--text-dim); font-weight: 500; }
-  .kv span { text-align: right; }
+  /* Abas: ativa em accent com sublinhado no mesmo tom. */
+  .nav-tabs { border-bottom-color: var(--bs-border-color); }
+  .nav-tabs .nav-link { color: var(--bs-secondary-color); }
+  .nav-tabs .nav-link:hover { color: var(--bs-body-color); border-color: var(--bs-border-color) var(--bs-border-color) transparent; }
+  .nav-tabs .nav-link.active {
+    color: var(--do-accent); font-weight: 600;
+    background-color: transparent;
+    border-color: var(--bs-border-color) var(--bs-border-color) var(--do-accent);
+  }
 
-  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--text-dim); font-size: 13.5px; }
-  .pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-family: var(--mono); }
-  .pill.on { background: rgba(127,216,164,.15); color: var(--ok); border: 1px solid rgba(127,216,164,.4); }
-  .pill.off { background: rgba(255,122,122,.12); color: var(--off); border: 1px solid rgba(255,122,122,.4); }
-  .pill.gray { background: rgba(167,179,204,.12); color: var(--text-dim); border: 1px solid var(--line); }
+  /* Badges da paleta. */
+  .badge-accent  { background: rgba(0,212,255,.14);  color: var(--do-accent);  border: 1px solid rgba(0,212,255,.35); }
+  .badge-ok      { background: rgba(0,255,136,.12);  color: var(--do-success); border: 1px solid rgba(0,255,136,.35); }
+  .badge-warn    { background: rgba(255,170,0,.12);  color: var(--do-warning); border: 1px solid rgba(255,170,0,.35); }
+  .badge-danger  { background: rgba(255,107,107,.12); color: var(--do-danger); border: 1px solid rgba(255,107,107,.35); }
+  .badge-soft    { background: rgba(139,139,167,.12); color: var(--bs-secondary-color); border: 1px solid var(--bs-border-color); }
+
+  /* Diff stats: + verde, − vermelho, dígitos tabulares. */
+  .diff-plus  { color: var(--do-success); font-variant-numeric: tabular-nums; }
+  .diff-minus { color: var(--do-danger); font-variant-numeric: tabular-nums; }
+
+  /* De-Para: cartões com borda indicando o lado da comparação. */
+  .depara-antes  { border-color: rgba(139,139,167,.45); }
+  .depara-depois { border-color: rgba(0,255,136,.35); }
+
+  /* Timeline vertical: linha + marcador ciano com brilho sutil. */
+  .timeline { position: relative; }
+  .timeline-item { position: relative; padding-left: 1.4rem; border-left: 2px solid var(--bs-border-color); }
+  .timeline-item::before {
+    content: ''; position: absolute; left: -.42rem; top: .3rem;
+    width: .7rem; height: .7rem; border-radius: 50%;
+    background: var(--do-accent); box-shadow: 0 0 .6rem rgba(0,212,255,.6);
+  }
+  .timeline-item:last-child { border-left-color: transparent; }
+
+  /* Bloco de código: espaço à direita para o botão de copiar não cobrir o texto. */
+  pre { position: relative; margin-bottom: 1rem; }
+  pre code.hljs { padding-right: 4rem; border-radius: var(--bs-border-radius); font-size: .875rem; }
+
+  .copy-btn { position: absolute; top: .5rem; right: .5rem; opacity: .4; transition: opacity .15s; }
+  pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+
+  /* Abrir o arquivo em #pane-x foca o painel (bom: o leitor de tela cai no
+     conteúdo), e o outline branco do navegador fica gritante. Anel discreto,
+     do tema, no lugar — tirar o indicador por completo quebraria quem navega
+     por teclado. */
+  .tab-pane:focus-visible { outline: 0; box-shadow: 0 0 0 .2rem rgba(var(--bs-emphasis-color-rgb), .15); }
+
+  /* Impressão/PDF: abre TODAS as abas, senão o papel sai com uma só. */
+  @media print {
+    .nav-tabs, .copy-btn, details, .explainer-hero { display: none !important; }
+    .tab-content > .tab-pane { display: block !important; opacity: 1 !important; page-break-inside: avoid; }
+    .tab-pane::before { content: attr(data-print-title); display: block;
+                        font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 .5rem; }
+  }
 </style>
 </head>
-<body>
-<div class="wrap">
 
-<header class="hero">
-  <p class="kicker">EXPLAINER · execução 2026-08-26 · dsh-guard-messenger</p>
-  <h1>Painel Remote Access: status ao vivo a cada 5 s, chip Online/Offline e fim do bloco "Uso recente"</h1>
-  <p class="sub">O que foi feito, por que foi feito e como foi verificado — explicado em português, do zero, com termos definidos onde aparecem. Nada aqui foi inventado: tudo vem do registro de fatos da execução.</p>
-  <div class="badges">
-    <span class="badge"><span class="dot ok"></span> Gates <b>PASS</b> (build ×3, lint 0 erros, typecheck)</span>
-    <span class="badge">Testes do client <b>19/19</b></span>
-    <span class="badge">Suíte total <b>1933</b> · 6 falhas ambientais pré-existentes</span>
-    <span class="badge"><b>4</b> commits em <code>main</code></span>
-    <span class="badge">Refresh <b>15 s → 5 s</b></span>
+<body class="bg-body">
+
+<nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
+  <div class="container">
+    <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">vv2.0 · 2026-08-28</span>
   </div>
-</header>
+</nav>
 
-<!-- ===================== 1. RESUMO ===================== -->
-<section id="resumo">
-  <h2><span class="num">1.</span> Resumo em um parágrafo</h2>
-  <p>
-    Nesta execução o <strong>painel "Remote Access"</strong> do <code>dsh-guard-messenger</code>
-    (a tela dentro do modal de settings do DSH que cria o bot, pareia e comanda o acesso ao
-    harness pelo Telegram) foi reformulado para responder a três pedidos do usuário:
-    (a) <strong>remover</strong> o bloco "Uso recente" que mostrava valores indevidos abaixo da
-    sidebar esquerda; (b) fazer o botão destrutivo "Desfazer parear" — que antes confirmava e não
-    fazia nada — disparar um <strong>refresh completo com checagem ao vivo</strong> do bot; e
-    (c) fazer o painel <strong>atualizar sozinho a cada 5 s</strong> (antes 15 s) enquanto a aba
-    de settings estiver aberta. Além disso, um novo <strong>chip de status Online/Offline</strong>
-    no cabeçalho do painel mostra, com motivo, se o bot ainda existe e está conectado. O trabalho
-    foi entregue em <strong>4 commits</strong> na <code>main</code>, passou pelos <strong>gates</strong>
-    de qualidade (build, lint, typecheck e testes) e pelos <strong>testes do client 19/19</strong> —
-    as 6 falhas da suíte completa são <strong>ambientais e pré-existentes</strong> no macOS, não
-    regressões. Este documento explica cada pedaço disso.
-  </p>
-  <details class="fold">
-    <summary>Para quem está chegando agora: o que é esse painel, afinal?</summary>
-    <div class="fold-body">
-      <p>
-        <span class="fold-tag">contexto</span>
-        O <code>dsh-guard-messenger</code> é um plugin do harness que permite comandar o DSH pelo
-        Telegram. O <strong>painel "Remote Access"</strong> é a parte gráfica disso: uma trilha de
-        três passos na tela de settings — (1) criar o bot com o @BotFather, (2) parear com o
-        Telegram, (3) usar o acesso. Quando o usuário reclama da tela, é deste painel que ele está
-        falando. Nesta execução, nada de novo foi "inventado" no produto: o que mudou foi o
-        comportamento da tela (atualização, chip de status) e a remoção de um bloco que não devia
-        aparecer.
-      </p>
+<main class="container py-4" style="max-width: 62rem">
+
+  <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
+    <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
+    <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
+    <p class="lead text-white-50 mb-3">Messenger multi-provedor: Telegram desacoplado + provedor Discord (sem SDK), dispatcher de agentes no host com allowlist e confirmação 2 etapas, status de agents no bot e no painel, docs completas e 2642 testes.</p>
+    <div class="d-flex flex-wrap gap-2">
+      <span class="badge badge-accent">vv2.0</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-28</span>
+      <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
-  </details>
-</section>
+  </header>
 
-<!-- ===================== 2. POR QUÊ ===================== -->
-<section id="porque">
-  <h2><span class="num">2.</span> Por quê: os 3 pedidos do usuário</h2>
-  <p>
-    Tudo começou com três reclamações/pedidos em português. Cada um virou uma decisão de
-    implementação. Os trechos abaixo são as <strong>citações exatas</strong> do registro de fatos.
-  </p>
-
-  <div class="card">
-    <h3>Pedido 1 — "mostra valores na tela que não deveriam estar embaixo do left sidebar — remova aquilo"</h3>
-    <p>
-      Quando o usuário adiciona a skill e rola a tela, aparecem valores que não deveriam estar
-      visíveis abaixo da sidebar esquerda. A interpretação (ver seção
-      <a href="#decisoes">Decisões autônomas</a>) foi que o bloco <strong>"Uso recente"</strong>
-      do Passo 3 — com KPIs como "Conexões ativas" e "Sessões vivas", lista de sessões e rodapé —
-      era o responsável. Ele foi <strong>removido</strong>, e o client deixou de chamar o endpoint
-      <code>GET /access</code> que alimentava esse bloco.
-    </p>
-  </div>
-
-  <div class="card">
-    <h3>Pedido 2 — "Os valores sincronizados não atualizam toda vez que clico no remove control — quero ver se o bot ainda existe, se está conectado"</h3>
-    <p>
-      O "remove control" foi interpretado como a ação destrutiva <strong>"Desfazer parear"</strong>
-      (seção Avançado do Passo 3), que antes <strong>confirmava e não fazia nada</strong>. Agora,
-      ao confirmar, o painel dispara um <strong>refresh completo</strong> + <strong>getMe forçado</strong>
-      (<code>buscarPrivacidade(true)</code>), ou seja: uma checagem ao vivo para responder "o bot
-      ainda existe? está conectado?". E o novo <strong>chip Online/Offline</strong> no cabeçalho
-      passa a refletir isso imediatamente — sem esperar o próximo ciclo de atualização.
-    </p>
-  </div>
-
-  <div class="card">
-    <h3>Pedido 3 — "Enquanto a página do menu de settings estiver aberta, a cada 5s faça a requestada para atualizar o status atual"</h3>
-    <p>
-      O refresh automático do painel (o <em>poll</em>) caiu de <strong>15000 ms → 5000 ms</strong>:
-      a cada 5 segundos, enquanto a aba estiver aberta, o painel pergunta ao servidor qual é o
-      status atual. É o "ficar atualizado sozinho" que o usuário pediu.
-    </p>
-  </div>
-
-  <details class="fold">
-    <summary>Por que "polling" a cada 5 s e não outra coisa? (leitura técnica)</summary>
-    <div class="fold-body">
-      <p>
-        <span class="fold-tag">conceito</span>
-        <strong>Polling</strong> (de <em>to poll</em> = sondar/consultar periodicamente) é o padrão
-        em que o cliente pergunta ao servidor em intervalos fixos se há novidade — o oposto de
-        <em>push</em>, onde o servidor avisa o cliente. É simples e robusto para uma tela de
-        settings. O usuário pediu explicitamente "a cada 5s", então o intervalo foi reduzido de
-        15 s para 5 s. Um detalhe importante registrado nos fatos: o poll de 5 s <strong>não</strong>
-        significa bater no <code>getMe</code> do Telegram a cada 5 s — isso seria caro demais; por
-        isso existe um <strong>cache curto</strong> de privacidade no servidor (os comentários sobre
-        esse cache foram justamente o que a Onda 3 corrigiu, veja a seção
-        <a href="#mudou">O que mudou</a>).
-      </p>
-    </div>
-  </details>
-</section>
-
-<!-- ===================== 3. O QUE MUDOU ===================== -->
-<section id="mudou">
-  <h2><span class="num">3.</span> O que mudou: os 4 commits</h2>
-  <p>
-    O trabalho foi entregue em <strong>4 commits</strong> integrados na <code>main</code> —
-    um por onda de trabalho (a integração de cada onda usou <strong>squash-merge</strong>, veja o
-    <a href="#termos">glossário</a>). Na ordem:
-  </p>
-
-  <ul class="commit-list">
-    <li>
-      <div class="hash">e48ec49</div>
-      <div class="msg">onda1-painel-status — o coração da mudança</div>
-      <div>
-        Painel Remote Access: <strong>poll 5 s</strong>, <strong>refresh imediato no remove
-        control</strong>, <strong>chip Online/Offline</strong> e remoção do bloco
-        <strong>"Uso recente"</strong>. É aqui que os 3 pedidos do usuário ganham código.
-      </div>
-      <div class="files">arquivos: client/index.ts · client/client.d.ts · test/unit/client/index.test.ts</div>
+  <!-- ABAS
+       Regras que não podem ser quebradas:
+       · <ul role="tablist"> e cada <button role="tab">
+       · button.id  ←→  tabpanel.aria-labelledby
+       · button.data-bs-target ←→ #id do tabpanel (e aria-controls com o mesmo id, sem #)
+       · exatamente UM botão .active + UM painel .show.active
+       O Bootstrap já faz navegação por seta/Home/End no tablist; não reimplemente. -->
+  <ul class="nav nav-tabs" id="doc-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="tab-visao" data-bs-toggle="tab" data-bs-target="#pane-visao"
+              type="button" role="tab" aria-controls="pane-visao" aria-selected="true">
+        <i class="bi bi-eye me-1"></i>Visão geral
+      </button>
     </li>
-    <li>
-      <div class="hash">1a5f43f</div>
-      <div class="msg">onda2-docs-painel — a documentação acompanha</div>
-      <div>
-        Documentação atualizada para refletir a nova realidade: refresh de 5 s, bloco "Uso recente"
-        removido, chip Online/Offline e o texto do "Desfazer parear".
-      </div>
-      <div class="files">arquivos: docs/PANEL-TELEGRAM.md · docs/ux/02-CONTRATO-PAINEL.md</div>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-ondas" data-bs-toggle="tab" data-bs-target="#pane-ondas"
+              type="button" role="tab" aria-controls="pane-ondas" aria-selected="false">
+        <i class="bi bi-layers me-1"></i>Ondas
+      </button>
     </li>
-    <li>
-      <div class="hash">4f2d100</div>
-      <div class="msg">onda3-fix-comentarios — documentação no código</div>
-      <div>
-        2 comentários em <code>src/index.ts</code> corrigidos de <strong>~15 s → ~5 s</strong>:
-        os comentários sobre o cache de privacidade ainda diziam o intervalo antigo, e passaram a
-        dizer o novo — comentário certo evita que o próximo programador entenda errado o código.
-      </div>
-      <div class="files">arquivos: src/index.ts</div>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-arquivos" data-bs-toggle="tab" data-bs-target="#pane-arquivos"
+              type="button" role="tab" aria-controls="pane-arquivos" aria-selected="false">
+        <i class="bi bi-files me-1"></i>Arquivos
+      </button>
     </li>
-    <li>
-      <div class="hash">5f90386</div>
-      <div class="msg">test-onda1-painel-coverage — provar que funciona</div>
-      <div>
-        <strong>+8 testes</strong> no client: bordas do <code>chipDoBot</code>,
-        <code>formatarContagem</code>, <strong>fallbacks de CSRF</strong>, <code>apiPost</code> e um
-        smoke. Foi isso que levou o client a <strong>19/19 testes passando</strong>.
-      </div>
-      <div class="files">arquivos: test/unit/client/index.test.ts</div>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-depara" data-bs-toggle="tab" data-bs-target="#pane-depara"
+              type="button" role="tab" aria-controls="pane-depara" aria-selected="false">
+        <i class="bi bi-arrow-left-right me-1"></i>De-Para
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-decisoes" data-bs-toggle="tab" data-bs-target="#pane-decisoes"
+              type="button" role="tab" aria-controls="pane-decisoes" aria-selected="false">
+        <i class="bi bi-lightbulb me-1"></i>Decisões
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-timeline" data-bs-toggle="tab" data-bs-target="#pane-timeline"
+              type="button" role="tab" aria-controls="pane-timeline" aria-selected="false">
+        <i class="bi bi-clock-history me-1"></i>Timeline
+      </button>
     </li>
   </ul>
 
-  <details class="fold">
-    <summary>O que é uma "onda" e por que um commit por onda?</summary>
-    <div class="fold-body">
-      <p>
-        <span class="fold-tag">processo</span>
-        O orquestrador autônomo que conduziu esta execução divide o trabalho em <strong>ondas</strong>
-        paralelas e isoladas (cada uma numa <strong>worktree</strong> própria — ver glossário).
-        Cada onda implementa uma fatia coerente (aqui: Onda 1 = painel, Onda 2 = docs, Onda 3 =
-        comentários, mais o commit de cobertura de testes). Depois de passar pelas revisões e pelos
-        gates, a onda é integrada na <code>main</code> <strong>uma a uma</strong> — por
-        <strong>squash-merge</strong>, que "achata" os commits da onda num único commit limpo. É
-        por isso que o histórico mostra exatamente 4 commits com mensagens que contam a história.
-      </p>
+  <div class="tab-content border border-top-0 rounded-bottom p-4" id="doc-tabs-content">
+
+    <!-- ══════════════ ABA 1 · VISÃO GERAL ══════════════ -->
+    <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
+         aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
+      <h2 class="h4 pane-title">Resumo da execução</h2>
+      <p class="text-body-secondary">Messenger multi-provedor: Telegram desacoplado + provedor Discord (sem SDK), dispatcher de agentes no host com allowlist e confirmação 2 etapas, status de agents no bot e no painel, docs completas e 2642 testes.</p>
+
+      <div class="alert alert-primary d-flex gap-2" role="alert">
+        <i class="bi bi-info-circle-fill flex-shrink-0"></i>
+        <div><strong>O que é este documento:</strong> o EXPLAINER gerado pelo deep-orchestrator na fase COMMIT-FINAL, ao fim de cada execução. Mostra o de-para (antes/depois) de tudo que foi feito: ondas, worktrees, arquivos modificados, decisões autônomas e timeline.</div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-6 col-lg-4">
+          <div class="card h-100 text-center">
+            <div class="card-body py-4">
+              <i class="bi bi-layers fs-3 stat-value"></i>
+              <div class="display-6 fw-bold stat-value">6</div>
+              <div class="text-body-secondary small">Ondas executadas</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-lg-4">
+          <div class="card h-100 text-center">
+            <div class="card-body py-4">
+              <i class="bi bi-robot fs-3 stat-value"></i>
+              <div class="display-6 fw-bold stat-value">49</div>
+              <div class="text-body-secondary small">Sub-agentes</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-lg-4">
+          <div class="card h-100 text-center">
+            <div class="card-body py-4">
+              <i class="bi bi-git-commit fs-3 stat-value"></i>
+              <div class="display-6 fw-bold stat-value">22</div>
+              <div class="text-body-secondary small">Commits (squash)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="h4 pane-title mt-5">Como este documento é gerado</h2>
+      <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
+<pre><code class="language-bash"># Gera o explainer a partir do template
+./scripts/generate-explainer.sh &gt; EXPLAINER.html
+# Ou preenche manualmente os placeholders v2.0, 2026-08-28, main, ...</code></pre>
+      <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
+
+      <details class="mt-4">
+        <summary class="text-body-secondary">Placeholders usados na geração</summary>
+        <div class="table-responsive mt-2">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr><th scope="col">Placeholder</th><th scope="col">Onde aparece</th><th scope="col">Preenchido com</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>&#123;&#123;VERSION&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Versão do orquestrador</td></tr>
+              <tr><td><code>&#123;&#123;DATE&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Data da execução</td></tr>
+              <tr><td><code>&#123;&#123;BRANCH&#125;&#125;</code></td><td>Hero, rodapé</td><td>Branch principal</td></tr>
+              <tr><td><code>&#123;&#123;TASK_SUMMARY&#125;&#125;</code></td><td>Visão geral</td><td>Resumo da tarefa</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_WAVES&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de ondas</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_AGENTS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de sub-agentes</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_COMMITS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de commits</td></tr>
+              <tr><td><code>&#123;&#123;WAVES_TABLE&#125;&#125;</code></td><td>Aba Ondas</td><td>Tabela HTML de ondas (Onda | Worktree | Tarefas | Commits | Status)</td></tr>
+              <tr><td><code>&#123;&#123;FILES_TABLE&#125;&#125;</code></td><td>Aba Arquivos</td><td>Tabela HTML de arquivos modificados (Arquivo | Tipo | Diff)</td></tr>
+              <tr><td><code>&#123;&#123;COMMITS_LIST&#125;&#125;</code></td><td>Aba Arquivos</td><td>Lista de commits squash</td></tr>
+              <tr><td><code>&#123;&#123;BEFORE_AFTER&#125;&#125;</code></td><td>Aba De-Para</td><td>Cards Antes/Depois + seções de-para adicionais</td></tr>
+              <tr><td><code>&#123;&#123;IMPACT&#125;&#125;</code></td><td>Aba De-Para</td><td>Lista de impactos da execução</td></tr>
+              <tr><td><code>&#123;&#123;CAPABILITIES&#125;&#125;</code></td><td>Aba De-Para</td><td>Grid de novas capacidades</td></tr>
+              <tr><td><code>&#123;&#123;DECISIONS&#125;&#125;</code></td><td>Aba Decisões</td><td>Lista de decisões autônomas</td></tr>
+              <tr><td><code>&#123;&#123;TIMELINE&#125;&#125;</code></td><td>Aba Timeline</td><td>Linha do tempo da execução</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
-  </details>
-</section>
 
-<!-- ===================== 4. FIGURA 1 ===================== -->
-<section id="figura1">
-  <h2><span class="num">4.</span> Figura 1 — o fluxo do painel, antes e depois</h2>
-  <p>O diagrama abaixo resume o antes/depois da tela — é a "foto" das três mudanças pedidas.</p>
+    <!-- ══════════════ ABA 2 · ONDAS EXECUTADAS ══════════════ -->
+    <div class="tab-pane fade" id="pane-ondas" role="tabpanel"
+         aria-labelledby="tab-ondas" tabindex="0" data-print-title="Ondas executadas">
+      <h2 class="h4 pane-title">Ondas executadas</h2>
+      <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
-  <figure>
-<pre class="diagram">
- ANTES (comportamento original)                        DEPOIS (após a Onda 1)
- ────────────────────────────────                       ────────────────────────────────
- · painel atualiza a cada 15 s                         · painel atualiza a cada 5 s
-                                                         (enquanto a aba de settings está aberta)
- · bloco "Uso recente" aparece na tela                 · bloco "Uso recente" REMOVIDO
-   (KPIs "Conexões ativas" / "Sessões vivas",            (o client não chama mais GET /access)
-    lista de sessões e rodapé) — são os
-    "valores que não deveriam estar embaixo
-    da left sidebar"
- · sem indicador de estado do bot                      · NOVO chip de cabeçalho:
-                                                         ● Online   (bot existe / conectado)
-                                                         ○ Offline  (com motivo exibido)
-                                                         (via GET /telegram)
- · "Desfazer parear" confirma e não faz nada           · "Desfazer parear" → refresh completo
-                                                         + getMe FORÇADO
-                                                         (buscarPrivacidade(true)) →
-                                                         chip atualiza IMEDIATAMENTE
+<table class="table table-sm table-striped align-middle mb-0">
+  <thead>
+    <tr>
+      <th scope="col">Onda</th>
+      <th scope="col">Entregas principais</th>
+      <th scope="col">Commits</th>
+      <th scope="col" class="text-end">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="fw-semibold">Onda 1</span><div class="text-body-secondary small">Envelope IPC V2</div></td>
+      <td>from/chat string, herança Telegram neutralizada, migração aditiva do state.json</td>
+      <td>3</td>
+      <td class="text-end"><span class="badge badge-soft text-success">Integrada</span></td>
+    </tr>
+    <tr>
+      <td><span class="fw-semibold">Onda 2</span><div class="text-body-secondary small">Host e painel provider-aware</div></td>
+      <td>provider nas respostas, painel sem acoplamento, botão de provider no cartão</td>
+      <td>5</td>
+      <td class="text-end"><span class="badge badge-soft text-success">Integrada</span></td>
+    </tr>
+    <tr>
+      <td><span class="fw-semibold">Onda 3</span><div class="text-body-secondary small">Provedor Discord sem SDK</div></td>
+      <td>REST fetch + WebSocket nativo, ProviderError canônico, boot genérico, 96 testes</td>
+      <td>4</td>
+      <td class="text-end"><span class="badge badge-soft text-success">Integrada</span></td>
+    </tr>
+    <tr>
+      <td><span class="fw-semibold">Onda 4</span><div class="text-body-secondary small">Dispatcher de agentes no host</div></td>
+      <td>ctx.subagents real, allowlist default-deny, teto 1..32, nonce 2 etapas, agent.report</td>
+      <td>4</td>
+      <td class="text-end"><span class="badge badge-soft text-success">Integrada</span></td>
+    </tr>
+    <tr>
+      <td><span class="fw-semibold">Onda 5</span><div class="text-body-secondary small">Superfície de agentes</div></td>
+      <td>/agente /agentes /parar-agente, difusão proativa do agent.report, 48 testes novos</td>
+      <td>3</td>
+      <td class="text-end"><span class="badge badge-soft text-success">Integrada</span></td>
+    </tr>
+    <tr>
+      <td><span class="fw-semibold">Onda 6</span><div class="text-body-secondary small">Docs + painel + skills</div></td>
+      <td>docs 9/9, bloco Agentes no painel, skills atualizadas com Discord 2º provedor</td>
+      <td>3</td>
+      <td class="text-end"><span class="badge badge-soft text-success">Integrada</span></td>
+    </tr>
+    <tr>
+      <td><span class="fw-semibold">Fixes</span><div class="text-body-secondary small">Transversais, por onda</div></td>
+      <td>4 fixes de revisão adversarial (boot genérico, HIGH do revisor, fiber-lifo, report caps) + 3 testes de subwave</td>
+      <td>7</td>
+      <td class="text-end"><span class="badge badge-soft text-warning">Fix aplicado</span></td>
+    </tr>
+  </tbody>
+</table>
 
- ritmo de atualização (linha do tempo):
-
-  ANTES:   15 s   ●───────────────●───────────────●───────────────●
-  DEPOIS:   5 s   ●───────●───────●───────●───────●───────●───────●   (aba aberta)
-</pre>
-    <figcaption>
-      <b>Legenda-afirmação:</b> com a Onda 1, o painel passou a se atualizar sozinho a cada 5 s
-      (era 15 s), o bloco "Uso recente" deixou de existir na tela, um chip Online/Offline passou a
-      mostrar o estado do bot com motivo, e a ação "Desfazer parear" — antes inerte — agora dispara
-      uma checagem ao vivo imediata. Todas essas afirmações vêm do registro de fatos da execução.
-    </figcaption>
-  </figure>
-
-  <details class="fold">
-    <summary>Mas como o chip decide "Online" vs "Offline"? (sem adivinhar)</summary>
-    <div class="fold-body">
-      <p>
-        <span class="fold-tag">detalhe</span>
-        O chip (<code>chipDoBot</code>) consulta o estado do token e o estado do Telegram via
-        <code>GET /telegram</code> e mostra um <strong>motivo</strong> ao lado do status. O ponto
-        de segurança registrado no código (e coerente com o "com motivo" dos fatos) é que o
-        indicador "verde/encontrável" <strong>só é exibido com confirmação real</strong> do
-        <code>getMe</code> do Telegram — nunca se assume verde sem essa confirmação. Na confirmação
-        destrutiva ("Desfazer parear"), o <code>getMe</code> é <strong>forçado</strong> justamente
-        para responder "o bot ainda existe?" na hora, sem depender de cache.
-      </p>
+      <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
+      <div class="d-flex flex-wrap gap-2">
+        <span class="badge badge-ok">Concluída</span>
+        <span class="badge badge-warn">Parcial</span>
+        <span class="badge badge-danger">Bloqueada</span>
+      </div>
     </div>
-  </details>
-</section>
 
-<!-- ===================== 5. GLOSSÁRIO ===================== -->
-<section id="termos">
-  <h2><span class="num">5.</span> Glossário: os termos técnicos usados nesta explicação</h2>
-  <p>
-    Cada termo é definido em linguagem simples, com o papel que teve <em>nesta</em> execução.
-  </p>
+    <!-- ══════════════ ABA 3 · ARQUIVOS MODIFICADOS ══════════════ -->
+    <div class="tab-pane fade" id="pane-arquivos" role="tabpanel"
+         aria-labelledby="tab-arquivos" tabindex="0" data-print-title="Arquivos modificados">
+      <h2 class="h4 pane-title">Arquivos modificados</h2>
+      <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
-  <table>
-    <thead>
-      <tr><th style="width:180px">Termo</th><th>Definição didática</th><th>Papel nesta execução</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>poll</code> / polling</td>
-        <td>O cliente pergunta ao servidor, de tempos em tempos, se há novidade ("você ainda está aí? qual o status?").</td>
-        <td>O intervalo do poll do painel caiu de 15 s para 5 s (pedido 3 do usuário).</td>
-      </tr>
-      <tr>
-        <td><code>getMe</code></td>
-        <td>Método da Bot API do Telegram que devolve os dados do próprio bot — ou seja, a resposta à pergunta "o bot ainda existe? qual o @username?".</td>
-        <td>Checagem ao vivo que o "Desfazer parear" agora força (<code>buscarPrivacidade(true)</code>) e que confirma o status real antes do verde.</td>
-      </tr>
-      <tr>
-        <td><code>CSRF</code></td>
-        <td>Proteção contra "Cross-Site Request Forgery": um token que prova que o POST veio do próprio painel e não de um site malicioso em nome do usuário. Todo POST do client envia o header <code>x-dsh-csrf</code>.</td>
-        <td>Os +8 testes da cobertura incluíram os <strong>fallbacks de CSRF</strong> (quando a fonte preferida do token falha).</td>
-      </tr>
-      <tr>
-        <td><code>squash-merge</code></td>
-        <td>Integração que junta ("achata") vários commits de uma branch em um único commit na branch de destino — histórico limpo e narrativo.</td>
-        <td>Método de integração das ondas na <code>main</code> (registrado no cabeçalho dos fatos: "commits squash em main").</td>
-      </tr>
-      <tr>
-        <td><code>worktree</code></td>
-        <td>Checkout isolado do mesmo repositório: uma segunda pasta de trabalho ligada ao mesmo <code>.git</code>, que permite trabalhar em paralelo sem quebrar a árvore principal.</td>
-        <td>Mecanismo do orquestrador que isola cada onda; as falhas ambientais foram "reproduzidas em árvore limpa" — um checkout limpo, sem o trabalho em andamento.</td>
-      </tr>
-      <tr>
-        <td><code>gate</code></td>
-        <td>"Portão" de qualidade: um conjunto de checagens que precisa passar antes de a mudança ser aceita (aqui: build, lint, typecheck, testes).</td>
-        <td>Todos os gates passaram: build (tsc ×3) PASS, lint 0 erros (146 warnings pré-existentes), typecheck PASS.</td>
-      </tr>
-      <tr>
-        <td><code>chip de status</code></td>
-        <td>Pequeno indicador visual em formato de "pílula" que mostra um estado — aqui Online/Offline, com motivo.</td>
-        <td>Novo <code>chipDoBot</code> no cabeçalho do painel (pedido 2).</td>
-      </tr>
-      <tr>
-        <td><code>onda</code></td>
-        <td>Rodada de trabalho do orquestrador: uma fatia coerente de mudança, implementada e revisada em isolamento.</td>
-        <td>Onda 1 (painel), Onda 2 (docs), Onda 3 (comentários) — cada uma virou um commit.</td>
-      </tr>
-      <tr>
-        <td><code>REPLAN</code></td>
-        <td>Replanejamento: quando a revisão encontra problemas, o orquestrador replaneja a estratégia até convergir.</td>
-        <td>Registrado como "REPLAN convergência" na verificação — o plano convergiu.</td>
-      </tr>
-      <tr>
-        <td><code>drift</code> (client.d.ts)</td>
-        <td>Quando as declarações de tipos (<code>.d.ts</code>) divergem do código real — um dos problemas que a revisão adversarial encontrou.</td>
-        <td>1 dos 2 HIGHs corrigidos na revisão da Onda 1.</td>
-      </tr>
-      <tr>
-        <td><code>asserção vácua</code></td>
-        <td>Um teste que "passa" sem testar nada de verdade (ex.: comparar uma coisa consigo mesma). É pior que não ter teste, porque dá falsa confiança.</td>
-        <td>2º HIGH corrigido na revisão da Onda 1.</td>
-      </tr>
-      <tr>
-        <td><code>smoke</code> (teste)</td>
-        <td>Teste rápido de "fumaça": exercita o fluxo principal para detectar quebra grave antes de rodar a suíte inteira.</td>
-        <td>Um dos +8 testes adicionados na cobertura do client.</td>
-      </tr>
-    </tbody>
-  </table>
-</section>
+<table class="table table-sm table-striped align-middle mb-0">
+  <thead>
+    <tr>
+      <th scope="col">Área</th>
+      <th scope="col">Destaques</th>
+      <th scope="col" class="text-end">Arquivos</th>
+      <th scope="col" class="text-end">Diff</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/</code></td>
+      <td>Contratos IPC V2 (envelope string), dispatcher de agentes (registry + harness), env provider-aware</td>
+      <td class="text-end">21</td>
+      <td class="text-end"><span class="diff-plus">+2440</span> <span class="diff-minus">−374</span></td>
+    </tr>
+    <tr>
+      <td><code>worker/</code></td>
+      <td>Provedores: registry + discord/** (8 arquivos), surface de agentes, errors canônico</td>
+      <td class="text-end">25</td>
+      <td class="text-end"><span class="diff-plus">+3093</span> <span class="diff-minus">−158</span></td>
+    </tr>
+    <tr>
+      <td><code>client/</code></td>
+      <td>Cartão 🤖 Agentes no painel (GET /agents, POST cancel CSRF)</td>
+      <td class="text-end">3</td>
+      <td class="text-end"><span class="diff-plus">+662</span> <span class="diff-minus">−78</span></td>
+    </tr>
+    <tr>
+      <td><code>test/</code></td>
+      <td>Unit discord 96, superfície +48, dispatcher 36, e2e boot genérico e fiber-lifo</td>
+      <td class="text-end">61</td>
+      <td class="text-end"><span class="diff-plus">+11735</span> <span class="diff-minus">−332</span></td>
+    </tr>
+    <tr>
+      <td><code>docs/</code></td>
+      <td>AGENTS.md novo, PROVIDERS, INSTALL, ONBOARDING-DISCORD, TROUBLESHOOTING, TESTING, ARCHITECTURE, ux</td>
+      <td class="text-end">9</td>
+      <td class="text-end"><span class="diff-plus">+967</span> <span class="diff-minus">−91</span></td>
+    </tr>
+    <tr>
+      <td><code>.agents/skills/</code></td>
+      <td>dsh-provider-bot e dsh-telegram-provider atualizadas (envelope V2, Discord 2º provedor)</td>
+      <td class="text-end">2</td>
+      <td class="text-end"><span class="diff-plus">+232</span> <span class="diff-minus">−105</span></td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr class="fw-semibold">
+      <td>Total</td>
+      <td class="text-body-secondary">Toda a execução (base 40e0895 → HEAD fb83add)</td>
+      <td class="text-end">123</td>
+      <td class="text-end"><span class="diff-plus">+19322</span> <span class="diff-minus">−1175</span></td>
+    </tr>
+  </tfoot>
+</table>
 
-<!-- ===================== 6. COMO FOI VERIFICADO ===================== -->
-<section id="verificado">
-  <h2><span class="num">6.</span> Como foi verificado: gates, testes e revisões</h2>
+      <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
+      <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
-  <h3>6.1 — Os gates de qualidade</h3>
-  <table>
-    <thead>
-      <tr><th>Checagem</th><th>Resultado</th><th>Leitura</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>Build (<code>tsc</code> ×3)</td>
-        <td><span class="pill on">PASS</span></td>
-        <td>O TypeScript compilou sem erros nas três configurações de build.</td>
-      </tr>
-      <tr>
-        <td>Lint (oxlint + eslint)</td>
-        <td><span class="pill on">0 erros</span></td>
-        <td>Nenhum erro novo; os <strong>146 warnings são pré-existentes</strong> — não vieram desta execução.</td>
-      </tr>
-      <tr>
-        <td>Typecheck</td>
-        <td><span class="pill on">PASS</span></td>
-        <td>Checagem de tipos sem erros.</td>
-      </tr>
-      <tr>
-        <td>Testes do client</td>
-        <td><span class="pill on">19/19</span></td>
-        <td>100% dos testes do client passando — incluindo os +8 novos da cobertura.</td>
-      </tr>
-      <tr>
-        <td>Suíte completa</td>
-        <td><span class="pill gray">1933 testes</span> · <span class="pill off">6 falhas</span></td>
-        <td>As 6 falhas são <strong>ambientais pré-existentes</strong> (detalhes abaixo) — reproduzidas em árvore limpa, ou seja, <strong>não são regressões</strong> desta mudança.</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h3>6.2 — As 6 falhas ambientais (e por que não são culpa desta mudança)</h3>
-  <div class="highlight red">
-    <p>
-      As 6 falhas da suíte completa acontecem <strong>no macOS</strong> por motivos de ambiente, e
-      foram <strong>reproduzidas em árvore limpa</strong> — um checkout sem nenhuma das mudanças
-      desta execução. Se acontecem com e sem a mudança, não são regressões. O registro de fatos
-      as agrupa assim:
-    </p>
-    <ul class="clean">
-      <li><strong>proc:</strong> <code>SIGKILL</code>/grupo-sessão via <code>ps</code> e varredura de órfão — problemas de como processos são gerenciados no macOS;</li>
-      <li><strong>tunnel:</strong> pidfile reutilizado e handshake do proxy h4 — problemas do túnel no ambiente;</li>
-      <li><strong>QoS:</strong> rotação — comportamento de qualidade de serviço que roda em rotação.</li>
-    </ul>
-  </div>
-
-  <h3>6.3 — As revisões</h3>
-  <ul class="clean">
-    <li>
-      <strong>Revisão adversarial da Onda 1:</strong> começou como WARNING e evoluiu para
-      <strong>2 HIGHs que foram corrigidos</strong> antes de integrar:
-      <ul class="clean">
-        <li><strong>client.d.ts drift</strong> — os tipos declarados divergiam do código;</li>
-        <li><strong>asserções vácua</strong> — testes que passavam sem testar de verdade.</li>
-      </ul>
-    </li>
-    <li><strong>Revisor do diff de testes:</strong> <span class="pill on">APPROVE</span> — o diff de testes da cobertura foi aprovado.</li>
-    <li><strong>REPLAN:</strong> convergência — o replanejamento do orquestrador convergiu (sem ciclos de revisão infinitos).</li>
-  </ul>
-
-  <h3>6.4 — Figura 2: o caminho de cada onda até a main</h3>
-  <figure>
-<pre class="diagram">
-  trabalho isolado        implementação        revisão            gate              integração
-  ─────────────────       ──────────────       ─────────          ─────             ──────────
-  ┌──────────────┐   →   ┌──────────────┐  →  ┌──────────────┐ → ┌──────────────┐ → ┌──────────────┐
-  │ worktree     │       │ Onda N       │     │ revisão      │   │ build (tsc×3) │   │ squash-merge │
-  │ (árvore      │       │ (ex.: painel │     │ adversarial  │   │ lint 0 erros  │   │ 1 commit     │
-  │  isolada)    │       │  Remote      │     │ (WARNING →   │   │ typecheck     │   │ limpo em     │
-  │              │       │  Access)     │     │  2 HIGHs      │   │ testes        │   │ main         │
-  │              │       │              │     │  corrigidos)  │   │ (19/19 client)│   │              │
-  └──────────────┘       └──────────────┘  →  └──────────────┘ → └──────────────┘ → └──────────────┘
-                                                                      │
-                                                              só passa se TUDO
-                                                              estiver verde
-</pre>
-    <figcaption>
-      <b>Legenda-afirmação:</b> cada onda foi implementada em isolamento, revisada (a da Onda 1
-      teve 2 problemas HIGH corrigidos antes de prosseguir) e só foi integrada na <code>main</code>
-      depois de passar pelo gate completo — build, lint, typecheck e testes. O resultado no
-      histórico são 4 commits limpos, um por entrega.
-    </figcaption>
-  </figure>
-</section>
-
-<!-- ===================== 7. DECISÕES AUTÔNOMAS ===================== -->
-<section id="decisoes">
-  <h2><span class="num">7.</span> Decisões autônomas: o que foi inferido (e por quê)</h2>
-  <p>
-    Os pedidos do usuário eram em linguagem natural. O orquestrador teve que <strong>interpretar</strong>
-    o que cada frase significava no contexto do código. Quatro inferências foram registradas nos
-    fatos:
-  </p>
-
-  <div class="grid2">
-    <div class="card">
-      <h3>"remove control" = "Desfazer parear"</h3>
-      <p>
-        No painel, a única ação destrutiva que se encaixa em "remove control" é o botão
-        <strong>"Desfazer parear"</strong> (seção Avançado do Passo 3). A inferência foi
-        confirmada pelo comportamento observado: o botão <strong>confirmava e não fazia nada</strong>.
-        Por isso a correção: confirmar agora dispara refresh completo + getMe forçado.
-      </p>
+<ul class="list-group list-group-flush mb-0">
+  <li class="list-group-item bg-transparent px-0">
+    <div class="mb-2"><span class="badge badge-soft text-primary">Onda 1 · Envelope IPC V2</span> <span class="badge badge-soft text-body-secondary">3 commits</span></div>
+    <div class="mb-1"><code>c61dfcb</code> — envelope IPC V2: from/chat string ponta a ponta, migração aditiva do state.json</div>
+    <div class="mb-1"><code>66f617a</code> — fix onda1: src/index.ts typecheck (widening de ownerUserId/ownerChatId para string)</div>
+    <div class="mb-1"><code>fa9ead3</code> — 56 testes do envelope V2, cobertura 99.68/95.69/99.33, prova anti-Number</div>
+  </li>
+  <li class="list-group-item bg-transparent px-0">
+    <div class="mb-2"><span class="badge badge-soft text-success">Onda 2 · Host e painel provider-aware</span> <span class="badge badge-soft text-body-secondary">5 commits</span></div>
+    <div class="mb-1"><code>5942284</code> — host provider-aware: ProviderId discord, sonda por provedor, tokenVar DISCORD_BOT_TOKEN</div>
+    <div class="mb-1"><code>8b7b4da</code> — painel provider-aware: rótulos por provedor, consome provider do GET /telegram</div>
+    <div class="mb-1"><code>75c2222</code> — fix onda2: lint 0 erros + provider no GET /telegram (HIGH do revisor)</div>
+    <div class="mb-1"><code>4473ed2</code> — 24 testes do host provider-aware: timeout da sonda, env não vaza token do outro provedor</div>
+    <div class="mb-1"><code>456fdcd</code> — 11 testes da camada painel provider-aware, espelho d.ts, fallback por identidade</div>
+  </li>
+  <li class="list-group-item bg-transparent px-0">
+    <div class="mb-2"><span class="badge badge-soft text-info">Onda 3 · Provedor Discord sem SDK</span> <span class="badge badge-soft text-body-secondary">4 commits</span></div>
+    <div class="mb-1"><code>7eff755</code> — provedor Discord: adaptador completo sem SDK (REST fetch + WebSocket nativo), registry</div>
+    <div class="mb-1"><code>aac5433</code> — fix boot genérico: ProviderError canônico (code numérico), apiRootVar, answer type 7</div>
+    <div class="mb-1"><code>2518dd2</code> — fix e2e flake: barreira aguardarDonoSemeado antes de enfileirar eventos</div>
+    <div class="mb-1"><code>dfd220c</code> — 96 testes do provedor discord + boot genérico, errors.ts 100/100/100</div>
+  </li>
+  <li class="list-group-item bg-transparent px-0">
+    <div class="mb-2"><span class="badge badge-soft text-warning">Onda 4 · Dispatcher de agentes no host</span> <span class="badge badge-soft text-body-secondary">4 commits</span></div>
+    <div class="mb-1"><code>d7a931d</code> — dispatcher no host: intents agent.dispatch/status/cancel + agent.report, ctx.subagents real, nonce 2 etapas</div>
+    <div class="mb-1"><code>4a69d05</code> — fix fiber-lifo: e2e com 6 efeitos (agentes entre controlador e worker)</div>
+    <div class="mb-1"><code>eec2c6c</code> — fix report caps: teto maxRuns derivado (1..32), relatório capado em 64</div>
+    <div class="mb-1"><code>05a1e79</code> — 28 testes do dispatcher, cobertura 99.84/95.63/99.39, paridade estendida</div>
+  </li>
+  <li class="list-group-item bg-transparent px-0">
+    <div class="mb-2"><span class="badge badge-soft text-danger">Onda 5 · Superfície de agentes</span> <span class="badge badge-soft text-body-secondary">3 commits</span></div>
+    <div class="mb-1"><code>e50706c</code> — /agente /agentes /parar-agente, confirmação 2 etapas via nonce reset, difusão proativa do report</div>
+    <div class="mb-1"><code>7a304d2</code> — 25 testes da superfície: prompt 4096/4097, teto 8 FIFO, TTL, difusões múltiplas</div>
+    <div class="mb-1"><code>fb83add</code> — fix onda5: recusa do /agente visível ao dono (carve-out em onError), 4 testes load-bearing</div>
+  </li>
+  <li class="list-group-item bg-transparent px-0">
+    <div class="mb-2"><span class="badge badge-soft text-secondary">Onda 6 · Docs + painel + skills</span> <span class="badge badge-soft text-body-secondary">3 commits</span></div>
+    <div class="mb-1"><code>99e8ec1</code> — docs completas: AGENTS.md novo, PROVIDERS, INSTALL, ONBOARDING-DISCORD, TROUBLESHOOTING, TESTING, ARCHITECTURE, ux</div>
+    <div class="mb-1"><code>abde74b</code> — bloco 🤖 Agentes no painel: GET /agents + POST cancel (CSRF), rótulo de status, 182 testes</div>
+    <div class="mb-1"><code>02d0aa1</code> — skills atualizadas: Discord 2º provedor, envelope V2, ProviderError canônico, boot genérico</div>
+  </li>
+</ul>
     </div>
-    <div class="card">
-      <h3>"valores embaixo da sidebar" = bloco "Uso recente"</h3>
-      <p>
-        Os únicos valores que apareciam abaixo da sidebar esquerda eram o bloco <strong>"Uso
-        recente"</strong> (KPIs "Conexões ativas"/"Sessões vivas" + lista de sessões + rodapé) do
-        Passo 3. A inferência: <strong>remover o bloco</strong> — e, de quebra, o client parou de
-        chamar <code>GET /access</code>, que só existia para alimentá-lo.
-      </p>
-    </div>
-    <div class="card">
-      <h3>"ver se o bot ainda existe, se está conectado" = chip Online/Offline</h3>
-      <p>
-        A forma de responder a essa pergunta na tela foi um <strong>chip de status no cabeçalho</strong>
-        (<code>chipDoBot</code>): Online/Offline via <code>GET /telegram</code>, <strong>com
-        motivo</strong> — e, na confirmação destrutiva, com <code>getMe</code> forçado para não
-        depender de cache.
-      </p>
-    </div>
-    <div class="card">
-      <h3>"a cada 5s" = 15000 ms → 5000 ms</h3>
-      <p>
-        O pedido 3 dizia literalmente "a cada 5s faça a requestada para atualizar o status atual".
-        A inferência foi direta: reduzir o intervalo do refresh automático de <strong>15000 ms para
-        5000 ms</strong>, enquanto a aba de settings estiver aberta.
-      </p>
+
+    <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
+    <div class="tab-pane fade" id="pane-depara" role="tabpanel"
+         aria-labelledby="tab-depara" tabindex="0" data-print-title="De-Para">
+      <h2 class="h4 pane-title">De-Para: o que mudou</h2>
+      <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
+
+<div class="row g-4">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header bg-transparent"><span class="badge badge-soft text-danger">ANTES</span> <span class="fw-semibold">Telegram acoplado ao núcleo</span></div>
+      <div class="card-body">
+        <ul class="mb-0">
+          <li>Envelope IPC com from/chat <strong>numéricos</strong>: IDs de canal do Telegram vazam para o núcleo e o state.json</li>
+          <li>Boot por provedor específico: só telegram, sem registry de provedores</li>
+          <li>Erros de provedor por instanceof, sem código canônico para classificar</li>
+          <li>Sem agentes: nenhum comando, dispatcher ou relatório de run</li>
+          <li>Painel sem estado dos agentes e sem botão de cancelamento</li>
+        </ul>
+      </div>
     </div>
   </div>
-
-  <div class="highlight amber">
-    <p>
-      <strong>Por que registrar isso?</strong> Porque "remove control" e "valores embaixo da
-      sidebar" não são nomes técnicos — são descrições do usuário. Registrar a inferência torna a
-      decisão <em>auditável</em>: se a interpretação estivesse errada, daria para perceber pelo
-      registro e corrigir o rumo. Nenhuma dessas interpretações contradiz o registro de fatos.
-    </p>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header bg-transparent"><span class="badge badge-soft text-success">DEPOIS</span> <span class="fw-semibold">Mensageria neutra + agentic no host</span></div>
+      <div class="card-body">
+        <ul class="mb-0">
+          <li>Envelope IPC V2 <strong>neutro</strong>: from/chat string, provedor declarado nas respostas</li>
+          <li>Boot genérico por provedor: telegram + discord como adapters no registry</li>
+          <li>ProviderError canônico por código numérico — errors.ts com cobertura 100%</li>
+          <li>Dispatcher de agentes no host: allowlist default-deny, nonce 2 etapas, agent.report ≤64 runs</li>
+          <li>Painel com bloco 🤖 Agentes: lista de runs ativos + cancelamento</li>
+        </ul>
+      </div>
+    </div>
   </div>
-</section>
-
-<!-- ===================== 8. TIMELINE ===================== -->
-<section id="timeline">
-  <h2><span class="num">8.</span> Linha do tempo da execução</h2>
-  <div class="kv"><b>FASE 0 (início do planejamento)</b><span>17:38</span></div>
-  <div class="kv"><b>Onda 1 implementada (painel + testes)</b><span>~18:10</span></div>
-  <div class="kv"><b>Revisões (adversarial da Onda 1)</b><span>~18:20</span></div>
-  <div class="kv"><b>Onda 2 (docs do painel)</b><span>~18:30</span></div>
-  <div class="kv"><b>Onda 3 (comentários 15 s → 5 s)</b><span>~19:00</span></div>
-  <div class="kv"><b>Gates, subwaves e COMMIT-FINAL</b><span>até ~19:40</span></div>
-</section>
-
-<!-- ===================== RODAPÉ ===================== -->
-<footer>
-  <p>
-    📡 <strong>EXPLAINER</strong> — documento didático, <em>self-contained</em> (sem dependências
-    externas; diagramas estáticos). Gerado a partir do registro de fatos da execução
-    <code>.deep-orchestrator/run-20260826-173817-99294/explainer/fatos.md</code>. Todo número,
-    pedido, commit, veredito de gate e decisão autônoma citado aqui vem desse registro — nada foi
-    inventado. · <strong>Repositório:</strong> deepseek-harness-mobile · <strong>Execução:</strong>
-    2026-08-26.
-  </p>
-</footer>
-
 </div>
+
+      <h2 class="h4 pane-title">Impacto</h2>
+      <p>O que cada mudança significa para quem usa o deep-orchestrator:</p>
+<div class="row g-4">
+  <div class="col-md-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-title">Desacoplamento de provedores</h6>
+        <p class="card-text small mb-0">Novo provedor = novo adapter no registry. O núcleo, o worker e o painel não conhecem mais o Telegram por nome.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-title">Discord nativo sem SDK</h6>
+        <p class="card-text small mb-0">REST fetch + Gateway WebSocket nativos do Node 24: <strong>0 dependências novas</strong> para um provedor completo.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-title">Agentic no host</h6>
+        <p class="card-text small mb-0">Dispatcher real com ctx.subagents, allowlist default-deny de skills e teto maxRuns 1..32 — fail-closed.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-title">Qualidade</h6>
+        <p class="card-text small mb-0">2642 testes no gate final, cobertura errors.ts 100%, revisão adversarial por onda com todos os HIGHs corrigidos (4 fixes).</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+      <h2 class="h4 pane-title">Novas capacidades</h2>
+<ul class="list-group list-group-flush mb-0">
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> <code>/agente &lt;skill&gt; &lt;prompt&gt;</code> — dispara um run de agente com confirmação em 2 etapas (nonce)</li>
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> <code>/agentes</code> — status dos runs ativos com relatório do agente</li>
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> <code>/parar-agente &lt;id&gt;</code> — cancela um run ativo pelo identificador</li>
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> Painel com bloco 🤖 Agentes — lista de runs + botão de cancelamento (CSRF protegido)</li>
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> Difusão proativa do agent.report quando um run termina, no canal que o pediu</li>
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> Suporte Discord configurável — INSTALL + ONBOARDING-DISCORD com token e apiRootVar</li>
+  <li class="list-group-item bg-transparent px-0"><span class="text-success fw-semibold">✓</span> Skills de bot atualizadas (dsh-provider-bot e dsh-telegram-provider) para o envelope V2</li>
+</ul>
+    </div>
+
+    <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
+    <div class="tab-pane fade" id="pane-decisoes" role="tabpanel"
+         aria-labelledby="tab-decisoes" tabindex="0" data-print-title="Decisões autônomas">
+      <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
+      <p>O orquestrador opera em autonomia total — nenhuma pergunta é feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
+
+<div class="mb-3">
+  <strong>Envelope IPC V2 neutro:</strong> from/chat viram string e o provedor passa a ser declarado — o núcleo deixa de conhecer o Telegram.
+</div>
+<div class="mb-3">
+  <strong>Worker agnóstico de provedor:</strong> boot genérico e ProviderError por código numérico (nunca por instanceof), com sonda por provedor.
+</div>
+<div class="mb-3">
+  <strong>Security fail-closed em agents:</strong> allowlist default-deny de skills, teto maxRuns 1..32 e nonce server-side no host.
+</div>
+<div class="mb-3">
+  <strong>Discord sem SDK:</strong> só REST fetch + WebSocket nativos — zero dependências novas no projeto.
+</div>
+<div class="mb-3">
+  <strong>Sonda de boot por provedor:</strong> criada no boot genérico com apiRootVar por provedor (DISCORD_API_ROOT etc.).
+</div>
+<div class="mb-0">
+  <strong>Revisão adversarial por onda:</strong> revisor em cada onda, todos os HIGHs corrigidos (4 fixes) antes da integração.
+</div>
+    </div>
+
+    <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
+    <div class="tab-pane fade" id="pane-timeline" role="tabpanel"
+         aria-labelledby="tab-timeline" tabindex="0" data-print-title="Timeline">
+      <h2 class="h4 pane-title">Linha do tempo da execução</h2>
+      <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
+
+<div class="position-relative">
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Base 40e0895 <span class="text-body-secondary small">— 2026-08-27 19:39</span></div>
+    <div class="text-body-secondary small">Início da execução (run 20260827-193948-63817): branch main antes do envelope V2</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Onda 1 · Envelope IPC V2 <span class="text-body-secondary small">— 2026-08-27 20:23 · c61dfcb</span></div>
+    <div class="text-body-secondary small">from/chat string ponta a ponta + migração aditiva do state.json</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Onda 2 · Host e painel provider-aware <span class="text-body-secondary small">— 2026-08-27 20:54 · 5942284</span></div>
+    <div class="text-body-secondary small">ProviderId discord, sonda por provedor e rótulos no painel</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Onda 3 · Provedor Discord sem SDK <span class="text-body-secondary small">— 2026-08-27 22:07 · 7eff755</span></div>
+    <div class="text-body-secondary small">REST + WebSocket nativos, ProviderError canônico, boot genérico</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Onda 4 · Dispatcher de agentes no host <span class="text-body-secondary small">— 2026-08-27 23:50 · d7a931d</span></div>
+    <div class="text-body-secondary small">ctx.subagents, allowlist default-deny, nonce 2 etapas, agent.report</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Onda 5 · Superfície de agentes <span class="text-body-secondary small">— 2026-08-28 00:17 · e50706c</span></div>
+    <div class="text-body-secondary small">/agente /agentes /parar-agente e difusão proativa do report</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Onda 6 · Docs + painel + skills <span class="text-body-secondary small">— 2026-08-28 01:07 · 99e8ec1 · abde74b · 02d0aa1</span></div>
+    <div class="text-body-secondary small">docs 9/9, bloco 🤖 Agentes no painel, skills no padrão V2</div>
+  </div>
+  <div class="mb-3 ps-3 border-start border-2">
+    <div class="fw-semibold">Validações val-onda1..val-onda6 <span class="text-body-secondary small">— 2026-08-28 ~01:10–01:20</span></div>
+    <div class="text-body-secondary small">Gate final: 2642 testes (13 falhas ambientais macOS, zero regressão), e2e 19/19 + 5/5 + 4/4, security 136/136</div>
+  </div>
+  <div class="ps-3 border-start border-2 border-success">
+    <div class="fw-semibold text-success">COMMIT-FINAL fb83add <span class="text-body-secondary small">— 2026-08-28 01:22</span></div>
+    <div class="text-body-secondary small">Fix onda5 (recusa visível) integrado; execução encerrada</div>
+  </div>
+</div>
+    </div>
+
+  </div>
+
+  <footer class="text-body-secondary small border-top mt-5 pt-3">
+    Gerado por <strong>deep-orchestrator</strong> vv2.0 · 2026-08-28 · branch main.
+    Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
+  </footer>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
+        integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU"
+        crossorigin="anonymous"></script>
+
+<script>
+/* ── runtime do documento ────────────────────────────────────────────────────
+   Copie este bloco inteiro, sem editar. Ele faz três coisas:
+   1. guarda o código-fonte cru ANTES de qualquer transformação (para o copiar);
+   2. destaca a sintaxe e injeta o botão de copiar;
+   3. liga as abas ao #hash da URL, nos dois sentidos.
+   ────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  // 1. Fonte cru primeiro. Depois do highlight o DOM ganha <span>; textContent ainda
+  //    devolve o texto certo, mas plugins de numeração de linha o contaminam. Guardar
+  //    antes é a única versão que nunca mente.
+  var sources = new WeakMap();
+  document.querySelectorAll('pre > code').forEach(function (code) {
+    sources.set(code, code.textContent.replace(/\n$/, ''));
+  });
+
+  // 2. Highlight. Declare sempre a linguagem na classe: a auto-detecção erra em
+  //    trechos curtos (o mesmo snippet vira "ruby" numa aba e "perl" na outra).
+  if (window.hljs) hljs.highlightAll();
+
+  // Copiar. navigator.clipboard exige contexto seguro; em file:// o comportamento
+  // varia por navegador, então o fallback com execCommand não é opcional.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function () { return true; },
+                                                      function () { return legacyCopy(text); });
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // position:fixed + opacity:0 evita que a página role até o textarea.
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length); // iOS ignora select() sozinho
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  document.querySelectorAll('pre > code').forEach(function (code) {
+    var pre = code.parentElement;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
+    btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+    btn.setAttribute('aria-label', 'Copiar código');
+    btn.addEventListener('click', function () {
+      copyText(sources.get(code) || code.textContent).then(function (ok) {
+        btn.innerHTML = ok ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-x-lg"></i>';
+        btn.classList.toggle('btn-outline-success', ok);
+        btn.classList.toggle('btn-outline-danger', !ok);
+        btn.classList.remove('btn-outline-secondary');
+        setTimeout(function () {
+          btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+          btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
+        }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // 3. Aba ↔ URL. Sem isto, mandar "olha a aba De-Para" exige explicar o clique.
+  var tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
+  if (!tabs.length) return;
+
+  function activateFromHash() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var target = document.querySelector(hash);
+    if (!target) return;
+    // O #hash pode apontar para o painel OU para um título dentro dele.
+    var pane = target.closest('.tab-pane') || (target.classList.contains('tab-pane') ? target : null);
+    if (!pane) return;
+    var trigger = document.querySelector('[data-bs-target="#' + CSS.escape(pane.id) + '"]');
+    if (trigger) bootstrap.Tab.getOrCreateInstance(trigger).show();
+    // O navegador já tentou rolar até o alvo — e falhou, porque naquele instante o
+    // painel ainda era display:none. Agora que apareceu, role de novo: sem isto a
+    // página abre num scroll intermediário, com as abas escondidas atrás da navbar.
+    var scrollTo = target !== pane ? target : (trigger && trigger.closest('[role="tablist"]')) || pane;
+    requestAnimationFrame(function () { scrollTo.scrollIntoView({ block: 'start' }); });
+  }
+
+  tabs.forEach(function (t) {
+    t.addEventListener('shown.bs.tab', function (e) {
+      var id = (e.target.getAttribute('data-bs-target') || '').slice(1);
+      // replaceState, não location.hash: mudar o hash direto faz a página pular.
+      if (id) history.replaceState(null, '', '#' + id);
+    });
+  });
+
+  window.addEventListener('hashchange', activateFromHash);
+  activateFromHash();
+})();
+</script>
 </body>
 </html>
