@@ -1263,6 +1263,10 @@ export function apply(
         }
         return derivarEstadoDoBot({ tokenConfigurado, pairing })
       },
+      // O PROVEDOR ATIVO (a mesma escolha do worker, `DSH_GUARD_PROVIDER`): o
+      // GET /__guard-ui/api/telegram emite-o no corpo para o painel rotular o
+      // onboarding por provedor (`config.worker.provider ?? DEFAULT_PROVIDER`).
+      provider,
       // O PAINEL DE CONFIGURACAO DO TOKEN: cada operacao e executada AQUI, na
       // costura (que detem `config`, `statePaths` e o supervisor do worker); a
       // superficie so orquestra o HTTP. O token NUNCA sai daqui para a UI.

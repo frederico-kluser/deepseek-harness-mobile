@@ -294,7 +294,7 @@ describe('ciclo de vida sob ctx.effect', () => {
         assert.equal(spec?.env?.[WORKER_PROVIDER_ENV_VAR], 'telegram')
 
         // A UI reflete o MESMO resolvedor: token presente E dono pareado -> ONLINE.
-        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true })
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true, provider: 'telegram' })
       } finally {
         for (const disposer of ctx?.effects ?? []) disposer()
         limpar()
@@ -313,7 +313,7 @@ describe('ciclo de vida sob ctx.effect', () => {
 
         // Mesmo pareado, SEM token (config e secrets.env vazios) -> sem-chave.
         assert.equal(ctx.subprocess.calls.length, 0, 'sem token em lado nenhum nao ha worker')
-        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: false, motivo: 'sem-chave' })
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: false, motivo: 'sem-chave', provider: 'telegram' })
       } finally {
         for (const disposer of ctx?.effects ?? []) disposer()
         limpar()
@@ -333,7 +333,7 @@ describe('ciclo de vida sob ctx.effect', () => {
         const spec = ctx.subprocess.calls[0]
         assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], 'token-de-teste')
         assert.equal(spec?.env?.[WORKER_PROVIDER_ENV_VAR], 'telegram')
-        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true })
+        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true, provider: 'telegram' })
       } finally {
         for (const disposer of ctx?.effects ?? []) disposer()
         limpar()

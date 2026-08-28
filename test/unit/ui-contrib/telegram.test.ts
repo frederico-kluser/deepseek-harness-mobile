@@ -37,6 +37,7 @@ import {
   PASSOS_DE_USO,
   type BotEstado,
 } from '../../../src/ui-contrib/bot-state.ts'
+import type { ProviderId } from '../../../src/proc/env.ts'
 import { FakeClock } from '../../support/clock.ts'
 
 interface RespostaCapturada {
@@ -57,7 +58,7 @@ interface Bancada {
   ): Promise<RespostaCapturada>
 }
 
-function criarBancada(): Bancada {
+function criarBancada(provider: ProviderId = 'telegram'): Bancada {
   const clock = new FakeClock(1_000_000)
   const rotas = new Map<string, { handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }>()
   const emitidos: ControlIntent[] = []
@@ -86,6 +87,7 @@ function criarBancada(): Bancada {
     },
     now: () => clock.now(),
     botState: () => telegrama,
+    provider,
     tokenOps: {
       validarFormato: (bruto: string) => bruto.trim().includes(':'),
       fonte: () => 'secrets' as const,
@@ -240,6 +242,23 @@ describe('GET /__guard-ui/api/telegram', () => {
     const bancada = criarBancada()
     const resposta = await bancada.enviar(UI_PATH_TELEGRAM, { metodo: 'POST', token: bancada.token() })
     assert.equal(resposta.status, 405)
+  })
+
+  it('o corpo inclui o provider ATIVO — o painel rotula o onboarding por provedor', async () => {
+    const bancada = criarBancada()
+    bancada.definirTelegrama({ online: false, motivo: 'sem-chave' })
+    const offline = await bancada.enviar(UI_PATH_TELEGRAM)
+    assert.equal(offline.corpo.provider, 'telegram')
+    bancada.definirTelegrama({ online: true })
+    const online = await bancada.enviar(UI_PATH_TELEGRAM)
+    assert.equal(online.corpo.provider, 'telegram')
+  })
+
+  it('provider=discord: o GET /telegram emite o provedor ativo', async () => {
+    const bancada = criarBancada('discord')
+    bancada.definirTelegrama({ online: false, motivo: 'sem-pareamento' })
+    const resposta = await bancada.enviar(UI_PATH_TELEGRAM)
+    assert.equal(resposta.corpo.provider, 'discord')
   })
 })
 

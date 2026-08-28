@@ -77,6 +77,7 @@ import {
   type UiAcessoBruto,
   type UiContribCore,
   type UiContribRoute,
+  type ProviderDoBot,
   type UiPairOps,
   type UiTokenOps,
 } from './routes.ts'
@@ -121,6 +122,13 @@ export interface UiContribDeps {
    * CLI/worker, nao por esta superficie).
    */
   readonly botState: () => BotEstado
+  /**
+   * O PROVEDOR de mensageria ATIVO, fiado pela costura em `src/index.ts`
+   * (`config.worker.provider ?? DEFAULT_PROVIDER`) — a MESMA escolha que o
+   * worker faz ao ler `DSH_GUARD_PROVIDER`. O GET /telegram emite-o no corpo
+   * para o painel rotular o onboarding por provedor.
+   */
+  readonly provider: ProviderDoBot
   readonly requestedBy?: string
   /**
    * O servico de configuracao do token, fiado pela costura em `src/index.ts`
@@ -176,6 +184,7 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     seq: () => lastSeq,
     lastReady: () => lastReady,
     botState: deps.botState,
+    provider: deps.provider,
     tokenOps: deps.tokenOps,
     pairOps: deps.pairOps,
     acesso: deps.acesso,

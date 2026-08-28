@@ -109,6 +109,7 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
     },
     now: () => clock.now(),
     botState: (): BotEstado => ({ online: false, motivo: 'sem-chave' }),
+    provider: 'telegram',
     tokenOps: operações,
     pairOps: {
       estado: () => ({ pareado: false }),

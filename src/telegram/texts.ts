@@ -401,7 +401,7 @@ function textoSemDonoDiscord(
   bot: string,
   codigo: string,
   minutos: number,
-  opcoes: OpcoesDePasso,
+  _opcoes: OpcoesDePasso,
 ): string {
   return `O bot ${bot} está a funcionar. Falta ligá-lo a si — e só a si.
 

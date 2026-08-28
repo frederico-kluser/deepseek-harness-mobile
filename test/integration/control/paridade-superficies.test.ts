@@ -212,6 +212,7 @@ function superficieUi(b: Bancada): Superficie {
     issueNonce: (action: 'start' | 'stop' | 'reset') => b.controlador.emitirNonce(action),
     emit: (intent: Parameters<TunnelController['despachar']>[0]) => b.controlador.despachar(intent),
     botState: () => ({ online: false, motivo: 'sem-chave' } as const),
+    provider: 'telegram' as const,
     tokenOps: {
       validarFormato: (bruto: string) => bruto.trim().includes(':'),
       fonte: () => 'secrets' as const,

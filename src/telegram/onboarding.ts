@@ -75,8 +75,6 @@ import {
   tituloTokenInvalido,
   TITULO_PRONTO,
   TITULO_SEM_DONO,
-  TITULO_SEM_TOKEN,
-  TITULO_TOKEN_INVALIDO,
   type OpcoesDePasso,
 } from './texts.ts'
 
@@ -717,6 +715,21 @@ export {
 /* ========================================================================== */
 
 /**
+ * `true` se `texto` tem um espaco (`\s`, incluindo espacos unicode) ou um
+ * caracter de controlo (U+0000 a U+001F). Checagem SEM regex de controlo
+ * (`no-control-regex` do lint): a faixa de controlo sai por `charCodeAt`,
+ * o espaco pelo meta-caracter `\s` — a mesma semantica da checagem
+ * original (espacos OU controlo).
+ */
+function temEspacoOuControlo(texto: string): boolean {
+  if (/\s/u.test(texto)) return true
+  for (let i = 0; i < texto.length; i += 1) {
+    if (texto.charCodeAt(i) < 0x20) return true
+  }
+  return false
+}
+
+/**
  * A forma minimamente exigida a um token do DISCORD pelo HOST.
  *
  * DELIBERADAMENTE FROUXA, e por duas razoes:
@@ -734,6 +747,7 @@ export {
  * {@link FormatoDoToken} do telegram (sem `botId`), para o retrato do
  * onboarding e os seus textos consumirem os dois provedores por igual.
  */
+
 export function validarFormatoDoTokenDoDiscord(bruto: string): FormatoDoToken {
   const token = bruto.trim()
   if (token.length === 0) return { valido: false, motivo: 'vazio' }
@@ -742,7 +756,7 @@ export function validarFormatoDoTokenDoDiscord(bruto: string): FormatoDoToken {
   }
   // Espacos ou controlo: o que se colou foi uma linha inteira, um URL, ou
   // lixo da area de transferencia — recusa-se antes da rede (TG-061).
-  if (/[\s\u0000-\u001f]/u.test(token)) return { valido: false, motivo: 'caracteres-invalidos' }
+  if (temEspacoOuControlo(token)) return { valido: false, motivo: 'caracteres-invalidos' }
   // Valido SEM `botId`: o token do discord nao tem id numerico (ver
   // {@link FormatoDoToken}).
   return { valido: true }

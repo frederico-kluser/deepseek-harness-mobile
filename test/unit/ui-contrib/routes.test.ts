@@ -101,6 +101,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
     },
     now: () => clock.now(),
     botState: () => ({ online: false, motivo: 'sem-chave' }),
+    provider: 'telegram',
     tokenOps: {
       validarFormato: (bruto: string) => bruto.trim().includes(':'),
       fonte: () => 'secrets' as const,

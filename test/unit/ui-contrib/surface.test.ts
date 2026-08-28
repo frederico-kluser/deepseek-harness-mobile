@@ -150,6 +150,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
     },
     now: () => clock.now(),
     botState: () => ({ online: false, motivo: 'sem-chave' }),
+    provider: 'telegram',
     tokenOps: {
       validarFormato: (bruto: string) => bruto.trim().includes(':'),
       fonte: () => 'secrets' as const,
@@ -341,6 +342,7 @@ assert.equal(bancada.rotaDesmontadas, 16, 'as dezasseis rotas (telegram + token 
       subscribe: () => () => undefined,
       now: () => clock.now(),
       botState: () => ({ online: false, motivo: 'sem-chave' }),
+      provider: 'telegram',
       tokenOps: {
         validarFormato: (bruto: string) => bruto.trim().includes(':'),
         fonte: () => 'secrets' as const,

@@ -29,10 +29,11 @@
  *                                        externo (CSP-friendly).
  *
  * DUAS rotas do Telegram (OFELINE/ONLINE), acrescidas para o botao da UI:
- *   GET  /__guard-ui/api/telegram      — o estado Telegram: `online`+`motivo`
- *                                        (offline) ou `online`+`handle`
- *                                        (online). O disco e lido pela costura
- *                                        a cada pedido; o token NUNCA sai.
+ *   GET  /__guard-ui/api/telegram      — o estado do bot: `online`+`provider`
+ *                                        +`motivo` (offline) ou `online`
+ *                                        +`provider`+`handle` (online). O
+ *                                        disco e lido pela costura a cada
+ *                                        pedido; o token NUNCA sai.
  *   POST /__guard-ui/api/telegram/click — o clique no botao: devolve o TEXTO
  *                                        das instrucoes (conectar se offline,
  *                                        uso se online). Exige CSRF, como todo
@@ -111,6 +112,14 @@ export interface UiContribRoute {
 }
 
 /**
+ * O provedor de mensageria ATIVO — o MESMO union de `src/proc/env.ts`
+ * (`ProviderId`), mantido aqui porque a superficie NAO importa `src/proc/**`
+ * (regra de isolamento do mapa de importacoes). A costura em `src/index.ts`
+ * passa o `ProviderId` real — estruturalmente identico.
+ */
+export type ProviderDoBot = 'telegram' | 'discord'
+
+/**
  * O nucleo da superficie: tudo o que os handlers precisam, injetado por
  * `createNativeUiSurface` (que por sua vez recebe de quem fia a superficie em
  * `src/index.ts`). Os handlers nunca tocam na API do DSH nem no supervisor.
@@ -128,6 +137,13 @@ export interface UiContribCore {
    * So boleanos e motivos; o token NUNCA passa por aqui.
    */
   readonly botState: () => BotEstado
+  /**
+   * O PROVEDOR de mensageria ATIVO, fiado pela costura em `src/index.ts`
+   * (`config.worker.provider ?? DEFAULT_PROVIDER`). Sai no corpo do
+   * GET /__guard-ui/api/telegram para o painel rotular o onboarding por
+   * provedor — o cliente cai no default 'telegram' sem este campo.
+   */
+  readonly provider: ProviderDoBot
   /**
    * Operacoes do panel de token, fiadas pela costura em `src/index.ts`. So
    * chegam aqui como servico injetado (validar/sondar/gravar/estado) — este
@@ -609,15 +625,16 @@ export function createClientHandler(_core: UiContribCore): UiContribRequestHandl
 /* ========================================================================== */
 
 /**
- * Projeta o estado Telegram para a rota GET. FUNCAO PURA e exportada: e o
+ * Projeta o estado do bot para a rota GET. FUNCAO PURA e exportada: e o
  * coracao da pergunta falsificavel "o token sai nesta resposta?" — o corpo so
- * tem `online`/`motivo` (offline) ou `online`/`handle` (online); o valor do
- * token e injetado na costura e nunca chega ate aqui.
+ * tem `online`+`provider`+`motivo` (offline) ou `online`+`provider`+`handle`
+ * (online); o valor do token e injetado na costura e nunca chega ate aqui.
  */
-export function projetarEstadoTelegrama(estado: BotEstado): Record<string, unknown> {
-  if (!estado.online) return { online: false, motivo: estado.motivo }
+export function projetarEstadoTelegrama(estado: BotEstado, provider: ProviderDoBot): Record<string, unknown> {
+  if (!estado.online) return { online: false, provider, motivo: estado.motivo }
   return {
     online: true,
+    provider,
     ...(estado.handle === undefined ? {} : { handle: estado.handle }),
   }
 }
@@ -630,7 +647,7 @@ export function projetarEstadoTelegrama(estado: BotEstado): Record<string, unkno
 export function createTelegramHandler(core: UiContribCore): UiContribRequestHandler {
   return (req, res) => {
     if (!exigeMetodo(req, res, 'GET')) return
-    json(res, 200, projetarEstadoTelegrama(core.botState()))
+    json(res, 200, projetarEstadoTelegrama(core.botState(), core.provider))
   }
 }
 
