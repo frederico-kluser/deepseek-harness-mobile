@@ -40,8 +40,12 @@ Ficheiros: **`cliente.ts` · `polling.ts` · `parse.ts` · `teclado.ts` ·
 `token.ts` · `transporte.ts` · `adapter.ts` · `interno.ts`**. Todos com a marca
 de fronteira D4: PORTEAM (não importam de módulos de fora do próprio
 `telegram/**`) os auxiliares estruturais — o `interno.ts` agrega relógio, espera,
-logger, mascaramento, erro tipado e códigos de saída, portados dos `worker/lib/*`
-que sobrevivem (`clock.ts`, `errors.ts`, `log.ts`, `redact.ts`).
+logger, mascaramento, portados dos `worker/lib/*` que sobrevivem (`clock.ts`,
+`log.ts`, `redact.ts`). **EXCEÇÃO SANCTIONADA (Onda 3-fix):** o CONTRATO DE
+ERRO — `ProviderError`, `WorkerExitCode`, `WORKER_EXIT`, `exitCodeFor`,
+`isWorkerExitCode` — é canônico em `worker/lib/errors.ts` (o ÚNICO
+`worker/lib/*` que o adaptador importa) e o `interno.ts` RE-EXPORTA-o; o
+`ProviderErrorCode` legível (as causas do telegram) continua definido AQUI.
 
 - **`cliente.ts`** — o cliente grammY: `createTelegramBot({ token, apiRoot?,
   log, time, autoRetry? })` → `Bot<Context>`. Faz `sensitiveLogs: false`
@@ -87,7 +91,8 @@ que sobrevivem (`clock.ts`, `errors.ts`, `log.ts`, `redact.ts`).
 
 - **`token.ts`** — o token telegram: `TOKEN_ENV_VAR = 'TELEGRAM_BOT_TOKEN'` e
   `API_ROOT_ENV_VAR = 'TELEGRAM_API_ROOT'`. `lerTokenDoAmbiente(env)` lança
-  `ProviderError TOKEN_MISSING` se ausente (a mensagem NÃO cita o valor).
+  `ProviderError` com `reason: 'TOKEN_MISSING'` e `code` numérico CONFIG (10)
+  se ausente (a mensagem NÃO cita o valor).
   `assertTokenNotInArgv(argv, token)` (TG-069: `/proc/<pid>/cmdline` é legível
   por qualquer processo local; token NUNCA em linha de comando) — duas checagens:
   a literal (apanha o nosso token mesmo se o formato mudar) e a de forma
@@ -108,17 +113,24 @@ que sobrevivem (`clock.ts`, `errors.ts`, `log.ts`, `redact.ts`).
   (`bot.on('message')`, `bot.on('callback_query')`), corre `runPolling` e
   devolve `fatal` rejeitado em 409/401/BOOT_TIMEOUT (a parte SÍNCRONA do `start`
   já roda, para o `publishCommands` e o handle de paragem saírem na mesma
-  tickada). `sender()` fornece o `SurfaceSender` sobre a `ApiDoBot`, convertendo
-  `Number(chatKey)` na fronteira de saída. `publishCommands` chama
-  `setMyCommands` do grammY (best-effort).
+  tickada). `sender()` fornece o `SurfaceSender` sobre a `ApiDoBot`: o antigo
+  `Number(chatKey)` da fronteira de saída (herança do envelope IPC V1) foi
+  REMOVIDO na EMENDA ONDA-1-IPC-ENVELOPE-STRING — `chatKey`/`userKey` viajam
+  STRING (a Bot API aceita o id numérico em formato string) e o `Number(...)`
+  só resta onde a API exige inteiro (`message_id`, conversão de EDGE, não de
+  envelope). `publishCommands` chama `setMyCommands` do grammY (best-effort).
 
 - **`interno.ts`** — os auxiliares estruturais locais: `TimeSource`/`Sleeper`
   (`systemTime`), `WorkerLogger` (`criarLoggerMemoria`), mascaramento de segredo
-  (`redact`, `describeForLog`, `REDACTED`, `SECRET_SHAPES`), o erro tipado
-  `ProviderError` com `ProviderErrorCode` FECHADO (`TOKEN_MISSING`,
-  `TOKEN_IN_ARGV`, `POLLING_CONFLICT`, `POLLING_UNAUTHORIZED`, `POLLING_FAILED`,
-  `BOOT_TIMEOUT`, `CALLBACK_DATA_TOO_LONG`) e os `WORKER_EXIT` codes (0/10/11/
-  12/13/14) com `exitCodeFor`.
+  (`redact`, `describeForLog`, `REDACTED`, `SECRET_SHAPES`), o `ProviderErrorCode`
+  FECHADO (`TOKEN_MISSING`, `TOKEN_IN_ARGV`, `POLLING_CONFLICT`,
+  `POLLING_UNAUTHORIZED`, `POLLING_FAILED`, `BOOT_TIMEOUT`,
+  `CALLBACK_DATA_TOO_LONG` — espelho do `WorkerErrorCode` de
+  `worker/lib/errors.ts`) e o RE-EXPORT do CONTRATO DE ERRO canônico (Onda
+  3-fix): `ProviderError` (com `code` NUMÉRICO `WorkerExitCode` 10..14 +
+  `reason` legível — o boot genérico classifica pelo `code`, sem `instanceof`),
+  `WORKER_EXIT` (0/10/11/12/13/14), `exitCodeFor`, `isWorkerExitCode` — tudo de
+  `worker/lib/errors.ts`, o único `worker/lib/*` importado pelo adaptador.
 
 ---
 
@@ -193,7 +205,10 @@ acento vale 2 bytes.
   `retry_after` no ciclo de polling) — repetir dos DOIS lados dobra a espera.
 - **Sem retry cego**: nunca repete sem o servidor dizer quanto esperar.
 
-**Exit codes do processo** (WF via `worker/telegram-bot.ts`):
+**Exit codes do processo** (WF via `worker/telegram-bot.ts` — o boot genérico
+classifica pelo `code` NUMÉRICO do `ProviderError` canônico
+(`worker/lib/errors.ts`), sem `instanceof` de classe de provedor — o 409/401
+chega do `classifyPollingError` já com 11/12):
 `0` ok · `10` config (token ausente / token em argv / provedor desconhecido) ·
 `11` conflict (409) · `12` unauthorized (401) · `13` polling falhou ·
 `14` boot-timeout (45 s).
@@ -269,13 +284,17 @@ Separe o **telegram-específico** do **genérico**:
   grammY/Bot API, `callback_data` `g1` e os 64 BYTES, `TELEGRAM_*` env vars,
   `isTelegramId` (double JS seguro até 2^53), `setMyCommands`,
   `editMessageText`, `answerCallbackQuery`, `retry_after`, o detetor
-  `BOT_TOKEN_SHAPE`, os `WORKER_EXIT` codes.
+  `BOT_TOKEN_SHAPE`, o `classifyPollingError` (mapear 409/401 do long polling
+  para os códigos 11/12 do contrato).
 - **Genérico** (vale para todo provedor — traga na nova cópia, SEM importar de
   `worker/lib/*`): o padrão `ProviderAdapter` de `adapter.ts` (id/limits/start/
   stop/publishCommands/sender), o formato `SurfaceEvent` de entrada, o princípio
   de responder SEMPRE ao clique (análogo de TG-027), o corte/limites por canal,
-  o token via ambiente allowlist + nunca em `argv`, o erro tipado + códigos de
-  saída, o duplo de teste local.
+  o token via ambiente allowlist + nunca em `argv`, o duplo de teste local — e
+  o CONTRATO DE ERRO canônico (`ProviderError`/`WorkerExitCode`/`WORKER_EXIT` de
+  `worker/lib/errors.ts`, re-exportado pelo `interno.ts`): o erro do provedor
+  novo carrega o `code` numérico 10..14 e o boot genérico classifica-o sem
+  conhecer o provedor.
 
 Para o passo-a-passo de criar um provedor novo a partir desta referência,
 carregue **`dsh-provider-bot`** (§3) — não reinvente a arquitectura aqui.
