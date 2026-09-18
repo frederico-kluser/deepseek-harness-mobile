@@ -8,16 +8,17 @@
  * casa `p` e `p/<algo>` (medido no spike S4), logo nao colide — e a barreira
  * de autenticacao (L3) guarda-o por omissao, sem isencao nenhuma.
  *
- * SETE rotas — a COSTURA da Onda 5 acrescentou o RESET (W3: FAILED so sai por
- * reset humano, CTL-012) com o MESMO padrao de 2 etapas com nonce do LIGAR:
+ * A COSTURA da Onda 5 acrescentou o RESET (W3: FAILED so sai por reset
+ * humano, CTL-012) com o MESMO padrao de 2 etapas com nonce do LIGAR:
  * `POST /__guard-ui/api/reset` (passo 1, emite o nonce) e
  * `POST /__guard-ui/api/reset/confirm` (passo 2, emite o intent reset).
- * As cinco originais:
+ * As quatro originais:
  *
  *   GET  /__guard-ui/api/state         — a PROJECCAO: seq + estado + URL (so
  *                                        READY) + expiracao + falha + nota de
- *                                        TTL. E o que o script do cliente
- *                                        poe no DOM por `textContent`.
+ *                                        TTL. E o que o bundle da aba
+ *                                        settings poe no DOM por
+ *                                        `textContent`.
  *   POST /__guard-ui/api/start         — passo 1 do LIGAR: pede o nonce ao
  *                                        HOST (T5.1) e devolve-o opaco.
  *   POST /__guard-ui/api/start/confirm — passo 2: emite o `ControlIntent`
@@ -25,8 +26,6 @@
  *                                        opaco; quem valida e o host (S5).
  *   POST /__guard-ui/api/stop          — DESLIGAR: emite `stop` SEM nonce
  *                                        (CTL-024: acao que reduz exposicao).
- *   GET  /__guard-ui/client.js         — o script da superficie, como recurso
- *                                        externo (CSP-friendly).
  *
  * DUAS rotas do Telegram (OFELINE/ONLINE), acrescidas para o botao da UI:
  *   GET  /__guard-ui/api/telegram      — o estado do bot: `online`+`provider`
@@ -39,8 +38,9 @@
  *                                        uso se online). Exige CSRF, como todo
  *                                        POST desta superficie.
  *   GET  /__guard-ui/api/csrf       — um token anti-CSRF FRESCO para o bundle
- *                                        (HIGH-2): fonte INDEPENDENTE do meta
- *                                        do indice antigo, para o painel novo.
+ *                                        (HIGH-2): a UNICA fonte de CSRF da
+ *                                        superficie, que o painel da aba
+ *                                        settings usa em cada POST.
  *
  * DUAS rotas dos AGENTES (Onda 6 — o painel espelha /agentes e /parar-agente):
  *   GET  /__guard-ui/api/agents     — a lista de runs do dispatcher (id, skill,
@@ -73,7 +73,6 @@ import type { ControlAction, ControlIntent, ControlResultado, Nonce } from '../c
 import type { AgentRunReport } from '../contracts/ipc.ts'
 import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import { CSRF_FIELD_NAME, CSRF_HEADER_NAME, type CsrfGuard } from './csrf.ts'
-import { createClientScript } from './html.ts'
 import { buildControlIntent, projectResultado } from './intents.ts'
 import { passosDoBot, type BotEstado } from './bot-state.ts'
 
@@ -84,7 +83,6 @@ export const UI_PATH_CONFIRM = `${UI_PREFIX}/api/start/confirm`
 export const UI_PATH_STOP = `${UI_PREFIX}/api/stop`
 export const UI_PATH_RESET = `${UI_PREFIX}/api/reset`
 export const UI_PATH_RESET_CONFIRM = `${UI_PREFIX}/api/reset/confirm`
-export const UI_PATH_CLIENT = `${UI_PREFIX}/client.js`
 /** O estado Telegram OFFLINE/ONLINE — GET, so le. NUNCA carrega o token. */
 export const UI_PATH_TELEGRAM = `${UI_PREFIX}/api/telegram`
 /** O clique no botao Telegram — POST, CSRF como as demais escritas. */
@@ -104,7 +102,8 @@ export const UI_PATH_ACCESS = `${UI_PREFIX}/api/access`
 /**
  * O token anti-CSRF FRESCO para o bundle — GET, so le. Nao exige CSRF (e uma
  * leitura, como as demais GETs) e NUNCA transporta credencial: o valor emitido
- * e o mesmo token stateless que o `tapIndex` embute no indice antigo.
+ * e o mesmo token stateless do guard da superficie que os POSTs verificam
+ * (`core.csrf.verify(token, UI_CSRF_BINDING)`).
  */
 export const UI_PATH_CSRF = `${UI_PREFIX}/api/csrf`
 /** Inicia o pareamento pelo painel — POST, CSRF como as demais escritas. */
@@ -669,21 +668,6 @@ export function createResetConfirmHandler(core: UiContribCore): UiContribRequest
   }
 }
 /* ========================================================================== */
-/* O script da superficie (GET /__guard-ui/client.js)                         */
-/* ========================================================================== */
-
-export function createClientHandler(_core: UiContribCore): UiContribRequestHandler {
-  return (req, res) => {
-    if (!exigeMetodo(req, res, 'GET')) return
-    res.writeHead(200, {
-      'content-type': 'text/javascript; charset=utf-8',
-      'cache-control': 'no-store',
-    })
-    res.end(createClientScript())
-  }
-}
-
-/* ========================================================================== */
 /* O estado e o clique do Telegram (OFFLINE/ONLINE)                           */
 /* ========================================================================== */
 
@@ -1077,9 +1061,10 @@ export function createAgentsCancelHandler(core: UiContribCore): UiContribRequest
 
 /**
  * GET /__guard-ui/api/csrf — emite um token anti-CSRF NOVO para o VINCULO da
- * superficie e devolve-o. E o caminho de CSRF INDEPENDENTE do meta do indice
- * antigo, que o bundle novo usa em cad a POST (a fonte mais robusta: um GET
- * barato e stateless a cada escrita, sem depender do `tapIndex`).
+ * superficie e devolve-o. E A UNICA fonte de CSRF da superficie (HIGH-2): o
+ * painel da aba settings faz um GET barato e stateless a cada escrita, sem
+ * nenhum meta de indice envolvido (o chrome injetado na home, que embutia o
+ * token num `<meta>`, foi removido).
  *
  * ATRAS DA MESMA BARREIRA (loopback/tunel autenticado) e SEM exigir CSRF — e
  * uma LEITURA, como as outras GETs desta superficie; o token nao e credencial

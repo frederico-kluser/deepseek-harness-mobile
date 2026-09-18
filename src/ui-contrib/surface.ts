@@ -5,12 +5,11 @@
  * contribuicao do host CONSUMINDO o mesmo `ControlIntent` de T5.1 — nunca
  * chamando o supervisor direto".
  *
- * O MECANISMO e o `tapIndex` medido pelo spike S4
- * (`docs/spikes/superficie-ui.md` 4.1): um transform do `index.html` servido
- * pelo dono do assento de fallback, reversivel pelo disposer. O registro de
- * slot (mecanismo 4.2 do spike) ficaria condicionado a `package.json`
- * (`dsh.client` + `exports["./client"]`), que nesta onda nao tem dono — ver o
- * handoff.
+ * A UI vive SO na aba settings do DSH, via as rotas `/__guard-ui/api/*` que
+ * este modulo registra no host: NENHUM bloco e injetado no indice servido na
+ * home (o antigo `tapIndex` — o chrome visivel da home — foi removido: ele
+ * criava um scroll extra na home; o token de CSRF da superficie agora tem a
+ * rota `GET /__guard-ui/api/csrf` como UNICA fonte, HIGH-2).
  *
  * PROJECCAO: a superficie nao mantem estado proprio alem do ultimo `seq` que
  * viu (a mesma disciplina que `src/contracts/ipc.ts` impoe ao worker). A
@@ -21,7 +20,7 @@
  * O QUE ESTE MODULO NAO FAZ, POR CONSTRUCAO:
  *   - nao importa `@deepseek-ai/*` (a fronteira com o DSH e so
  *     `src/dsh/adapter.ts`, D1) — os tipos do host ficam ESTRUTURAIS nos
- *     `deps` (tapIndex, registerRoute), satisfeitos por quem fia a superficie;
+ *     `deps` (registerRoute), satisfeitos por quem fia a superficie;
  *   - nao importa `src/tunnel/**` nem `src/control/**` — a unica via para o
  *     controlador e `deps.emit(ControlIntent)` (o mapa de importacoes do
  *     modulo e a prova, ver `test/unit/ui-contrib/surface.test.ts`);
@@ -30,21 +29,19 @@
  *     entre o passo 1 e o passo 2 do LIGAR.
  *
  * A COSTURA (pos-onda) liga os deps em `src/index.ts` — ver o handoff: o que
- * este modulo exige do contexto do host e `ctx.webServer.tapIndex` e
- * `ctx.webServer.register` (ambos ja expostos por `src/dsh/adapter.ts`), o
- * despacho de T5.1 (`emit`), o `ConfirmService` de T5.1 (`issueNonce`) e o
- * broadcast do controlador (`subscribe`).
+ * este modulo exige do contexto do host e `ctx.webServer.register` (ja
+ * exposto por `src/dsh/adapter.ts`), o despacho de T5.1 (`emit`), o
+ * `ConfirmService` de T5.1 (`issueNonce`) e o broadcast do controlador
+ * (`subscribe`).
  */
 
 import type { ControlAction, ControlIntent, ControlResultado, Nonce } from '../contracts/control.ts'
 import type { TunnelSnapshot } from '../contracts/tunnel.ts'
 import { createCsrfGuard, type CsrfGuard } from './csrf.ts'
-import { createIndexTap } from './html.ts'
 import {
   createAccessHandler,
   createAgentsCancelHandler,
   createAgentsHandler,
-  createClientHandler,
   createConfirmHandler,
   createCsrfHandler,
   createPrivacidadeHandler,
@@ -59,10 +56,8 @@ import {
   createTelegramHandler,
   createTokenHandler,
   createTokenStateHandler,
-  UI_CSRF_BINDING,
   UI_PATH_ACCESS,
   UI_PATH_AGENTS,
-  UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
   UI_PATH_PRIVACIDADE,
@@ -99,11 +94,11 @@ export interface UiContribBroadcast {
  * Tudo o que a superficie precisa, injetado. A costura em `src/index.ts`
  * liga cada campo ao contexto real do host:
  *
- *   - `tapIndex`     <- `ctx.webServer.tapIndex` (via `src/dsh/adapter.ts`)
- *   - `registerRoute`<- `ctx.webServer.register` (idem; as rotas desta
- *                       superficie nascem ATRAS da barreira de autenticacao,
- *                       sem isencao nenhuma — `unauthenticatedPrefixes` nao
- *                       as nomeia e nao precisa de nomear)
+ *   - `registerRoute`<- `ctx.webServer.register` (via `src/dsh/adapter.ts`; as
+ *                       rotas desta superficie nascem ATRAS da barreira de
+ *                       autenticacao, sem isencao nenhuma —
+ *                       `unauthenticatedPrefixes` nao as nomeia e nao precisa
+ *                       de nomear)
  *   - `emit`         <- o despacho de intents de T5.1 (controlador)
  *   - `issueNonce`   <- `ConfirmService.issue` de T5.1 (`src/control/confirm.ts`)
  *   - `subscribe`    <- o broadcast de T5.1; a costura DEVE invocar o
@@ -113,7 +108,6 @@ export interface UiContribBroadcast {
  *   - `requestedBy`  <- origem pre-formatada do audit; default `ui:native`
  */
 export interface UiContribDeps {
-  readonly tapIndex: (transform: (html: string) => string) => () => void
   readonly registerRoute: (route: UiContribRoute) => () => void
   readonly emit: (intent: ControlIntent) => Promise<ControlResultado>
   readonly issueNonce: (action: ControlAction) => Nonce
@@ -165,10 +159,9 @@ export interface UiContribDeps {
 export const UI_REQUESTED_BY = 'ui:native'
 
 /**
- * Monta a superficie: tap + as rotas (incl. o GET /api/csrf de HIGH-2) +
- * assinatura do broadcast, e devolve o disposer que reverte TUDO (tap
- * reversivel — a propriedade que o spike S4 mediu; rotas removidas; assinatura
- * cancelada). Disposer SINCRONO e idempotente (LIFE-003/005).
+ * Monta a superficie: as rotas (incl. o GET /api/csrf de HIGH-2) + assinatura
+ * do broadcast, e devolve o disposer que reverte TUDO (rotas removidas;
+ * assinatura cancelada). Disposer SINCRONO e idempotente (LIFE-003/005).
  */
 export function createNativeUiSurface(deps: UiContribDeps): () => void {
   let lastSeq = -1
@@ -217,7 +210,6 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
     // terceira superficie ganha o MESMO padrao de 2 etapas com nonce.
     { kind: 'exact', path: UI_PATH_RESET, handler: createResetHandler(core) },
     { kind: 'exact', path: UI_PATH_RESET_CONFIRM, handler: createResetConfirmHandler(core) },
-    { kind: 'exact', path: UI_PATH_CLIENT, handler: createClientHandler(core) },
     // O botao Telegram: estado (GET) e clique (POST com CSRF).
     { kind: 'exact', path: UI_PATH_TELEGRAM, handler: createTelegramHandler(core) },
     { kind: 'exact', path: UI_PATH_TELEGRAM_CLICK, handler: createTelegramClickHandler(core) },
@@ -243,9 +235,7 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
   ]
 
   const rotaDisposers: Array<() => void> = []
-  let tapDisposer: (() => void) | undefined
   try {
-    tapDisposer = deps.tapIndex(createIndexTap({ csrf, binding: UI_CSRF_BINDING, scriptSrc: UI_PATH_CLIENT }))
     for (const rota of rotas) rotaDisposers.push(deps.registerRoute(rota))
   } catch (error) {
     // Registo parcial (ex.: colisao de rota): reverte o que ja entrou, em
@@ -254,7 +244,6 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
       const disposer = rotaDisposers[i]
       if (disposer !== undefined) disposer()
     }
-    tapDisposer?.()
     unsub()
     throw error
   }
@@ -267,7 +256,6 @@ export function createNativeUiSurface(deps: UiContribDeps): () => void {
       const disposer = rotaDisposers[i]
       if (disposer !== undefined) disposer()
     }
-    tapDisposer?.()
     unsub()
   }
 }

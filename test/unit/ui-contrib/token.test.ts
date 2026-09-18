@@ -36,6 +36,7 @@ import {
   projetarEstadoToken,
   projetarPrivacidade,
   UI_PATH_ACCESS,
+  UI_PATH_CSRF,
   UI_PATH_PRIVACIDADE,
   UI_PATH_TOKEN,
   UI_PATH_TOKEN_STATE,
@@ -71,7 +72,6 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
   const gravacoes: string[] = []
   const handlesGravados: Array<string | undefined> = []
   const sondaCalls: string[] = []
-  let tokenDoTap = ''
   let operações: UiTokenOps = {
     validarFormato: (bruto: string) => /^\d+:[A-Za-z0-9_-]+$/u.test(bruto.trim()),
     fonte: () => 'secrets' as const,
@@ -91,12 +91,6 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
   }
 
   const deps: UiContribDeps = {
-    tapIndex: (transform) => {
-      const html = transform('<html><head></head><body></body></html>')
-      const m = /<meta name="dsh-guard-ui-csrf" content="([^"]+)">/u.exec(html)
-      tokenDoTap = m?.[1] ?? ''
-      return () => undefined
-    },
     registerRoute: (rota) => {
       rotas.set(rota.path, { handler: rota.handler })
       return () => undefined
@@ -183,14 +177,37 @@ function criarBancada(opOverrides: Partial<UiTokenOps> = {}): Bancada {
     return { status, cabecalhos, texto, corpo }
   }
 
+  const token = (): string => {
+    // O token de CSRF vem da rota GET /api/csrf (HIGH-2) — a UNICA fonte desde
+    // que o tap do indice saiu; e o MESMO guard que os POSTs verificam.
+    const rota = rotas.get(UI_PATH_CSRF)
+    assert.ok(rota !== undefined, 'a rota /csrf deveria estar registada')
+    const req = new EventEmitter() as unknown as IncomingMessage
+    const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
+    bruto.method = 'GET'
+    bruto.url = UI_PATH_CSRF
+    bruto.headers = {}
+    bruto.destroy = () => undefined
+    let corpoTexto = ''
+    const res = {
+      writeHead: (): void => undefined,
+      end: (corpo?: unknown): void => {
+        corpoTexto = typeof corpo === 'string' ? corpo : String(corpo ?? '')
+      },
+    } as unknown as ServerResponse
+    void rota.handler(req, res)
+    req.emit('end')
+    const corpo = JSON.parse(corpoTexto) as { token?: unknown }
+    assert.equal(typeof corpo.token, 'string', 'o /csrf deveria devolver um token')
+    assert.ok((corpo.token as string).length > 0, 'o /csrf deveria emitir um token nao vazio')
+    return corpo.token as string
+  }
+
   return {
     gravacoes,
     handlesGravados,
     sondaCalls,
-    token: () => {
-      assert.ok(tokenDoTap.length > 0, 'o tap nao emitiu token')
-      return tokenDoTap
-    },
+    token,
     reconfigurar: (novas): void => {
       operações = { ...operações, ...novas }
     },

@@ -17,11 +17,12 @@
  * ataque que este token fecha e o do NAVEGADOR DA VITIMA: uma pagina de
  * terceiros a disparar um POST contra a URL do tunel aproveitando a autoridade
  * ambiente do dono. Essa pagina nao consegue LER a nossa resposta (sem CORS),
- * logo nao consegue extrair o token do indice servido.
+ * logo nao consegue extrair o token da rota `GET /__guard-ui/api/csrf` (HIGH-2,
+ * a unica fonte desde que o chrome da home saiu).
  *
  * SEM ESTADO (HMAC sobre (vinculo, expiracao), chave por processo), pela
- * MESMA razao do painel: cada `GET /` corre o tap do indice, e um token
- * guardado num mapa transformaria cada pre-carregamento numa escrita.
+ * MESMA razao do painel: cada emissao e um GET barato e stateless, e um token
+ * guardado num mapa transformaria cada fetch numa escrita.
  *
  * O TOKEN NAO E CREDENCIAL: quem alcanca o servidor pelo lado do servidor
  * consegue emitir um token para si proprio. E a definicao de CSRF — o que o

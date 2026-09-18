@@ -6,19 +6,22 @@
  *     quando a acao exige), ou chama o supervisor diretamente? — os testes
  *     do bloco "ligar/desligar" provam o intent; o teste do mapa de
  *     importacoes prova a ausencia de caminho para o supervisor.
- *  2. O disposer REVERTE a contribuicao (tap reversivel — o spike S4 mediu
- *     o mecanismo)? — o bloco "registro e disposer".
+ *  2. O disposer REVERTE a contribuicao (rotas removidas, assinatura
+ *     cancelada)? — o bloco "registo da contribuicao".
  *  3. Em modo restrito, o botao de ligar e recusado e a UI mostra o motivo?
  *     — "a recusa do controlador chega a UI com motivo".
  *  4. A URL do tunel aparece ANTES de READY? — "a URL nunca sai fora de
- *     READY" (projecao) e o tap nao embute a URL (html.test.ts).
+ *     READY" (projecao). A superficie NAO injeta nada no indice da home (o
+ *     chrome foi removido): a UI vive so na aba settings, via rotas.
  *  5. O mecanismo depende de fio em `src/index.ts`/`cordis.patch.yml` que a
  *     sub-tarefa NAO fez? — sim, e esta reportado no handoff (os deps da
  *     superficie sao o fio; este modulo nao os inventa).
  *
  * Sem socket, sem cloudflared (D10): os handlers sao chamados diretamente
  * com `req`/`res` falsos; o relogio e o FakeClock; o controlador, o
- * ConfirmService e o broadcast sao dublos que REGISTAM as chamadas.
+ * ConfirmService e o broadcast sao dublos que REGISTAM as chamadas. O token
+ * de CSRF dos testes vem da rota GET /api/csrf (HIGH-2) — a UNICA fonte
+ * desde que o tap do indice saiu.
  */
 
 import assert from 'node:assert/strict'
@@ -29,9 +32,10 @@ import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { ControlAction, ControlIntent, ControlResultado } from '../../../src/contracts/control.ts'
+import type { ControlAction, ControlIntent, ControlResultado, Nonce } from '../../../src/contracts/control.ts'
 import type { AgentRunReport } from '../../../src/contracts/ipc.ts'
 import type { TunnelSnapshot } from '../../../src/contracts/tunnel.ts'
+import type { BotEstado } from '../../../src/ui-contrib/bot-state.ts'
 import {
   createNativeUiSurface,
   UI_REQUESTED_BY,
@@ -41,7 +45,6 @@ import {
 import {
   UI_PATH_ACCESS,
   UI_PATH_AGENTS,
-  UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
   UI_PATH_PRIVACIDADE,
@@ -57,6 +60,7 @@ import {
   UI_PATH_TOKEN,
   UI_PATH_TOKEN_STATE,
   type UiContribRoute,
+  type UiAcessoBruto,
 } from '../../../src/ui-contrib/routes.ts'
 import { FakeClock } from '../../support/clock.ts'
 
@@ -87,14 +91,12 @@ interface RespostaCapturada {
 
 interface Bancada {
   readonly clock: FakeClock
-  readonly taps: Array<(html: string) => string>
   /** As rotas EXACT (o despacho do host so as consulta na tabela exact). */
   readonly rotas: Map<string, UiContribRoute>
   /** As rotas PREFIXO (consultadas so apos falha na tabela exact — o mesmo do host). */
   readonly prefixos: Array<{ readonly path: string; readonly rota: UiContribRoute }>
   readonly emitidos: ControlIntent[]
   readonly noncesPedidos: ControlAction[]
-  tapDesmontado: number
   rotaDesmontadas: number
   assinaturaCancelada: number
   resultadoEmit: ControlResultado
@@ -106,19 +108,16 @@ interface Bancada {
     caminho: string,
     opcoes?: { metodo?: string; token?: string; corpo?: unknown },
   ): Promise<RespostaCapturada>
-  tokenDoUltimoTap(): string
-  htmlDoUltimoTap(): string
+  tokenDoCsrf(): string
 }
 
 function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
   const clock = new FakeClock(1_000_000)
-  const taps: Array<(html: string) => string> = []
   const rotas = new Map<string, UiContribRoute>()
   const prefixos: Array<{ path: string; rota: UiContribRoute }> = []
   const emitidos: ControlIntent[] = []
   const noncesPedidos: ControlAction[] = []
   let ouvinte: ((broadcast: UiContribBroadcast) => void) | undefined
-  let tapDesmontado = 0
   let rotaDesmontadas = 0
   let assinaturaCancelada = 0
   let resultadoEmit: ControlResultado = { estado: 'STOPPED', idempotente: false }
@@ -126,12 +125,6 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
   let nonceSeq = 0
 
   const deps: UiContribDeps = {
-    tapIndex: (transform) => {
-      taps.push(transform)
-      return () => {
-        tapDesmontado += 1
-      }
-    },
     registerRoute: (rota) => {
       // O espelho do despacho do host: exact na tabela exact, prefixo na de
       // prefixos (o MESMO `UiContribRoute.kind` do host, agora com os dois).
@@ -192,18 +185,30 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 
   const superficie = createNativeUiSurface(deps)
 
-  const tokenDoUltimoTap = (): string => {
-    const m = /<meta name="dsh-guard-ui-csrf" content="([^"]+)">/u.exec(htmlDoUltimoTap())
-    assert.ok(m !== null, 'o tap nao emitiu token de CSRF')
-    const token = m[1]
-    assert.equal(typeof token, 'string')
-    return token ?? ''
-  }
-
-  const htmlDoUltimoTap = (): string => {
-    const tap = taps[0]
-    assert.ok(tap !== undefined, 'nenhum tap registado')
-    return tap('<!doctype html><html><head></head><body><div id="root"></div></body></html>')
+  const tokenDoCsrf = (): string => {
+    // O token de CSRF vem da rota GET /api/csrf (HIGH-2) — a UNICA fonte desde
+    // que o tap do indice saiu; e o MESMO guard que os POSTs verificam.
+    const rota = rotas.get(UI_PATH_CSRF)
+    assert.ok(rota !== undefined, 'a rota /csrf deveria estar registada')
+    const req = new EventEmitter() as unknown as IncomingMessage
+    const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
+    bruto.method = 'GET'
+    bruto.url = UI_PATH_CSRF
+    bruto.headers = {}
+    bruto.destroy = () => undefined
+    let corpoTexto = ''
+    const res = {
+      writeHead: (): void => undefined,
+      end: (corpo?: unknown): void => {
+        corpoTexto = typeof corpo === 'string' ? corpo : String(corpo ?? '')
+      },
+    } as unknown as ServerResponse
+    void rota.handler(req, res)
+    req.emit('end')
+    const corpo = JSON.parse(corpoTexto) as { token?: unknown }
+    assert.equal(typeof corpo.token, 'string', 'o /csrf deveria devolver um token')
+    assert.ok((corpo.token as string).length > 0, 'o /csrf deveria emitir um token nao vazio')
+    return corpo.token as string
   }
 
   const enviar = async (
@@ -250,14 +255,10 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 
   return {
     clock,
-    taps,
     rotas,
     prefixos,
     emitidos,
     noncesPedidos,
-    get tapDesmontado() {
-      return tapDesmontado
-    },
     get rotaDesmontadas() {
       return rotaDesmontadas
     },
@@ -288,8 +289,7 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
       return r
     },
     enviar,
-    tokenDoUltimoTap,
-    htmlDoUltimoTap,
+    tokenDoCsrf,
   }
 }
 
@@ -298,9 +298,8 @@ function criarBancada(overrides?: Partial<UiContribDeps>): Bancada {
 /* ========================================================================== */
 
 describe('registo da contribuicao', () => {
-  it('regista um tap, as rotas (telegram + reset + acesso + csrf + agentes) e a assinatura do broadcast', () => {
+  it('regista as rotas (telegram + reset + acesso + csrf + agentes) e a assinatura do broadcast — e NENHUM tap no indice', () => {
     const bancada = criarBancada()
-    assert.equal(bancada.taps.length, 1)
     assert.deepEqual(
       [...bancada.rotas.keys()].toSorted(),
       [
@@ -310,7 +309,6 @@ describe('registo da contribuicao', () => {
         UI_PATH_STOP,
         UI_PATH_RESET,
         UI_PATH_RESET_CONFIRM,
-        UI_PATH_CLIENT,
         UI_PATH_TELEGRAM,
         UI_PATH_TELEGRAM_CLICK,
         UI_PATH_TOKEN,
@@ -333,23 +331,90 @@ describe('registo da contribuicao', () => {
       bancada.prefixos.map((p) => ({ path: p.path, kind: p.rota.kind })),
       [{ path: UI_PATH_AGENTS, kind: 'prefix' }],
     )
+    // O chrome da home saiu: a rota do script antigo NAO existe mais, e
+    // nenhuma rota da superficie toca o indice servido na home.
+    assert.equal(bancada.rotas.has('/__guard-ui/client.js'), false, 'o /client.js do chrome nao deveria estar registado')
   })
 
-  it('o disposer REVERTE tudo (tap reversivel — a propriedade que o spike S4 mediu)', () => {
+  it('a superficie NUNCA toca o indice da home: nenhum tap e registado nem chamado (chrome removido, D-01)', () => {
+    // O CHROME da home (div #dsh-guard-ui + meta CSRF + script /client.js)
+    // foi removido por inteiro (D-01): a UI vive SO na aba settings, via as
+    // rotas /__guard-ui/api/*. Guarda de regressao em DUAS camadas:
+    //
+    //   (1) COMPILACAO: o campo `tapIndex` saiu de `UiContribDeps` — passar
+    //       `tapIndex` NUM OBJETO TIPADO como deps e erro de tipos e o gate
+    //       lint/typecheck quebra (o espinho abaixo usa cast justificado).
+    //
+    //   (2) RUNTIME: mesmo que alguém reintroduza a chamada sem voltar a
+    //       tipa-la, o espinho injetado como propriedade EXTRA nos deps —
+    //       a forma como o host real espelharia a API — tem de continuar
+    //       NAO chamado, antes e depois do disposer.
+    const espinho = { chamadas: 0 }
+    const depsComEspinho = {
+      registerRoute: (): (() => void) => () => undefined,
+      emit: async (): Promise<ControlResultado> => ({ estado: 'STOPPED', idempotente: false }),
+      issueNonce: (): Nonce => ({ valor: 'n', expiresAt: INICIO + 60_000 }),
+      subscribe: (): (() => void) => () => undefined,
+      now: (): number => INICIO,
+      botState: (): BotEstado => ({ online: false, motivo: 'sem-chave' }),
+      provider: 'telegram' as const,
+      tokenOps: {
+        validarFormato: (bruto: string): boolean => bruto.trim().includes(':'),
+        fonte: (): 'secrets' => 'secrets',
+        sondar: async (): Promise<{ ok: true; handle: string }> => ({ ok: true, handle: 'exemplo_bot' }),
+        gravar: (): void => undefined,
+        estado: (): { configurado: boolean; handle: string | null; fonte: string } => ({
+          configurado: false,
+          handle: null,
+          fonte: 'nenhum',
+        }),
+        privacidade: async (): Promise<{ ok: boolean; handle: string | null; fonte: string }> => ({
+          ok: true,
+          handle: null,
+          fonte: 'nenhum',
+        }),
+      },
+      pairOps: {
+        estado: (): { pareado: boolean } => ({ pareado: false }),
+        gerar: async (): Promise<{ ok: boolean; codigo: string; expiraEm: number }> => ({
+          ok: true,
+          codigo: '123456',
+          expiraEm: INICIO + 60_000,
+        }),
+      },
+      acesso: (): UiAcessoBruto => ({ conexoesAtivas: 0, totalSessoes: 0, sessoes: [], ipConfiavel: false }),
+      agentsOps: { listar: (): [] => [], cancelar: (): boolean => false },
+      // O ESPINHO: a forma antiga do campo, como propriedade EXTRA. Se a
+      // superficie voltar a chama-lo (antes ou depois do disposer),
+      // `chamadas` sobe e o assert final falha.
+      tapIndex: (transform: (html: string) => string): (() => void) => {
+        void transform
+        espinho.chamadas += 1
+        return () => undefined
+      },
+    }
+    // O cast registra a INTENCAO: `UiContribDeps` JA NAO declara `tapIndex` —
+    // redeclarar o campo na interface seria ressuscitar o chrome.
+    const deps = depsComEspinho as unknown as UiContribDeps
+    const superficie = createNativeUiSurface(deps)
+    superficie()
+    assert.equal(espinho.chamadas, 0, 'a superficie voltou a registar/chamar o tap do indice (regresso do chrome)')
+  })
+
+  it('o disposer REVERTE tudo (rotas removidas em LIFO e assinatura cancelada)', () => {
     const bancada = criarBancada()
     bancada.superficie()
-    assert.equal(bancada.tapDesmontado, 1)
-assert.equal(bancada.rotaDesmontadas, 18, 'as dezoito rotas (telegram + token + privacidade + parear + acesso + csrf + agentes) sao removidas')
+    assert.equal(bancada.rotaDesmontadas, 17, 'as dezassete rotas (telegram + token + privacidade + parear + acesso + csrf + agentes) sao removidas')
     assert.equal(bancada.assinaturaCancelada, 1)
   })
 
   it('o disposer e idempotente (LIFE-003) e sincrono (LIFE-005)', () => {
     const bancada = criarBancada()
     bancada.superficie()
-    const primeiro = { tap: bancada.tapDesmontado, rotas: bancada.rotaDesmontadas, assinatura: bancada.assinaturaCancelada }
+    const primeiro = { rotas: bancada.rotaDesmontadas, assinatura: bancada.assinaturaCancelada }
     bancada.superficie()
     assert.deepEqual(
-      { tap: bancada.tapDesmontado, rotas: bancada.rotaDesmontadas, assinatura: bancada.assinaturaCancelada },
+      { rotas: bancada.rotaDesmontadas, assinatura: bancada.assinaturaCancelada },
       primeiro,
     )
   })
@@ -359,7 +424,6 @@ assert.equal(bancada.rotaDesmontadas, 18, 'as dezoito rotas (telegram + token + 
     let rotasRegistadas = 0
     let rotasDesmontadas = 0
     const deps: UiContribDeps = {
-      tapIndex: () => () => undefined,
       registerRoute: () => {
         rotasRegistadas += 1
         if (rotasRegistadas === 3) throw new Error('rota duplicada')
@@ -498,7 +562,7 @@ describe('projecao do estado', () => {
 describe('ligar (2 etapas, nonce opaco)', () => {
   it('passo 1: o clique pede o nonce ao HOST e devolve-o opaco', async () => {
     const bancada = criarBancada()
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_START, { metodo: 'POST', token, corpo: {} })
     assert.equal(resposta.status, 200)
     assert.equal(resposta.corpo.passo, 'confirmar')
@@ -511,7 +575,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
   it('passo 2: emite ControlIntent com requestId ULID novo, nonce opaco e `at` do relogio', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'STARTING', idempotente: false }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     await bancada.enviar(UI_PATH_START, { metodo: 'POST', token, corpo: {} })
     const resposta = await bancada.enviar(UI_PATH_CONFIRM, {
       metodo: 'POST',
@@ -532,7 +596,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
 
   it('dois cliques geram requestIds DIFERENTES (chave de idempotencia)', async () => {
     const bancada = criarBancada()
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     for (let i = 0; i < 2; i += 1) {
       await bancada.enviar(UI_PATH_START, { metodo: 'POST', token, corpo: {} })
       await bancada.enviar(UI_PATH_CONFIRM, { metodo: 'POST', token, corpo: { nonce: `nonce-opaco-${i + 1}` } })
@@ -547,7 +611,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
   it('start sem nonce no corpo e PASSADO AO HOST — quem decide e o host (S5), nao a superficie', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'STOPPED', idempotente: false, recusa: 'NONCE_AUSENTE' }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_CONFIRM, { metodo: 'POST', token, corpo: {} })
     assert.equal(resposta.status, 409)
     assert.equal(resposta.corpo.recusa, 'NONCE_AUSENTE')
@@ -558,7 +622,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
   it('a recusa do controlador chega a UI com codigo e motivo em portugues (CTL-015: modo restrito)', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'STOPPED', idempotente: false, recusa: 'MODO_RESTRITO' }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_CONFIRM, {
       metodo: 'POST',
       token,
@@ -574,7 +638,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
   it('`start` em `STOPPING` e recusado com SHUTDOWN_IN_PROGRESS e o motivo chega a UI (D29)', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'STOPPING', idempotente: false, recusa: 'SHUTDOWN_IN_PROGRESS' }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_CONFIRM, {
       metodo: 'POST',
       token,
@@ -587,7 +651,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
   it('o resultado READY do controlador projeta a URL (e so em READY)', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'READY', idempotente: true, url: URL_DO_TUNEL }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_CONFIRM, {
       metodo: 'POST',
       token,
@@ -601,7 +665,7 @@ describe('ligar (2 etapas, nonce opaco)', () => {
   it('o `emit` que lanca vira 500 generico — nenhum caminho de erro vaza topologia', async () => {
     const bancada = criarBancada()
     bancada.emitLanca = new Error('detalhe interno do controlador')
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_CONFIRM, {
       metodo: 'POST',
       token,
@@ -620,7 +684,7 @@ describe('desligar', () => {
   it('o clique emite ControlIntent `stop` SEM nonce (CTL-024: funciona de primeira)', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'STOPPING', idempotente: false }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_STOP, { metodo: 'POST', token, corpo: {} })
     assert.equal(resposta.status, 200)
     assert.equal(resposta.corpo.estado, 'STOPPING')
@@ -640,7 +704,7 @@ describe('desligar', () => {
 describe('reset (2 etapas com nonce — W3/CTL-023)', () => {
   it('passo 1: o clique pede o nonce de RESET ao HOST e devolve-o opaco', async () => {
     const bancada = criarBancada()
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_RESET, { metodo: 'POST', token, corpo: {} })
     assert.equal(resposta.status, 200)
     assert.equal(resposta.corpo.passo, 'confirmar')
@@ -651,7 +715,7 @@ describe('reset (2 etapas com nonce — W3/CTL-023)', () => {
   it('passo 2: emite ControlIntent reset com o nonce opaco e requestedBy ui:native', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'STOPPED', idempotente: false }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const primeiro = await bancada.enviar(UI_PATH_RESET, { metodo: 'POST', token, corpo: {} })
     assert.equal(primeiro.status, 200)
     const nonce = primeiro.corpo.nonce
@@ -674,7 +738,7 @@ describe('reset (2 etapas com nonce — W3/CTL-023)', () => {
   it('a recusa do reset (ex.: nonce invalido) chega a UI com codigo e motivo', async () => {
     const bancada = criarBancada()
     bancada.resultadoEmit = { estado: 'FAILED', idempotente: false, recusa: 'NONCE_INVALIDO' }
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(UI_PATH_RESET_CONFIRM, { metodo: 'POST', token, corpo: { nonce: 'forjado' } })
     assert.equal(resposta.status, 409)
     assert.equal(resposta.corpo.recusa, 'NONCE_INVALIDO')
@@ -700,7 +764,7 @@ describe('csrf da superficie', () => {
 
   it('token adulterado e recusado com 403', async () => {
     const bancada = criarBancada()
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const meio = Math.floor(token.length / 2)
     const trocado = token[meio] === 'A' ? 'B' : 'A'
     const adulterado = `${token.slice(0, meio)}${trocado}${token.slice(meio + 1)}`
@@ -711,7 +775,7 @@ describe('csrf da superficie', () => {
 
   it('corpo JSON malformado responde 400 sem emitir', async () => {
     const bancada = criarBancada()
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const req = new EventEmitter() as unknown as IncomingMessage
     const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
     bruto.method = 'POST'
@@ -880,7 +944,7 @@ describe('o bloco de agentes atravessa a superficie (UiContribDeps.agentsOps -> 
         },
       },
     })
-    const token = bancada.tokenDoUltimoTap()
+    const token = bancada.tokenDoCsrf()
     const resposta = await bancada.enviar(`${UI_PATH_AGENTS}/ABCDEF12/cancel`, {
       metodo: 'POST',
       token,

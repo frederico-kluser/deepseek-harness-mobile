@@ -2,7 +2,7 @@
  * `src/ui-contrib/routes.ts` — os CANTOS dos handlers HTTP da superficie de UI
  * nativa que a suite de superficie (surface.test.ts) nao toca: leitura de corpo
  * (vazio, nao-objeto, excessivo, malformado), a recusa de CSRF nas rotas do
- * RESET, o token no campo `csrf` do corpo, e o script `client.js` (GET + 405).
+ * RESET e o token no campo `csrf` do corpo.
  *
  * As perguntas falsificaveis desta suite:
  *  - Um POST SEM corpo (vazio) e tratado como `{}` e chega ao handler, ou
@@ -12,8 +12,9 @@
  *  - Toda mutacao POST do RESET exige o token anti-CSRF da superficie (NIST
  *    SP 800-63B-4 5.1.1), como as do LIGAR/DESLIGAR?
  *  - O token aceite pelo CABECALHO e pelo campo do corpo e o mesmo?
- *  - `GET /__guard-ui/client.js` e a fonte do script, com `no-store` e sem
- *    vazar segredo; o metodo errado responde 405 com `allow`.
+ *  - `GET /__guard-ui/api/csrf` emite o token da superficie (HIGH-2) — a
+ *    UNICA fonte desde que o chrome da home saiu; e o `/client.js` antigo
+ *    NAO existe mais (nenhuma rota o registra).
  */
 
 import assert from 'node:assert/strict'
@@ -34,7 +35,6 @@ import {
 } from '../../../src/ui-contrib/csrf.ts'
 import {
   UI_PATH_AGENTS,
-  UI_PATH_CLIENT,
   UI_PATH_CONFIRM,
   UI_PATH_CSRF,
   UI_PATH_PAIR,
@@ -80,15 +80,8 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
   const emitidos: ControlIntent[] = []
   const noncesPedidos: string[] = []
   const resultadoEmit: ControlResultado = { estado: 'STOPPED', idempotente: false }
-  let tokenDoTap = ''
 
   const deps: UiContribDeps = {
-    tapIndex: (transform) => {
-      const html = transform('<html><head></head><body></body></html>')
-      const m = /<meta name="dsh-guard-ui-csrf" content="([^"]+)">/u.exec(html)
-      tokenDoTap = m?.[1] ?? ''
-      return () => undefined
-    },
     registerRoute: (rota) => {
       // O espelho do despacho do host: exact na tabela exact, prefixo na de
       // prefixos (o cancelamento de agentes vive no segmento do caminho).
@@ -197,15 +190,38 @@ function criarBancada(overrides?: Partial<UiContribDeps>): {
     }
   }
 
+  const token = (): string => {
+    // O token de CSRF vem da rota GET /api/csrf (HIGH-2) — a UNICA fonte desde
+    // que o tap do indice saiu; e o MESMO guard que os POSTs verificam.
+    const rota = rotas.get(UI_PATH_CSRF)
+    assert.ok(rota !== undefined, 'a rota /csrf deveria estar registada')
+    const req = new EventEmitter() as unknown as IncomingMessage
+    const bruto = req as unknown as { method: string; url: string; headers: Record<string, string>; destroy(): void }
+    bruto.method = 'GET'
+    bruto.url = UI_PATH_CSRF
+    bruto.headers = {}
+    bruto.destroy = () => undefined
+    let corpoTexto = ''
+    const res = {
+      writeHead: (): void => undefined,
+      end: (corpo?: unknown): void => {
+        corpoTexto = typeof corpo === 'string' ? corpo : String(corpo ?? '')
+      },
+    } as unknown as ServerResponse
+    void rota.handler(req, res)
+    req.emit('end')
+    const corpo = JSON.parse(corpoTexto) as { token?: unknown }
+    assert.equal(typeof corpo.token, 'string', 'o /csrf deveria devolver um token')
+    assert.ok((corpo.token as string).length > 0, 'o /csrf deveria emitir um token nao vazio')
+    return corpo.token as string
+  }
+
   return {
     clock,
     rotas,
     emitidos,
     noncesPedidos,
-    token: () => {
-      assert.ok(tokenDoTap.length > 0, 'o tap nao emitiu token')
-      return tokenDoTap
-    },
+    token,
     enviar,
   }
 }
@@ -308,26 +324,13 @@ describe('csrf nas rotas POST', () => {
 })
 
 /* ========================================================================== */
-/* O script da superficie                                                     */
+/* A AUSENCIA do script do chrome (GET /__guard-ui/client.js)                 */
 /* ========================================================================== */
 
-describe('GET /__guard-ui/client.js', () => {
-  it('GET devolve a fonte do script com content-type javascript e no-store', async () => {
+describe('A rota /__guard-ui/client.js NAO existe mais (chrome da home removido)', () => {
+  it('nenhuma rota da superficie registra o /client.js antigo', () => {
     const bancada = criarBancada()
-    const resposta = await bancada.enviar(UI_PATH_CLIENT, { metodo: 'GET', pedacos: [] })
-    assert.equal(resposta.status, 200)
-    assert.equal(resposta.cabecalhos['content-type'], 'text/javascript; charset=utf-8')
-    assert.equal(resposta.cabecalhos['cache-control'], 'no-store')
-    assert.ok(resposta.texto.includes('/__guard-ui/api'), 'o script conhece a BASE')
-    assert.ok(resposta.texto.includes('dsh-guard-ui-estado'), 'o script desenha o estado')
-    assert.ok(!resposta.texto.includes('CANARY-a1b2c3d4e5f6-DO-NOT-LEAK'))
-  })
-
-  it('metodo errado responde 405 com allow: GET', async () => {
-    const bancada = criarBancada()
-    const resposta = await bancada.enviar(UI_PATH_CLIENT, { metodo: 'POST', pedacos: ['{}'] })
-    assert.equal(resposta.status, 405)
-    assert.equal(resposta.cabecalhos.allow, 'GET')
+    assert.equal(bancada.rotas.has('/__guard-ui/client.js'), false, 'o /client.js do chrome ainda esta registado')
   })
 })
 

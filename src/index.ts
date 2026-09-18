@@ -1265,7 +1265,6 @@ export function apply(
     })()
 
     const desmontarUi = createNativeUiSurface({
-      tapIndex: (transform) => ctx.webServer.tapIndex(transform),
       registerRoute: (route) => ctx.webServer.register(route as WebRoute),
       emit: (intent) => controlador.despachar(intent),
       issueNonce: (action) => controlador.emitirNonce(action),
