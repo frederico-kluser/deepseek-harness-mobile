@@ -1,7 +1,7 @@
 {
   "name": "dsh-guard-messenger",
   "version": "0.1.1",
-  "description": "Plugin Cordis para o DeepSeek Harness: acesso remoto pelo Telegram sem login — local abre direto, túnel autenticado por chave no link (?key=), /rotacionar revoga chave, sessões e conexões ativas; botão offline/online na UI.",
+  "description": "Plugin Cordis para o DeepSeek Harness: acesso remoto pelo Telegram sem login — local abre direto, túnel autenticado por chave no link (?key=), /rotacionar revoga chave, sessões e conexões ativas; controle do túnel e do bot na aba \"Remote Access\" do modal de settings do DSH.",
   "license": "MIT",
   "private": false,
   "repository": {

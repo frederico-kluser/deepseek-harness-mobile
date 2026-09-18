@@ -65,9 +65,10 @@ export interface RespostaPost {
 export function apply(ctx: DshClientCtx): void
 
 /**
- * O token anti-CSRF a usar num POST: fonte preferida `GET /__guard-ui/api/csrf`
- * (HIGH-2), com fallback ao `<meta name="dsh-guard-ui-csrf">` do chrome antigo.
- * `''` = nenhuma fonte deu → o POST recusa com mensagem clara.
+ * O token anti-CSRF a usar num POST: a fonte ÚNICA é `GET /__guard-ui/api/csrf`
+ * (HIGH-2), um token stateless FRESCO a cada pedido. O fallback antigo ao
+ * `<meta name="dsh-guard-ui-csrf">` do chrome da home morreu com o chrome — o
+ * meta nem é lido. `''` = a fonte não deu → o POST recusa com mensagem clara.
  */
 export function buscarTokenCsrf(documento: Document): Promise<string>
 
@@ -223,3 +224,52 @@ export type EstadoChip =
  * de ambiente no detalhe de env — o estado do bot é provider-agnóstico.
  */
 export function chipDoBot(token: EstadoDoToken | null, telegrama: EstadoTelegrama | null, provider?: TipoProvider): EstadoChip
+
+/**
+ * O vocabulário FECHADO dos seis estados do túnel — o MESMO enum do contrato
+ * do backend (`TunnelState`). O payload usa o enum em inglês; o rótulo PT é
+ * texto de UI do client.
+ */
+export type EstadoTunel = 'STOPPED' | 'STARTING' | 'READY' | 'DEGRADED' | 'STOPPING' | 'FAILED'
+
+/**
+ * O corpo de `GET /__guard-ui/api/state` — o tipo ESPELHO da projeção do
+ * backend. `url` e `expiraEm` chegam SE E SÓ SE `estado === 'READY'`;
+ * `falha` é `null` fora de falha; `nota` é a nota de TTL expirado (ou
+ * `null`). Quando NENHUMA difusão chegou a rota responde `503
+ * {erro:'sem-estado'}` e o painel NÃO tem estado algum (mostra "—").
+ */
+export interface EstadoProjetado {
+  readonly seq: number
+  readonly estado: EstadoTunel
+  readonly tentativas: number
+  readonly url?: string | undefined
+  readonly expiraEm?: number | undefined
+  readonly falha: { readonly codigo: string; readonly mensagem: string } | null
+  readonly nota: string | null
+}
+
+/**
+ * O rótulo PT-BR de um estado do túnel — os MESMOS literais do chrome antigo
+ * (desligado/ligando/online/instável — tentando de novo/desligando/falhou —
+ * precisa de ação sua). Estado desconhecido devolve o raw TAL QUAL (honesto,
+ * nunca um rótulo inventado); valor ausente/não-string devolve "—" (o "—" do
+ * 503 `sem-estado`).
+ */
+export function rotuloDeEstadoTunel(estado: unknown): string
+
+/**
+ * A linha "expira em Xs" do cartão do túnel (countdown de 1s, teto zero).
+ * `null` quando não há prazo (o backend só o envia em READY).
+ */
+export function linhaExpiraTunel(expiraEm: number | undefined | null, agoraMs: number): string | null
+
+/**
+ * A mensagem de erro de um POST do túnel (start/start-confirm/stop/reset/
+ * reset-confirm/telegram-click): `{motivo}` do backend TAL QUAL quando
+ * vier; status 0 = rede; demais = genérico ("O servidor não respondeu…").
+ */
+export function mensagemDeErroTunel(resposta: {
+  readonly status: number
+  readonly dados: Record<string, unknown>
+}): string

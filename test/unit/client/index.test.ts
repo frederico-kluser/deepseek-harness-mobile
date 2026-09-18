@@ -9,13 +9,15 @@
  *     `sidebar.footer.action` foi REMOVIDO e NAO deve mais ser registado. O
  *     smoke do docs/PANEL-TELEGRAM.md ("COMO TESTAR var-smoke headless"), agora
  *     num teste `test/unit/**` em vez do executavel ad-hoc.
- *  2. A fonte de CSRF preferida do bundle e a GET `/csrf` (HIGH-2): o
+ *  2. A fonte de CSRF do bundle e a GET `/csrf` (HIGH-2) — UNICA: o
  *     `buscarTokenCsrf()` chama `/__guard-ui/api/csrf` e usa o `token`
  *     devolvido — NAO o meta do chrome antigo.
- *  3. O fallback correto: se a GET /csrf falhar, o bundle cai no
- *     `<meta name="dsh-guard-ui-csrf">` (compat reversa com o chrome antigo);
- *     se nem isso der, devolve '' e o `apiPost` recusa com
- *     `csrfIndisponivel:true` (mensagem clara no painel).
+ *  3. A fonte e UNICA: se a GET /csrf falhar (404, 500, rede, corpo sem token
+ *     utilizavel), `buscarTokenCsrf()` devolve '' — o
+ *     `<meta name="dsh-guard-ui-csrf">` do chrome antigo MORREU com o chrome e
+ *     NAO e lido (nem presente). Com o token vazio o `apiPost` recusa sem
+ *     sair, com `csrfIndisponivel:true` — o painel mostra a mensagem clara
+ *     ("CSRF indisponivel — recarregue").
  *  4. O `apiPost()` envia o token NOVO no header `x-dsh-csrf` — o fetch stub
  *     regista o header e a suite confirma que e o token/`csrf` recém-buscado.
  *  5. O cartao "Como criar o bot" (@BotFather) faz parte do bundle: as strings
@@ -47,7 +49,8 @@ function fakeDocument(): { getElementById(): null; createElement(): { id: string
   }
 }
 
-/** Um adereco de `documento` com um meta de CSRF (`querySelector` controlado). */
+/** Um adereco de `documento` com um meta de CSRF (querySelector controlado).
+ *  Continua util para PROVAR que o meta antigo — mesmo presente — NAO e fonte. */
 function documentoComMeta(token: string | null): { querySelector: (sel: string) => { getAttribute(name: string): string | null } | null } {
   return {
     querySelector: (sel: string) => {
@@ -527,23 +530,25 @@ test('CSRF HIGH-2: buscarTokenCsrf busca /__guard-ui/api/csrf e usa o token novo
   const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
 
   const token = await buscar(documentoComMeta('METO-ANTIGO'))
-  assert.equal(token, 'TOKEN-FRESCO-ABC', 'deve preferir o token da GET /csrf')
-  assert.equal(chamadas[0]?.url, '/__guard-ui/api/csrf', 'a fonte preferida e a GET /csrf')
+  assert.equal(token, 'TOKEN-FRESCO-ABC', 'fonte UNICA: deve usar o token da GET /csrf')
+  assert.equal(chamadas[0]?.url, '/__guard-ui/api/csrf', 'a fonte e a GET /csrf')
 })
 
-test('CSRF HIGH-2: GET /csrf indisponivel -> fallback ao meta (chrome antigo)', { skip: BUNDLE_AUSENTE }, async () => {
+test('CSRF HIGH-2: GET /csrf indisponivel -> token vazio (o meta antigo NAO e fonte)', { skip: BUNDLE_AUSENTE }, async () => {
   const { chamadas, fetchStub } = capturarFetch([])
   const modulo = carregarBundle(fetchStub)
   const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
 
-  // Sem /csrf na colecao: o stub responde 404, e o fallback le o meta.
+  // Sem /csrf na colecao: o stub responde 404. MESMO com um meta antigo
+  // presente no documento (um resto do chrome antigo), ele NAO e lido: a
+  // fonte e unica e a ausencia dela devolve ''.
   const token = await buscar(documentoComMeta('DO-META'))
-  assert.equal(token, 'DO-META', 'a GET /csrf falhou e o meta do chrome antigo valera a pena')
+  assert.equal(token, '', 'a GET /csrf falhou → token vazio; o meta antigo não é mais fonte')
   assert.ok(chamadas[0]?.url.includes('/csrf'))
 })
 
-test('CSRF HIGH-2: sem /csrf E sem meta -> apiPost recusa com csrfIndisponivel', { skip: BUNDLE_AUSENTE }, async () => {
-  const { fetchStub } = capturarFetch([])
+test('CSRF HIGH-2: sem /csrf -> apiPost recusa SEM sair, com csrfIndisponivel', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
   const modulo = carregarBundle(fetchStub)
   const post = modulo.apiPost as (
     caminho: string,
@@ -551,9 +556,16 @@ test('CSRF HIGH-2: sem /csrf E sem meta -> apiPost recusa com csrfIndisponivel',
     doc: { querySelector: (s: string) => unknown | null },
   ) => Promise<{ status: number; csrfIndisponivel: boolean }>
 
-  const r = await post('/token', { token: 'x:y' }, documentoComMeta(null))
+  // GET /csrf responde 404 → token '' → o POST NEM SAI (a mensagem clara
+  // "CSRF indisponível" vem daqui). Mesmo com um meta antigo presente, a
+  // recusa é a mesma: o meta não é fonte.
+  const r = await post('/token', { token: 'x:y' }, documentoComMeta('DO-META'))
   assert.equal(r.status, 0)
   assert.equal(r.csrfIndisponivel, true)
+  assert.ok(
+    chamadas.every((c) => c.init?.method !== 'POST'),
+    'o POST não pode sair sem token (recusa clara, nunca um POST sem CSRF)',
+  )
 })
 
 test('CSRF HIGH-2: apiPost envia o token NOVO no header x-dsh-csrf', { skip: BUNDLE_AUSENTE }, async () => {
@@ -578,40 +590,52 @@ test('CSRF HIGH-2: apiPost envia o token NOVO no header x-dsh-csrf', { skip: BUN
   assert.equal(cabecalhos['x-dsh-csrf'], 'NOVO-TOKEN', 'o header deve carregar o token NOVO da GET /csrf')
 })
 
-test('CSRF HIGH-2: rede falhou na GET /csrf -> fallback ao meta (catch do fetch)', { skip: BUNDLE_AUSENTE }, async () => {
+test('CSRF HIGH-2: rede falhou na GET /csrf -> token vazio (sem fonte alternativa)', { skip: BUNDLE_AUSENTE }, async () => {
   const { chamadas, fetchStub } = capturarFetchComFalha((url) => url.includes('/csrf'))
   const modulo = carregarBundle(fetchStub)
   const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
 
+  // A GET /csrf REJEITA (queda de rede) → token '' — mesmo com um meta antigo
+  // presente, nada o substitui (fonte única).
   const token = await buscar(documentoComMeta('DO-META'))
-  assert.equal(token, 'DO-META', 'a GET /csrf REJEITOU (não é só 404) e o meta do chrome antigo valeu')
+  assert.equal(token, '', 'a GET /csrf rejeitou → token vazio; o meta antigo não é fonte')
   assert.ok(chamadas[0]?.url.includes('/csrf'), 'a GET /csrf deve ter sido tentada')
 })
 
-test('CSRF HIGH-2: GET /csrf ok mas SEM token utilizável -> fallback ao meta', { skip: BUNDLE_AUSENTE }, async () => {
+test('CSRF HIGH-2: GET /csrf ok mas SEM token utilizável -> token vazio', { skip: BUNDLE_AUSENTE }, async () => {
   // `{}` (sem a chave token), `{token:''}` (vazio) e `{token: 123}` (tipo
-  // errado) têm de cair no meta — só string não-vazia vale como token.
+  // errado) NÃO valem como token — só string não-vazia. E o meta antigo, mesmo
+  // presente, não salva: a fonte é única.
   for (const corpo of [{}, { token: '' }, { token: 123 }]) {
     const { fetchStub } = capturarFetch([{ urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(200, corpo) }])
     const modulo = carregarBundle(fetchStub)
     const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
-    assert.equal(await buscar(documentoComMeta('DO-META')), 'DO-META', `corpo ${JSON.stringify(corpo)} → fallback ao meta`)
+    assert.equal(await buscar(documentoComMeta('DO-META')), '', `corpo ${JSON.stringify(corpo)} → token vazio (o meta não é fonte)`)
   }
 })
 
-test('CSRF HIGH-2: GET /csrf 500 e meta com conteúdo vazio -> token indisponível', { skip: BUNDLE_AUSENTE }, async () => {
-  // 500 da GET /csrf: não-ok → cai no meta (válido).
+test('CSRF HIGH-2: GET /csrf 500 -> token indisponível (o meta não salva)', { skip: BUNDLE_AUSENTE }, async () => {
+  // 500 da GET /csrf: não-ok → '' — mesmo com um meta antigo presente.
   const { fetchStub } = capturarFetch([{ urlContem: '/__guard-ui/api/csrf', resposta: fakeResposta(500, {}) }])
   const modulo = carregarBundle(fetchStub)
   const buscar = modulo.buscarTokenCsrf as (doc: { querySelector: (s: string) => unknown | null }) => Promise<string>
-  assert.equal(await buscar(documentoComMeta('DO-META')), 'DO-META', 'GET /csrf 500 → meta')
+  assert.equal(await buscar(documentoComMeta('DO-META')), '', 'GET /csrf 500 → token vazio')
 
-  // Meta com conteúdo só-espaço (trim → '') → '' = CSRF indisponível.
-  assert.equal(await buscar(documentoComMeta('   ')), '', 'meta só-espaço → \'\' (trim)')
+  // E sem meta nenhum, idem: '' (a única fonte falhou).
+  assert.equal(await buscar(documentoComMeta(null)), '', 'sem meta e sem /csrf → \'\' (CSRF indisponível)')
 })
 
 test('apiPost: rede falhou no POST -> {status:0} sem csrfIndisponivel', { skip: BUNDLE_AUSENTE }, async () => {
-  const { chamadas, fetchStub } = capturarFetchComFalha((_url, init) => init?.method === 'POST')
+  // Stub sob medida: a GET /csrf responde 200 {token} (a FONTE ÚNICA — sem
+  // meta no caminho) e todo POST REJEITA por rede.
+  const chamadas: ChamadaFetch[] = []
+  const fetchStub = (async (input: string | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input)
+    chamadas.push({ url, init })
+    if (init?.method === 'POST') throw new TypeError('falha de rede simulada (fetch rejeitou)')
+    if (url.includes('/__guard-ui/api/csrf')) return fakeResposta(200, { token: 'T-OK' })
+    return fakeResposta(404, {})
+  }) as typeof fetch
   const modulo = carregarBundle(fetchStub)
   const post = modulo.apiPost as (
     caminho: string,
@@ -619,8 +643,8 @@ test('apiPost: rede falhou no POST -> {status:0} sem csrfIndisponivel', { skip: 
     doc: { querySelector: (s: string) => unknown | null },
   ) => Promise<{ status: number; dados: Record<string, unknown>; csrfIndisponivel: boolean }>
 
-  // A GET /csrf responde 404 (cai no meta 'META'), o POST /token REJEITA por rede.
-  const r = await post('/token', { token: '123:ABC' }, documentoComMeta('META'))
+  // A GET /csrf deu o token; o POST /token REJEITA por rede.
+  const r = await post('/token', { token: '123:ABC' }, documentoComMeta(null))
   assert.equal(r.status, 0, 'rede falhou no POST → status 0 (NUNCA rejeição não tratada)')
   assert.equal(r.csrfIndisponivel, false, 'o CSRF ESTAVA disponível — a falha foi só de rede')
   assert.deepEqual(r.dados, {})
@@ -1015,4 +1039,139 @@ test('bundle: formatarHaQuanto — bordas do relógio do /agentes', { skip: BUND
   assert.equal(fmt(AGORA - 90 * 60_000, AGORA), 'há 1 h 30 min')
   assert.equal(fmt(AGORA - 3 * 3_600_000, AGORA), 'há 3 h')
   void chamadas
+})
+
+/**
+ * Onda 1.2 — o túnel entrou na aba "Remote Access" (o chrome antigo da home
+ * foi removido; as settings são o único lugar da UI). O helper puro
+ * `rotuloDeEstadoTunel` com os SEIS rótulos PT do vocabulário do contrato
+ * `TunnelState` (preservados verbatim do chrome antigo) + o fallback honesto:
+ * valor FORA do enum → o raw TAL QUAL (nunca um rótulo inventado); valor
+ * ausente/não-string/vazio → "—" (o mesmo "—" do 503 `sem-estado` — NUNCA um
+ * "desligado" inventado quando nenhuma difusão chegou).
+ */
+test('bundle: rotuloDeEstadoTunel — os seis rótulos PT do contrato + fallback honesto', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const rotulo = modulo.rotuloDeEstadoTunel as (estado: unknown) => string
+
+  // Os SEIS estados do enum `TunnelState` — os MESMOS literais do chrome antigo.
+  assert.equal(rotulo('STOPPED'), 'desligado')
+  assert.equal(rotulo('STARTING'), 'ligando')
+  assert.equal(rotulo('READY'), 'online')
+  assert.equal(rotulo('DEGRADED'), 'instável — tentando de novo')
+  assert.equal(rotulo('STOPPING'), 'desligando')
+  assert.equal(rotulo('FAILED'), 'falhou — precisa de ação sua')
+
+  // Fallback honesto: desconhecido → raw tal qual; ausente/não-string/vazio → "—".
+  assert.equal(rotulo('COISA-ESTRANHA'), 'COISA-ESTRANHA', 'estado fora do enum → o raw, nunca um rótulo inventado')
+  assert.equal(rotulo(undefined), '—', 'sem estado (503 sem-estado / a carregar) → "—"')
+  assert.equal(rotulo(null), '—')
+  assert.equal(rotulo(''), '—')
+  assert.equal(rotulo(42), '—')
+  assert.equal(rotulo({ estado: 'READY' }), '—')
+  void chamadas
+})
+
+/**
+ * Onda 1.2 — `linhaExpiraTunel`: o countdown "expira em Xs" (o MESMO formato
+ * do chrome antigo) com arredondamento PARA CIMA (ceil — 1 ms restante ainda
+ * mostra "1 s") e teto zero (nunca negativo). Sem prazo (o backend só envia
+ * `expiraEm` em READY) → `null`, e a linha não é renderizada.
+ */
+test('bundle: linhaExpiraTunel — countdown "expira em Xs" (ceil, teto zero, null sem prazo)', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const linha = modulo.linhaExpiraTunel as (expiraEm: number | undefined | null, agoraMs: number) => string | null
+  const BASE = 1_000_000_000
+
+  // Formato e ceil: 5 s inteiros; 1 ms restante ainda conta como 1 s.
+  assert.equal(linha(BASE, BASE - 5_000), 'expira em 5 s')
+  assert.equal(linha(BASE, BASE - 4_999), 'expira em 5 s', 'ceil: 4.999 s restantes → 5 s')
+  assert.equal(linha(BASE, BASE - 1), 'expira em 1 s', 'ceil: 1 ms restante → 1 s')
+  // Teto zero: no prazo e no passado — nunca negativo.
+  assert.equal(linha(BASE, BASE), 'expira em 0 s')
+  assert.equal(linha(BASE, BASE + 60_000), 'expira em 0 s')
+  // Sem prazo (undefined/null): null — a linha some do cartão.
+  assert.equal(linha(undefined, BASE), null)
+  assert.equal(linha(null, BASE), null)
+  void chamadas
+})
+
+/**
+ * Onda 1.2 — `mensagemDeErroTunel`: o `motivo` do backend TAL QUAL (o 409
+ * "já ligando", o nonce expirado do confirm — todos acionáveis e escritos
+ * pelo servidor); status 0 = rede; demais (500, 403, …) = genérico. Um
+ * `motivo` vazio conta como ausente.
+ */
+test('bundle: mensagemDeErroTunel — motivo do 409 tal qual, rede (0) e genérico', { skip: BUNDLE_AUSENTE }, async () => {
+  const { chamadas, fetchStub } = capturarFetch([])
+  const modulo = carregarBundle(fetchStub)
+  const mensagem = modulo.mensagemDeErroTunel as (r: { status: number; dados: Record<string, unknown> }) => string
+
+  // 409 {motivo} — o motivo acionável do backend, sem reescrita.
+  assert.equal(mensagem({ status: 409, dados: { motivo: 'já ligando' } }), 'já ligando')
+  assert.equal(mensagem({ status: 409, dados: { motivo: 'nonce inválido ou expirado' } }), 'nonce inválido ou expirado')
+  // Qualquer status com motivo vale o motivo (o backend o escreve acionável).
+  assert.equal(mensagem({ status: 403, dados: { motivo: 'csrf' } }), 'csrf')
+  // Status 0 = rede.
+  assert.equal(mensagem({ status: 0, dados: {} }), 'Sem ligação ao servidor. Verifica a rede e tenta de novo.')
+  // Motivo ausente/vazio + status != 0 → genérico.
+  assert.equal(mensagem({ status: 500, dados: {} }), 'O servidor não respondeu — recarregue a página e tente de novo.')
+  assert.equal(mensagem({ status: 500, dados: { motivo: '' } }), 'O servidor não respondeu — recarregue a página e tente de novo.')
+  void chamadas
+})
+
+/**
+ * Onda 1.2 — o cartão "Túnel" e as instruções "como ligar o bot" estão no
+ * bundle (verificado como conteúdo compilado, mesma fidelidade de smoke dos
+ * restantes cartões; substrings ASCII-only porque o esbuild foge os acentos —
+ * ex. "Ligar t\xFAnel"):
+ *  - as SETE rotas do túnel/bot (GET /state + os 5 POSTs de 1-2 etapas +
+ *    /telegram/click);
+ *  - os TRÊS botões com a habilitação do script antigo (o disabled por
+ *    estado está no código, não em strings) e os rótulos verbatim;
+ *  - os textos das TRÊS confirmações, verbatim do chrome;
+ *  - a guarda anti-duplo-clique ("a confirmar…");
+ *  - o countdown "expira em " e "tentativas: ";
+ *  - as instruções do bot (POST com CSRF) e a doutrina children/innerHTML.
+ */
+test('bundle: o cartão Túnel — rotas, botões, confirmações e instruções do bot (Onda 1.2)', { skip: BUNDLE_AUSENTE }, () => {
+  const codigo = readFileSync(BUNDLE_PATH, 'utf8')
+
+  // As rotas: a GET de estado e os POSTs (o esbuild emite aspas duplas; os
+  // caminhos são literais compostos com API_BASE em runtime).
+  assert.ok(codigo.includes('"/state"'), 'o cartão deve consultar GET /state')
+  assert.ok(codigo.includes('"/start"'), 'o LIGAR de 2 etapas deve começar em POST /start')
+  assert.ok(codigo.includes('"/start/confirm"'), 'o passo 2 do LIGAR deve ir a /start/confirm')
+  assert.ok(codigo.includes('"/stop"'), 'o DESLIGAR deve ir a POST /stop')
+  assert.ok(codigo.includes('"/reset"'), 'o REPOR de 2 etapas deve começar em POST /reset')
+  assert.ok(codigo.includes('"/reset/confirm"'), 'o passo 2 do REPOR deve ir a /reset/confirm')
+  assert.ok(codigo.includes('"/telegram/click"'), 'as instruções do bot devem vir de POST /telegram/click')
+
+  // Os TRÊS botões, rótulos verbatim (prefixos ASCII — o esbuild foge acentos).
+  assert.ok(codigo.includes('Ligar t'), 'o botão "Ligar túnel" deve estar no bundle')
+  assert.ok(codigo.includes('Desligar t'), 'o botão "Desligar túnel" deve estar no bundle')
+  assert.ok(codigo.includes('Repor (ap'), 'o botão "Repor (após falha)" deve estar no bundle')
+
+  // As TRÊS confirmações, verbatim do chrome antigo.
+  assert.ok(codigo.includes('Ligar o t'), 'a confirmação do LIGAR deve estar no bundle')
+  assert.ok(codigo.includes('Desligar o T'), 'a confirmação do DESLIGAR deve estar no bundle')
+  assert.ok(codigo.includes('Repor o estado de falha'), 'a confirmação do REPOR deve estar no bundle')
+  assert.ok(codigo.includes('guard-confirm'), 'a caixa deve usar o padrão guard-confirm existente')
+
+  // Anti-duplo-clique do Confirmar + os rótulos de estado em voo.
+  assert.ok(codigo.includes('a confirmar'), 'o Confirmar deve mostrar "a confirmar…" em voo')
+
+  // As linhas da projeção: countdown e tentativas.
+  assert.ok(codigo.includes('expira em '), 'a linha "expira em Xs" deve estar no bundle')
+  assert.ok(codigo.includes('tentativas: '), 'a linha "tentativas:" deve estar no bundle')
+
+  // As instruções "como ligar o bot": o POST com CSRF renderiza os passos
+  // como CHILDREN (texto puro), num <details> dobrado.
+  assert.ok(codigo.includes('Como ligar o bot'), 'o bloco "Como ligar o bot" deve estar no bundle')
+  assert.ok(codigo.includes('Ver instru'), 'o botão "Ver instruções" deve estar no bundle')
+  assert.ok(codigo.includes('guard-tunnel-passo'), 'os passos devem usar as classes guard-tunnel-*')
+  assert.ok(!codigo.includes('dangerouslySetInnerHTML'), 'NENHUM texto entra no DOM por dangerouslySetInnerHTML')
+  assert.ok(!codigo.includes('innerHTML'), 'NENHUM texto entra no DOM por innerHTML (doutrina children)')
 })

@@ -25,6 +25,20 @@
  * O estado baseia-se em `GET /token-state` + `GET /telegram` + `GET /pair-state`
  * (polling de ~5s; sondagem de pareamento a cada ~3s).
  *
+ * ABAIXO DA TRILHA vivem dois blocos que VIERAM da HOME (o chrome antigo
+ * injetado no índice do DSH foi removido; as settings são o único lugar da UI
+ * deste plugin):
+ *   - Cartão "Túnel" — a PROJEÇÃO de `GET /state` (estado 6-valor do contrato
+ *     `TunnelState` com os rótulos PT do chrome, URL só em READY, countdown
+ *     "expira em Xs" no ticker de 1s, tentativas, falha/nota em vermelho) e os
+ *     TRÊS botões do controle: Ligar (2 etapas com nonce, só em STOPPED),
+ *     Desligar (confirmação, em STARTING/READY/DEGRADED) e Repor (2 etapas
+ *     com nonce, SÓ em FAILED). Confirmações `guard-confirm` com textos
+ *     verbatim do chrome e guarda anti-duplo-clique no Confirmar.
+ *   - Instruções "como ligar o bot" — POST `/telegram/click` (com CSRF)
+ *     devolve os passos do provedor ativo, renderizados como CHILDREN de
+ *     React num `<details>` (texto puro — NUNCA innerHTML).
+ *
  * PROVIDER-AWARE: os rótulos de onboarding (passos de criação, canal do
  * provedor, variável de ambiente do token) vivem num mapa local por provedor
  * (`telegram`/`discord`, fallback `telegram` — ver `rotulosDoProvider`). O
@@ -35,13 +49,13 @@
  * SEGURANÇA: o token/segredo NUNCA entra neste bundle. O `@handle` (devolvido
  * pela rota quando o `getMe` o confirmou) é a única informação do bot aqui — e
  * sai do SERVIDOR, não do teu bundle. Todo POST envia `x-dsh-csrf`. A fonte do
- * token NÃO é uma só: o caminho preferido (HIGH-2) é `GET /api/csrf`, o mesmo
- * guard da superficie emitindo um token stateless FRESCO por pedido — sem
- * depender do chrome antigo. Só se o GET falhar é que o bundle cai no
- * `<meta name="dsh-guard-ui-csrf">` que o `tapIndex` injeta no índex (compat
- * com o chrome antigo). Se nenhuma das duas der, os POSTs falham com mensagem
- * clara ("CSRF indisponível — recarregue"). Nenhuma ?key, nenhum id de sessão
- * em claro, nenhuma dependência nova.
+ * token é UMA SÓ (HIGH-2): `GET /api/csrf`, o mesmo guard da superficie
+ * emitindo um token stateless FRESCO por pedido. O fallback antigo ao
+ * `<meta name="dsh-guard-ui-csrf">` MORREU com o chrome da home (removido —
+ * as settings são o único lugar da UI deste plugin): nem um meta que tenha
+ * ficado para trás é lido. Se a GET não der, os POSTs não saem e o painel
+ * mostra mensagem clara ("CSRF indisponível — recarregue"). Nenhuma ?key,
+ * nenhum id de sessão em claro, nenhuma dependência nova.
  *
  * CSS: `./guard-panel.css` (classes com prefixo `guard-`, só tokens `--dsw-*`)
  * é embebido como string pelo esbuild (loader `text`) e injetado num
@@ -89,25 +103,29 @@ function asegurarCss(documento: Document): void {
 
 const API_BASE = '/__guard-ui/api'
 
-/** Nome do meta do chrome antigo — compat reversa, NÃO a fonte preferida. */
-const CSRF_META_NAME = 'dsh-guard-ui-csrf'
-
-/** Teto curto do GET /csrf: o token é barato; se atrasar, cai no meta. */
+/** Teto curto do GET /csrf: o token é barato; se atrasar, o POST recusa. */
 const CSRF_TIMEOUT_MS = 2500
 
 /** CSRF indisponível — sinaliza ao chamador para recusar o POST. */
 const CSRF_INDISPONIVEL = ''
 
 /**
- * O token anti-CSRF a usar num POST. Fonte preferida (HIGH-2): `GET /api/csrf`,
- * o mesmo guard da superficie emitindo um token stateless FRESCO. Só se essa
- * GET falhar (rede/timeout) é que cai no `<meta name="dsh-guard-ui-csrf">` do
- * chrome antigo. `''` = nenhuma fonte deu → o POST recusa com mensagem clara.
+ * O token anti-CSRF a usar num POST. A fonte ÚNICA (HIGH-2): `GET /api/csrf`,
+ * o mesmo guard da superficie emitindo um token stateless FRESCO a cada
+ * pedido. O fallback antigo ao `<meta name="dsh-guard-ui-csrf">` do chrome da
+ * home MORREU com o chrome — o meta nem é lido (nem se um dia um meta com
+ * esse nome aparecer no documento, ele não é fonte). `''` = a fonte não deu →
+ * o POST recusa com mensagem clara ("CSRF indisponível — recarregue").
  *
- * Exportada para o smoke de teste (test/unit/client) exercitar o fetch /csrf e
- * a ordem fonte-nova → fallback-meta sem montar o React.
+ * O parâmetro `documento` mantém-se na assinatura (a mesma superfície
+ * exportada de sempre, exercitada pelo smoke) — o client não lê mais NADA do
+ * documento para o CSRF.
+ *
+ * Exportada para o smoke de teste (test/unit/client) exercitar o fetch /csrf
+ * sem montar o React.
  */
 export async function buscarTokenCsrf(documento: Document): Promise<string> {
+  void documento
   const controller = new AbortController()
   const temporizador = setTimeout(() => controller.abort(), CSRF_TIMEOUT_MS)
   try {
@@ -121,13 +139,11 @@ export async function buscarTokenCsrf(documento: Document): Promise<string> {
       if (typeof corpo.token === 'string' && corpo.token.length > 0) return corpo.token
     }
   } catch {
-    /* queda de rede/timeout: cai no meta abaixo */
+    /* queda de rede/timeout: sem fonte — o POST recusa abaixo */
   } finally {
     clearTimeout(temporizador)
   }
-  // Compat reversa com o chrome antigo (o meta que o tapIndex injeta).
-  const meta = documento.querySelector<HTMLMetaElement>(`meta[name="${CSRF_META_NAME}"]`)
-  return meta ? (meta.getAttribute('content') ?? '').trim() : CSRF_INDISPONIVEL
+  return CSRF_INDISPONIVEL
 }
 
 interface RespostaPost {
@@ -149,8 +165,8 @@ async function apiGet<T>(caminho: string): Promise<T> {
 
 /**
  * POST JSON com o header anti-CSRF. O token é buscado FRESCO a CADA pedido
- * (GET /api/csrf barato e stateless, com fallback ao meta antigo) — assim o
- * valor nunca envelhece no prazo de 30min do TTL. Rede falhou ⇒ `{status:0}`
+ * (GET /api/csrf barata e stateless — a ÚNICA fonte, HIGH-2) — assim o valor
+ * nunca envelhece no prazo de 30min do TTL. Rede falhou ⇒ `{status:0}`
  * (NUNCA uma rejeição não tratada) — o painel renderiza um erro genérico sem
  * vazar nada. Sem CSRF disponível ⇒ `{status:0, csrfIndisponivel:true}`.
  *
@@ -332,6 +348,106 @@ const MAX_RESUMO_EXIBIDO = 120
 /** Corta o resumo para a linha — o MESMO espirito do cortarTexto do bot. */
 function resumoExibido(summary: string): string {
   return summary.length <= MAX_RESUMO_EXIBIDO ? summary : `${summary.slice(0, MAX_RESUMO_EXIBIDO - 1)}…`
+}
+
+/* ========================================================================== */
+/* TÚNEL — tipos espelho, rótulos e helpers puros (testáveis sem React)       */
+/* ========================================================================== */
+
+/**
+ * O vocabulário FECHADO dos seis estados do túnel — o MESMO enum do contrato
+ * (`src/contracts/tunnel.ts`, `TunnelState`). O payload do backend
+ * (`GET /state`) usa o enum em inglês; o rótulo PT é texto de UI do client
+ * (a mesma separação enum/rotulo do /agentes do bot).
+ */
+export type EstadoTunel = 'STOPPED' | 'STARTING' | 'READY' | 'DEGRADED' | 'STOPPING' | 'FAILED'
+
+/**
+ * O corpo de `GET /__guard-ui/api/state` — o tipo ESPELHO da projeção do
+ * backend (`projetarEstado` em `src/ui-contrib/routes.ts`). `url` e `expiraEm`
+ * chegam SE E SÓ SE `estado === 'READY'`; `falha` é `null` fora de falha;
+ * `nota` é a nota de TTL expirado (ou `null`). Quando NENHUMA difusão chegou,
+ * a rota responde `503 {erro:'sem-estado'}` — o painel então NÃO tem estado
+ * algum e mostra "—" (nunca um "desligado" inventado).
+ */
+export interface EstadoProjetado {
+  readonly seq: number
+  readonly estado: EstadoTunel
+  readonly tentativas: number
+  readonly url?: string | undefined
+  readonly expiraEm?: number | undefined
+  readonly falha: { readonly codigo: string; readonly mensagem: string } | null
+  readonly nota: string | null
+}
+
+/**
+ * Os rótulos PT-BR do túnel — os MESMOS literais do chrome antigo
+ * (`createClientScript` em `src/ui-contrib/html.ts`, o vocabulário preservado):
+ * desligado/ligando/online/instável/desligando/falhou. Congelado como os
+ * demais mapas de rótulo do painel.
+ */
+const ROTULOS_DE_ESTADO_TUNEL: Readonly<Record<EstadoTunel, string>> = Object.freeze({
+  STOPPED: 'desligado',
+  STARTING: 'ligando',
+  READY: 'online',
+  DEGRADED: 'instável — tentando de novo',
+  STOPPING: 'desligando',
+  FAILED: 'falhou — precisa de ação sua',
+})
+
+/**
+ * O rótulo PT-BR de um estado do túnel. Estado DESCONHECIDO (valor fora do
+ * enum que um host futuro emitir) devolve o raw TAL QUAL — honesto, nunca um
+ * rótulo inventado; valor ausente/não-string devolve "—" (o mesmo "—" do
+ * "nenhuma difusão chegou" do 503 `sem-estado`). Exportada para o teste
+ * exercitar os SEIS rótulos + o fallback sem montar React.
+ */
+export function rotuloDeEstadoTunel(estado: unknown): string {
+  if (typeof estado === 'string' && estado in ROTULOS_DE_ESTADO_TUNEL) {
+    return ROTULOS_DE_ESTADO_TUNEL[estado as EstadoTunel]
+  }
+  return typeof estado === 'string' && estado.length > 0 ? estado : '—'
+}
+
+/**
+ * A linha "expira em Xs" do cartão do túnel — o MESMO formato do chrome
+ * antigo ("expira em " + ceil((expiraEm - agora)/1000) + " s"). `null` quando
+ * não há prazo (o backend só o envia em READY); nunca negativo. Exportada
+ * para o teste exercitar as bordas do arredondamento sem montar React.
+ */
+export function linhaExpiraTunel(expiraEm: number | undefined | null, agoraMs: number): string | null {
+  if (typeof expiraEm !== 'number') return null
+  const restante = Math.max(0, Math.ceil((expiraEm - agoraMs) / 1000))
+  return `expira em ${restante} s`
+}
+
+/**
+ * A mensagem de erro de um POST do túnel (start/start-confirm/stop/reset/
+ * reset-confirm/telegram-click): `409 {motivo}` (ou qualquer status com
+ * `motivo`) devolve o motivo TAL QUAL (o backend já o escreve acionável);
+ * status 0 = rede; demais = genérico. Exportada para o teste sem montar
+ * React.
+ */
+export function mensagemDeErroTunel(resposta: {
+  readonly status: number
+  readonly dados: Record<string, unknown>
+}): string {
+  const motivo = resposta.dados['motivo']
+  if (typeof motivo === 'string' && motivo.length > 0) return motivo
+  return resposta.status === 0
+    ? 'Sem ligação ao servidor. Verifica a rede e tenta de novo.'
+    : 'O servidor não respondeu — recarregue a página e tente de novo.'
+}
+
+/**
+ * UM passo das instruções "como ligar o bot" — o que o POST
+ * `/telegram/click` devolve (`passosDoBot` no backend: passos de CONEXÃO
+ * quando o bot está offline, de USO quando online). Os textos entram no DOM
+ * como CHILDREN de React (texto puro) — NUNCA innerHTML.
+ */
+interface PassoBot {
+  readonly titulo: string
+  readonly texto: string
 }
 
 /* ========================================================================== */
@@ -1011,6 +1127,194 @@ function CartaoAgentes(props: {
 }
 
 /* ========================================================================== */
+/* O cartão "Túnel" — o controle que voltou da home para as settings          */
+/* ========================================================================== */
+
+/**
+ * Os textos EXATOS das três confirmações do túnel — preservados VERBATIM do
+ * script do chrome antigo (`createClientScript`), porque a semântica de cada
+ * uma já foi revisada (a de desligar desambigua: derruba o TÚNEL, não o DSH;
+ * o bot e o painel — esta aba — ficam de pé).
+ */
+const TEXTO_CONFIRMACAO_TUNEL: Readonly<Record<'ligar' | 'desligar' | 'repor', string>> = Object.freeze({
+  ligar: 'Ligar o túnel abre esta máquina à internet. Confirmar?',
+  desligar: 'Desligar o TÚNEL? O DSH continua a correr em loopback; o bot e o painel não são afetados.',
+  repor: 'Repor o estado de falha e voltar a desligado? (o túnel permanece desligado)',
+})
+
+/**
+ * A caixa de confirmação do túnel — o MESMO padrão `guard-confirm` do
+ * Avançado (texto vermelho + [Confirmar][Cancelar]). O Confirmar desabilita
+ * enquanto a resposta não chega (anti-duplo-clique: o segundo POST morreria
+ * em nonce inválido/expirado com um motivo enganador — mesmo porquê do
+ * script antigo).
+ */
+function CartaoConfirmacaoTunel(props: {
+  readonly acao: 'ligar' | 'desligar' | 'repor'
+  readonly confirmando: boolean
+  readonly aoConfirmar: () => void
+  readonly aoCancelar: () => void
+}): React.ReactNode {
+  return h('div', { className: 'guard-card guard-confirm' },
+    paragrafo('guard-error', TEXTO_CONFIRMACAO_TUNEL[props.acao]),
+    h('div', { className: 'guard-actions' },
+      h('button', {
+        type: 'button',
+        className: 'guard-btn guard-btn-primary',
+        disabled: props.confirmando,
+        onClick: props.aoConfirmar,
+      }, props.confirmando ? 'a confirmar…' : 'Confirmar'),
+      h('button', {
+        type: 'button',
+        className: 'guard-btn guard-btn-outline',
+        disabled: props.confirmando,
+        onClick: props.aoCancelar,
+      }, 'Cancelar'),
+    ),
+  )
+}
+
+/**
+ * O cartão "Túnel" — o espelho do controle que o chrome antigo injetava na
+ * HOME do DSH, agora DENTRO da aba "Remote Access" das settings:
+ *  - a PROJEÇÃO do estado (GET /state via o poll de ~5s): chip colorido pelo
+ *    estado (READY verde, DEGRADED aviso, FAILED vermelho), URL SÓ em READY,
+ *    countdown "expira em Xs" (o ticker `agora` de 1s do painel) e
+ *    tentativas;
+ *  - falha/nota em vermelho (guard-error) — texto do backend, sempre CHILDREN
+ *    de React (a URL NUNCA é interpolada em HTML, doutrina do painel);
+ *  - os TRÊS botões com a mesma habilitação do script antigo: Ligar só em
+ *    STOPPED (2 etapas com nonce), Desligar em STARTING/READY/DEGRADED
+ *    (confirmação, sem nonce), Repor SÓ em FAILED (2 etapas com nonce);
+ *  - as instruções "como ligar o bot" (POST /telegram/click → passos) num
+ *    bloco dobrado no fim do cartão.
+ * Sem estado (503 `sem-estado` / ainda a carregar) o chip mostra "—" —
+ * honesto: NUNCA um "desligado" inventado.
+ */
+function CartaoTunel(props: {
+  readonly tunel: EstadoProjetado | null
+  readonly agora: number
+  readonly erro: string | null
+  readonly emVoo: boolean
+  readonly aoLigar: () => void
+  readonly aoDesligar: () => void
+  readonly aoRepor: () => void
+  readonly passos: readonly PassoBot[] | null
+  readonly passosAbertos: boolean
+  readonly passosEmVoo: boolean
+  readonly passosErro: string | null
+  readonly aoPassos: () => void
+  readonly aoAlternarPassos: (aberto: boolean) => void
+}): React.ReactNode {
+  const estado = props.tunel?.estado
+  const titulo = h('span', { className: 'guard-card-title' }, 'Túnel')
+
+  // O tom do chip segue a semântica do contrato: READY = operacional (verde),
+  // DEGRADED = a re-tentar sozinho (aviso), FAILED = terminal, precisa de
+  // ação humana (vermelho); os demais neutros.
+  const tomChip =
+    estado === 'READY'
+      ? ' guard-chip-success'
+      : estado === 'DEGRADED'
+        ? ' guard-chip-warning'
+        : estado === 'FAILED'
+          ? ' guard-chip-error'
+          : ''
+
+  // A URL é texto puro como CHILDREN (nunca interpolada em atributo/HTML) e
+  // só aparece em READY — o backend já a omite fora de READY, e a checagem
+  // aqui é a segunda linha de defesa (o cliente não confia, verifica).
+  const url =
+    estado === 'READY' && typeof props.tunel?.url === 'string' && props.tunel.url.length > 0
+      ? props.tunel.url
+      : null
+
+  const expira = linhaExpiraTunel(props.tunel?.expiraEm, props.agora)
+
+  // falha.mensagem (FAILED/DEGRADED) ou nota de TTL expirado — em vermelho;
+  // NUNCA os dois ao mesmo tempo (a falha tem precedência, como no script).
+  const falha = props.tunel?.falha
+  const mensagemFalha =
+    falha !== null && falha !== undefined && typeof falha.mensagem === 'string' && falha.mensagem.length > 0
+      ? falha.mensagem
+      : typeof props.tunel?.nota === 'string' && props.tunel.nota.length > 0
+        ? props.tunel.nota
+        : null
+
+  return h('div', { className: 'guard-card' },
+    titulo,
+    h('div', { className: 'guard-tunnel' },
+      h('div', null,
+        h('span', { className: `guard-chip${tomChip}` },
+          h('span', { className: 'guard-chip-dot' }),
+          rotuloDeEstadoTunel(estado),
+        ),
+      ),
+      url !== null ? h('code', { className: 'guard-tunnel-url' }, url) : null,
+      expira !== null ? paragrafo('guard-muted', expira) : null,
+      props.tunel !== null
+        ? paragrafo('guard-muted', `tentativas: ${String(props.tunel.tentativas)}`)
+        : null,
+      mensagemFalha !== null ? paragrafo('guard-error', mensagemFalha) : null,
+      props.erro !== null ? paragrafo('guard-error', props.erro) : null,
+      h('div', { className: 'guard-actions' },
+        h('button', {
+          type: 'button',
+          className: 'guard-btn guard-btn-primary',
+          disabled: props.emVoo || estado !== 'STOPPED',
+          onClick: props.aoLigar,
+        }, 'Ligar túnel'),
+        h('button', {
+          type: 'button',
+          className: 'guard-btn guard-btn-outline',
+          disabled: props.emVoo || !(estado === 'STARTING' || estado === 'READY' || estado === 'DEGRADED'),
+          onClick: props.aoDesligar,
+        }, 'Desligar túnel'),
+        // FAILED só sai por reset humano (CTL-012) — o botão só acorda aí,
+        // como no script antigo.
+        h('button', {
+          type: 'button',
+          className: 'guard-btn guard-btn-outline',
+          disabled: props.emVoo || estado !== 'FAILED',
+          onClick: props.aoRepor,
+        }, 'Repor (após falha)'),
+      ),
+      // Instruções "como ligar o bot" — o clique é um POST (escrita, com
+      // CSRF) que devolve os passos do provedor ativo; os textos entram como
+      // CHILDREN de React num <details> dobrado.
+      h('div', { className: 'guard-tunnel-bot' },
+        h('span', { className: 'guard-block-title' }, 'Como ligar o bot'),
+        h('div', { className: 'guard-actions' },
+          h('button', {
+            type: 'button',
+            className: 'guard-btn-sm',
+            disabled: props.passosEmVoo,
+            onClick: props.aoPassos,
+          }, props.passosEmVoo ? 'A pedir…' : 'Ver instruções'),
+        ),
+        props.passosErro !== null ? paragrafo('guard-error', props.passosErro) : null,
+        props.passos !== null
+          ? h(Detalhes, {
+              resumo: 'Passos',
+              aberto: props.passosAbertos,
+              aoAlternar: props.aoAlternarPassos,
+            },
+              props.passos.length === 0
+                ? paragrafo('guard-intro', 'O servidor não devolveu passos.')
+                : props.passos.map((passo, i) =>
+                    h('div', { className: 'guard-tunnel-passo', key: i },
+                      h('p', { className: 'guard-tunnel-passo-titulo' }, passo.titulo),
+                      h('p', { className: 'guard-tunnel-passo-texto' }, passo.texto),
+                    ),
+                  ),
+            )
+          : null,
+      ),
+    ),
+  )
+}
+
+/* ========================================================================== */
 /* O PAINEL — a section `settings.section`                                    */
 /* ========================================================================== */
 
@@ -1038,6 +1342,36 @@ function TelegramGuardSection(): React.ReactNode {
   const [agentesErro, setAgentesErro] = useState<string | null>(null)
   // O id do run cujo cancelamento está em voo (o botão mostra "Cancelando…").
   const [cancelandoId, setCancelandoId] = useState<string | null>(null)
+
+  // A PROJEÇÃO do túnel (GET /state); `null` = ainda a carregar OU o 503
+  // `sem-estado` (nenhuma difusão chegou) — em ambos o cartão mostra "—",
+  // nunca um estado inventado. Em falha de rede mantemos o último resultado
+  // honesto (o mesmo padrão do cartão de privacidade).
+  const [tunel, setTunel] = useState<EstadoProjetado | null>(null)
+  // O erro de POST do túnel (motivo do 409, rede, CSRF) — linha vermelha no
+  // cartão. Limpo a cada nova ação.
+  const [tunelErro, setTunelErro] = useState<string | null>(null)
+  // Um POST do túnel (passo 1 de LIGAR/REPOR) em voo — desabilita os três
+  // botões para não lançar dois intents com o mesmo estado na tela.
+  const [tunelEmVoo, setTunelEmVoo] = useState(false)
+  // A ação pendente da caixa guard-confirm do túnel ('ligar'/'desligar'/
+  // 'repor') — estado PRÓPRIO, separado da confirmação do Avançado, porque o
+  // fluxo do túnel carrega nonce e guarda anti-duplo-clique próprios.
+  const [confirmacaoTunel, setConfirmacaoTunel] = useState<'ligar' | 'desligar' | 'repor' | null>(null)
+  // Anti-duplo-clique do botão Confirmar (o MESMO porquê do script antigo:
+  // dois POSTs com o MESMO nonce — o segundo morreria em nonce inválido).
+  const [confirmandoTunel, setConfirmandoTunel] = useState(false)
+  // O nonce do LIGAR/REPOR entre o passo 1 e o passo 2 — OPACO: o cliente não
+  // o lê nem o valida, só o devolve no passo 2 (S5; quem valida é o host).
+  const nonceTunelRef = useRef<string | null>(null)
+
+  // As instruções "como ligar o bot" (POST /telegram/click → passos). `null`
+  // = ainda não pedidas; o POST é uma ESCRITA (abre as instruções) e por isso
+  // viaja com CSRF, como todo POST desta superfície.
+  const [passosBot, setPassosBot] = useState<readonly PassoBot[] | null>(null)
+  const [passosAbertos, setPassosAbertos] = useState(false)
+  const [passosEmVoo, setPassosEmVoo] = useState(false)
+  const [passosErro, setPassosErro] = useState<string | null>(null)
 
   // Formulário de token.
   const [valor, setValor] = useState('')
@@ -1151,9 +1485,131 @@ function TelegramGuardSection(): React.ReactNode {
     [buscarAgentes],
   )
 
+  // A PROJEÇÃO do túnel (GET /state): entra no `recarregarTudo`, por isso o
+  // painel re-busca ~5s e em focus/visibilitychange, como o resto. A rota
+  // responde 503 {erro:'sem-estado'} quando nenhuma difusão chegou — o
+  // `apiGet` lança, o catch mantém o último resultado (ou `null`) e o cartão
+  // mostra "—" (nunca um "desligado" inventado).
+  const buscarTunel = React.useCallback(async (): Promise<void> => {
+    try {
+      const dados = await apiGet<EstadoProjetado>('/state')
+      if (vivo.current) setTunel(dados)
+    } catch {
+      /* sem estado novo: mantém o último honesto (ou "—") */
+    }
+  }, [])
+
+  // Passo 1 do LIGAR/REPOR (2 etapas com nonce, o MESMO fluxo do script
+  // antigo): POST /start | /reset → 200 {passo:'confirmar', nonce} → abre a
+  // caixa guard-confirm; o nonce viaja OPACO no ref até o passo 2.
+  const abrirTunel = React.useCallback(async (acao: 'ligar' | 'repor'): Promise<void> => {
+    if (!vivo.current) return
+    setTunelErro(null)
+    setTunelEmVoo(true)
+    try {
+      const r = await apiPost(acao === 'ligar' ? '/start' : '/reset', {}, document)
+      if (!vivo.current) return
+      if (r.csrfIndisponivel) {
+        setTunelErro('CSRF indisponível — recarregue a página e tente de novo.')
+        return
+      }
+      const nonce = r.dados.nonce
+      if (r.status === 200 && r.dados.passo === 'confirmar' && typeof nonce === 'string' && nonce.length > 0) {
+        nonceTunelRef.current = nonce
+        setConfirmacaoTunel(acao)
+        return
+      }
+      // 409 {motivo} (ex.: já ligando) ou qualquer outra falha — o motivo
+      // acionável do backend, quando vier, é mostrado TAL QUAL.
+      setTunelErro(mensagemDeErroTunel(r))
+    } finally {
+      setTunelEmVoo(false)
+    }
+  }, [])
+
+  // Desligar: SEM nonce (reduz exposição — CTL-024), só a confirmação.
+  const desligarTunel = React.useCallback((): void => {
+    setTunelErro(null)
+    setConfirmacaoTunel('desligar')
+  }, [])
+
+  // Passo 2 (Confirmar da caixa): /stop para 'desligar'; /start/confirm |
+  // /reset/confirm com o nonce para 'ligar'/'repor'. Ao fim, SEMPRE refresca
+  // a projeção (o estado novo chega pela próxima difusão, mas o refresco
+  // imediato evita ver 5s de estado velho).
+  const confirmarTunel = React.useCallback(async (): Promise<void> => {
+    const acao = confirmacaoTunel
+    if (acao === null) return
+    let r: RespostaPost
+    if (acao === 'desligar') {
+      r = await apiPost('/stop', {}, document)
+    } else {
+      const nonce = nonceTunelRef.current
+      r = nonce !== null
+        ? await apiPost(acao === 'ligar' ? '/start/confirm' : '/reset/confirm', { nonce }, document)
+        : { status: 0, dados: {}, csrfIndisponivel: true }
+    }
+    nonceTunelRef.current = null
+    setConfirmacaoTunel(null)
+    if (!vivo.current) return
+    if (r.csrfIndisponivel) {
+      setTunelErro('CSRF indisponível — recarregue a página e tente de novo.')
+      return
+    }
+    if (r.status === 200) {
+      setTunelErro(null)
+      await buscarTunel()
+      return
+    }
+    setTunelErro(mensagemDeErroTunel(r))
+  }, [confirmacaoTunel, buscarTunel])
+
+  // O Confirmar do túnel, com a guarda anti-duplo-clique: desabilita no 1.º
+  // clique (o `disabled` do botão) e SÓ volta quando a resposta chegar — a
+  // guarda síncrona cobre o segundo clique que chega antes do re-render.
+  const aoConfirmarTunel = React.useCallback((): void => {
+    if (confirmandoTunel) return
+    setConfirmandoTunel(true)
+    void confirmarTunel().finally(() => {
+      if (vivo.current) setConfirmandoTunel(false)
+    })
+  }, [confirmandoTunel, confirmarTunel])
+
+  // As instruções "como ligar o bot": POST /telegram/click (com CSRF) →
+  // 200 {passos:[{titulo,texto}]} → render como CHILDREN (texto puro, NUNCA
+  // innerHTML). Falha → mensagem vermelha; o clique é re-tentável.
+  const pedirPassosDoBot = React.useCallback(async (): Promise<void> => {
+    if (!vivo.current) return
+    setPassosErro(null)
+    setPassosEmVoo(true)
+    try {
+      const r = await apiPost('/telegram/click', {}, document)
+      if (!vivo.current) return
+      if (r.csrfIndisponivel) {
+        setPassosErro('CSRF indisponível — recarregue a página e tente de novo.')
+        return
+      }
+      if (r.status !== 200 || !Array.isArray(r.dados.passos)) {
+        setPassosErro(mensagemDeErroTunel(r))
+        return
+      }
+      // Só passos BEM-FORMADOS (titulo/texto strings) entram no estado — um
+      // item malformado do host nunca derruba o painel.
+      const passos = (r.dados.passos as unknown[]).filter(
+        (p): p is PassoBot =>
+          p !== null && typeof p === 'object' &&
+          typeof (p as PassoBot).titulo === 'string' && typeof (p as PassoBot).texto === 'string',
+      )
+      setPassosBot(passos)
+      setPassosAbertos(true)
+    } finally {
+      setPassosEmVoo(false)
+    }
+  }, [])
+
   const recarregarTudo = React.useCallback(async (): Promise<void> => {
-    await Promise.all([buscarToken(), buscarTelegrama(), buscarPrivacidade(false), buscarAgentes()])
-  }, [buscarToken, buscarTelegrama, buscarPrivacidade, buscarAgentes])
+    await Promise.all([buscarToken(), buscarTelegrama(), buscarPrivacidade(false), buscarAgentes(), buscarTunel()])
+  }, [buscarToken, buscarTelegrama, buscarPrivacidade, buscarAgentes, buscarTunel])
 
   // Sonda /pair-state a cada ~3s enquanto houver um código a aguardar (ou a
   // gerar), até o `pareado:true` chegar (o dono digitou /parear no Telegram).
@@ -1493,6 +1949,38 @@ function TelegramGuardSection(): React.ReactNode {
       })
     : null
 
+  // --- Cartão TÚNEL (o controle da home, agora aqui) ---------------------
+  const cartaoTunel = h(CartaoTunel, {
+    tunel,
+    agora,
+    erro: tunelErro,
+    emVoo: tunelEmVoo,
+    aoLigar: () => void abrirTunel('ligar'),
+    aoDesligar: desligarTunel,
+    aoRepor: () => void abrirTunel('repor'),
+    passos: passosBot,
+    passosAbertos,
+    passosEmVoo,
+    passosErro,
+    aoPassos: () => void pedirPassosDoBot(),
+    aoAlternarPassos: setPassosAbertos,
+  })
+
+  // A caixa guard-confirm do túnel (logo abaixo do cartão). O Cancelar
+  // descarta o nonce pendente com a confirmação.
+  const caixaConfirmacaoTunel = confirmacaoTunel !== null
+    ? h(CartaoConfirmacaoTunel, {
+        acao: confirmacaoTunel,
+        confirmando: confirmandoTunel,
+        aoConfirmar: aoConfirmarTunel,
+        aoCancelar: () => {
+          if (confirmandoTunel) return
+          nonceTunelRef.current = null
+          setConfirmacaoTunel(null)
+        },
+      })
+    : null
+
   // --- Bloco de AGENTES (abaixo da trilha — sempre visível) -------------
   const blocoAgentes = h(CartaoAgentes, {
     estado: agentes,
@@ -1521,6 +2009,10 @@ function TelegramGuardSection(): React.ReactNode {
     passo2Concluido,
     passo3,
     caixaConfirmacao,
+
+    // --- TÚNEL + instruções do bot (o ex-bloco da home) -----------------
+    cartaoTunel,
+    caixaConfirmacaoTunel,
     blocoAgentes,
   )
 }

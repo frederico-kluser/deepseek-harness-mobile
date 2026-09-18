@@ -864,3 +864,67 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------------
+ * Cartão "Túnel" — o controle que veio da home (estado projetado, URL,
+ * countdown, falha/nota, os três botões e as instruções "como ligar o bot").
+ * Mínimo necessário: o cartão/caixa/chips/botões já existem (guard-card,
+ * guard-confirm, guard-chip*, guard-btn*); aqui só a coluna do corpo, a URL
+ * mono e os passos do bot. Toda cor via token --dsw-alias-*.
+ * ---------------------------------------------------------------- */
+
+/* O corpo do cartão do túnel (coluna com o mesmo respiro dos cartões). */
+.guard-tunnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* A URL do túnel — só em READY. Monospace como o id de run, com quebra de
+   linha palavra-a-palavra (URLs longas não estouram o cartão). */
+.guard-tunnel-url {
+  display: block;
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* O bloco "Como ligar o bot" (título + botão + <details> dos passos). */
+.guard-tunnel-bot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+/* UM passo das instruções: título em negrito + texto (brancos preservados —
+   o texto do backend usa \n para o comando em bloco). */
+.guard-tunnel-passo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guard-tunnel-passo-titulo {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.guard-tunnel-passo-texto {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

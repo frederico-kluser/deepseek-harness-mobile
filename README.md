@@ -63,7 +63,7 @@ O projeto foi construído para **travar** o DSH em loopback. Este plugin também
 
 > O bind **continua** em `127.0.0.1` e o DSH aí **abre direto** (sem login). O que muda é que passa a existir um processo filho supervisionado (`cloudflared`) que leva o tráfego da borda da Cloudflare até um **proxy dedicado que autentica na borda** (sessão ou `?key=`). Não é o mesmo que `--host 0.0.0.0`: o socket local nunca é alargado, a exposição é **opt-in**, efémera e revogável em um comando — e quem proteger `/api`, o fallback da SPA e o handshake de WebSocket é esse proxy, não o loopback.
 >
-> O que **não** muda: a superfície de ataque lógica cresce. Antes, um atacante precisava de acesso à máquina; agora, pelo túnel, precisa da **chave no link** (ou de uma sessão roubada). Trocámos "inalcançável" por "alcançável e autenticado na borda" — sem login, sem senha a digitar. Essa troca é reversível a qualquer momento pelo botão de desligar (e a chave, pelo `/rotacionar`).
+> O que **não** muda: a superfície de ataque lógica cresce. Antes, um atacante precisava de acesso à máquina; agora, pelo túnel, precisa da **chave no link** (ou de uma sessão roubada). Trocámos "inalcançável" por "alcançável e autenticado na borda" — sem login, sem senha a digitar. Essa troca é reversível a qualquer momento pelo botão de desligar (na aba "Remote Access" das settings do DSH, ou `/desligar` no bot; a chave, pelo `/rotacionar`).
 
 Quem não aceitar esta troca deve usar Tailscale ou SSH — e dizemo-lo com mais calma em [`docs/TUNNEL.md`](docs/TUNNEL.md) e na secção "Quando NÃO usar" abaixo.
 
@@ -72,19 +72,27 @@ Quem não aceitar esta troca deve usar Tailscale ou SSH — e dizemo-lo com mais
 1. **Protege o túnel, não o loopback.** O DSH abre **direto** em `127.0.0.1` (sem login); quem expõe é um **proxy dedicado** que autentica tudo o que chega da internet — `/api`, o fallback da SPA e o handshake de WebSocket. Recusa endereços de bind fora do loopback no carregamento e recusa permissões proibidas (`danger-full-access`). Resolve a superfície da discussão upstream [#853](https://github.com/deepseek-ai/deepseek-harness/discussions/853).
 2. **Nunca pede senha a ninguém.** O acesso pelo túnel entra por **sessão** ou pela **chave no link** `?key=` (CSPRNG, 256 bits, digest em disco). A chave é **reutilizável** até `/rotacionar` (que gera chave nova, invalida sessões **e encerra ativamente as conexões já abertas** — quem tiver o link antigo cai na hora, incluindo WebSockets) ou derrubar o túnel. O 401 é **sem desafio de login** — não há prompt nem formulário de login.
 3. **Suba um túnel efémero** para acederes pelo celular, com TTL que o derruba sozinho e um *probe fail-closed* que impede um túnel "nu" (sem proxy autenticado atrás).
-4. **Ligar/desligar pelo Telegram, Discord ou painel** — o botão de matar na mão.
+4. **Ligar/desligar pelo Telegram, Discord ou pela aba "Remote Access" das settings do DSH** — o botão de matar na mão.
 5. **Dispara agentes do harness pelo bot** — com uma skill da allowlist e um prompt, o dono manda um subagente do DeepSeek Harness trabalhar na própria máquina (`/agente`), acompanha os runs (`/agentes`) e cancela (`/parar-agente`). O dispatch **executa código no host**: exige confirmação em duas etapas, e o agente corre com as permissões do harness — **nunca** com o token do bot. Manual completo: [`docs/AGENTS.md`](docs/AGENTS.md).
 
-### Bot: botão da UI e link automático
+### Bot e túnel: a aba "Remote Access" das settings do DSH
 
-Na UI do DSH há o **botão do bot** (`/__guard-ui`), com estado **OFFLINE/ONLINE**
-fiel ao runtime:
-- **OFFLINE** → o clique mostra as instruções de conexão do **provedor ativo**
-  (Telegram: criar o bot no `@BotFather`; Discord: criar a aplicação no Developer
-  Portal — ver `docs/ONBOARDING-DISCORD.md`), `dsh-guard-setup --pedir-token`,
-  `--parear`, enviar `/parear <código>`; quem segue esse passo a passo de facto
-  coloca o bot **online**;
-- **ONLINE** → mostra dicas de uso.
+O controle do bot e do túnel vive DENTRO da UI do DSH — na aba **"Remote Access"**
+do modal de settings (o plugin registra-se no slot `settings.section`; **não há
+bloco injetado na home**). A aba traz o chip de estado do bot **OFFLINE/ONLINE**
+fiel ao runtime, o formulário de token, o pareamento pelo painel, a privacidade e
+o **cartão "Túnel"** — estado ao vivo (`desligado`/`ligando`/`online`/`instável`/
+`desligando`/`falhou`), a URL quando READY, o countdown "expira em", as tentativas
+e os botões **Ligar túnel** (confirmação em duas etapas), **Desligar túnel**
+(confirmação) e **Repor (após falha)** (duas etapas, só quando falhou).
+
+O botão **"Ver instruções"** ("Como ligar o bot") pede ao servidor os passos do
+**provedor ativo**:
+- **OFFLINE** → as instruções de conexão (Telegram: criar o bot no `@BotFather`;
+  Discord: criar a aplicação no Developer Portal — ver `docs/ONBOARDING-DISCORD.md`),
+  `dsh-guard-setup --pedir-token`, `--parear`, enviar `/parear <código>`; quem
+  segue esse passo a passo de facto coloca o bot **online**;
+- **ONLINE** → dicas de uso.
 
 Depois de pareado (`docs/ONBOARDING-TELEGRAM.md` para o Telegram,
 `docs/ONBOARDING-DISCORD.md` para o Discord — os comandos são os **MESMOS** nos
