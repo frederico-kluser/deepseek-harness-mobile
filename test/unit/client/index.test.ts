@@ -1070,6 +1070,15 @@ test('bundle: rotuloDeEstadoTunel — os seis rótulos PT do contrato + fallback
   assert.equal(rotulo(''), '—')
   assert.equal(rotulo(42), '—')
   assert.equal(rotulo({ estado: 'READY' }), '—')
+
+  // Regressão (fallback honesto): nomes de propriedades HERDADAS de Object.prototype
+  // NÃO são estados do enum — com `estado in ROTULOS` eles casavam e o helper
+  // devolvia uma FUNÇÃO (o membro herdado), quebrando o contrato "fora do enum →
+  // o raw TAL QUAL" (e o render de React, que receberia um child função).
+  for (const herdado of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', 'toLocaleString'] as const) {
+    assert.equal(rotulo(herdado), herdado, `propriedade herdada "${herdado}" → o raw tal qual, nunca uma função`)
+    assert.equal(typeof rotulo(herdado), 'string', `"${herdado}" deve devolver string (nunca o membro herdado de Object.prototype)`)
+  }
   void chamadas
 })
 

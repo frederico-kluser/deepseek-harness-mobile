@@ -403,7 +403,10 @@ const ROTULOS_DE_ESTADO_TUNEL: Readonly<Record<EstadoTunel, string>> = Object.fr
  * exercitar os SEIS rótulos + o fallback sem montar React.
  */
 export function rotuloDeEstadoTunel(estado: unknown): string {
-  if (typeof estado === 'string' && estado in ROTULOS_DE_ESTADO_TUNEL) {
+  // `Object.hasOwn` (ES2022, alvo do bundle) e não `in`: `in` casaria propriedades
+  // HERDADAS de Object.prototype ('toString', 'constructor', …) e devolveria uma
+  // função — quebrando o contrato do fallback honesto (fora do enum → raw tal qual).
+  if (typeof estado === 'string' && Object.hasOwn(ROTULOS_DE_ESTADO_TUNEL, estado)) {
     return ROTULOS_DE_ESTADO_TUNEL[estado as EstadoTunel]
   }
   return typeof estado === 'string' && estado.length > 0 ? estado : '—'
