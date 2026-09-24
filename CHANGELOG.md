@@ -29,11 +29,37 @@ linha `[Unreleased]` é substituído a cada `changeset version`.
 
 - **Remoção do provedor Discord — o plugin fica só Telegram.** Apagados o adaptador
   `worker/providers/discord/**`, os testes/dublês/e2e do Discord, a `docs/ONBOARDING-DISCORD.md`
-  e todas as menções a Discord em código, configuração, docs atuais e skills. O `ProviderId`
+  e todo o código, funcionalidade, configuração, documentação e skills do Discord. O `ProviderId`
   (host e worker) passa a ser `'telegram'` e `worker.provider` aceita só o literal `'telegram'`.
   A arquitetura multi-provedor mantém-se: o registry continua fechado e fail-closed
   (`DSH_GUARD_PROVIDER` ausente → `telegram`; desconhecido → `ProvedorDesconhecidoError`).
   Para quem usa o Telegram nada muda: mesmo token, pareamento e comandos.
+
+  **Promessa verificável (bitola literal):** o estado final desta versão tem **zero** código,
+  funcionalidade, configuração, docs atuais ou skills do Discord. As menções ao nome que persistem
+  no repositório pertencem só a duas classes de exceções, nomeadas e verificáveis —
+  **(a) registos desta remoção**: este changelog e o `.changeset/remocao-provedor-discord.md`
+  (incluindo o nome do ficheiro); **(b) strings de guarda anti-regressão** que nomeiam o que
+  proíbem: `FORBIDDEN_PREFIXES` e o cabeçalho de `scripts/check-tarball.mjs`, a anotação
+  `"//scripts"` do `package.json` e o teste `test/unit/scripts/release-artefacts.test.ts`. Fora
+  destas duas classes — e do arquivo histórico de planeamento `docs/plano/**`, que nunca foi doc
+  atual — não resta qualquer menção a Discord (`grep -ri discord` devolve exactamente estas
+  exceções, mais uma pendência transitória e o seu eco compilado — ambos nomeados abaixo).
+
+  **Pendências transitórias (condicionais):** a pendência transitória é **uma, com o seu eco
+  compilado** — e ambos estão nomeados: (1) o comentário em código vivo de
+  `worker/providers/telegram/parse.ts`; (2) o seu eco compilado transitório em
+  `dist/worker/providers/telegram/parse.js:328` (produto de build, gitignored e apagado pelo
+  `clean` a cada build — por isso invisível num `grep --exclude-dir=dist`). A menção (1) é
+  removida por um fix em paralelo que **tem de entrar na mesma versão**; se não entrar, esta
+  promessa fica sem efeito e as menções (1) e (2) persistem.
+
+  **SECURITY: exige ação do utilizador (migração):** quem tem `worker.provider: 'discord'` na
+  configuração (o `INSTALL.md` antigo ensinava-o) tem de **remover a linha ou mudá-la para
+  `'telegram'`** antes do arranque. Sem essa alteração o plugin não arranca: `worker.provider`
+  aceita apenas `'telegram'` e o boot falha alto com `config.worker.provider = 'discord' nao e um
+  provedor conhecido (telegram)` — fail-loud por decisão (o registry é fechado e não degrada em
+  silêncio). Quem já usa só o Telegram nada muda.
 - **Arquitetura de provedores de mensageria.** O worker do bot passou a ser **neutro ao provedor**:
   o núcleo (roteador comando→intent, allowlist de dois eixos, pareamento, outbox, autolink e
   pendentes) vive agora em `worker/surface/**`, e o Telegram — hoje o único fornecedor — está

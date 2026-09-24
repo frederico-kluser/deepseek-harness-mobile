@@ -8,7 +8,8 @@
  *     CONTEM    dist/index.js, dist/index.d.ts, dist/worker/telegram-bot.js,
  *               dist/bin/dsh-guard-setup.js (o alvo do campo `bin`, 06 §9.2),
  *               cordis.patch.yml, README.md, LICENSE, CHANGELOG.md
- *     NAO CONTEM src/, types/, test/, docs/, .env
+ *     NAO CONTEM src/, types/, test/, docs/, .env, nem restos compilados de
+ *     provedores removidos (dist/worker/providers/discord/** e espelho lib/)
  *
  *   Falha de forma explicita tanto se faltar um ficheiro obrigatorio como se um
  *   dos prefixos proibidos aparecer - nao ha verificacao so de um lado.
@@ -55,8 +56,26 @@ const REQUIRED = [
   'CHANGELOG.md',
 ]
 
-/** Prefixos que o tarball NAO pode conter (06 §8.3). */
-const FORBIDDEN_PREFIXES = ['src/', 'types/', 'test/', 'docs/', '.env']
+/**
+ * Prefixos que o tarball NAO pode conter (06 §8.3).
+ *
+ * `dist/worker/providers/discord/` e `lib/worker/providers/discord/` sao a
+ * defesa em profundidade da REMOCAO DO PROVEDOR DISCORD (e o padrao para
+ * qualquer modulo apagado no futuro): o `clean` do `build:all` ja compila para
+ * uma arvore limpa, mas o gate tem de rejeitar os restos compilados stale se
+ * algum dia voltarem ao artefato por outro caminho — repro da revisao: 8
+ * modulos + sourcemaps do provedor apagado (mtimes antigos em dist/) iao no
+ * tarball publicado e este verificador passava verde.
+ */
+const FORBIDDEN_PREFIXES = [
+  'src/',
+  'types/',
+  'test/',
+  'docs/',
+  '.env',
+  'dist/worker/providers/discord/',
+  'lib/worker/providers/discord/',
+]
 
 function fail(message) {
   console.error('check-tarball.mjs: FALHOU - ' + message)

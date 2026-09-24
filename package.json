@@ -47,12 +47,14 @@
     "darwin"
   ],
   "packageManager": "pnpm@11.7.0",
+  "//scripts": "LIMPEZA DETERMINICA NO CAMINHO DO ARTEFATO: `build:all` comeca por `clean` (apaga `dist/` e `lib/`) para que `prepare`/`prepack`/`prepublishOnly` compilen SEMPRE para uma arvore limpa. Sem isto, artefactos compilados de modulos JA APAGADOS sobreviviam ao `tsc` (que so escreve o que a fonte ainda declara) e iao no tarball publicado — repro da revisao: `dist/worker/providers/discord/**` (8 modulos + sourcemaps do provedor removido, mtimes antigos) entrava no `pnpm pack` e a remocao era falsa no artefato. A defesa em profundidade e o gate do tarball: FORBIDDEN_PREFIXES do `scripts/check-tarball.mjs` rejeita `dist/worker/providers/discord/` e `lib/worker/providers/discord/`; guarda de regressao em test/unit/scripts/release-artefacts.test.ts.",
   "scripts": {
     "lint": "oxlint . && eslint .",
     "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist lib",
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.bin.json",
     "build:client": "node scripts/build-client.mjs",
-    "build:all": "pnpm build && pnpm build:client",
+    "build:all": "pnpm run clean && pnpm build && pnpm build:client",
     "prepare": "pnpm run build:all",
     "test": "node --test --test-reporter=spec 'test/unit/**/*.test.ts' 'test/integration/**/*.test.ts'",
     "test:contract": "node --test 'test/contract/**/*.test.ts'",
