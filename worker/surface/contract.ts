@@ -1,6 +1,6 @@
 /**
  * O CONTRATO NEUTRO DA SUPERFICIE DE MENSAGERIA — o que QUALQUER provedor
- * (Telegram hoje, WhatsApp/Discord/Matrix/Signal/Slack amanha) implementa, e o
+ * (Telegram hoje, WhatsApp/Matrix/Signal/Slack amanha) implementa, e o
  * que o nucleo neutro consome.
  *
  * DONO: onda 1 do desacoplamento parler-to-providers. LEITURA LIVRE nos
@@ -548,7 +548,7 @@ export interface SurfacePublishedCommand {
  * o handler — o nucleo neutro nao sabe o que e polling nem webhook.
  */
 export interface ProviderAdapter {
-  /** Identificador estavel do provedor (ex.: `'telegram'`, `'discord'`). */
+  /** Identificador estavel do provedor (ex.: `'telegram'`). */
   readonly id: string
   /** Os limites do canal, para o nucleo cortar e renderizar. */
   readonly limits: SurfaceLimits

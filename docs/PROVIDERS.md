@@ -24,9 +24,8 @@ Para os níveis de teste e o gate ver [`docs/TESTING.md`](TESTING.md).
 
 ## 1. Visão
 
-O worker do bot suporta **dois provedores de mensageria: o Telegram** (via a biblioteca
-`grammY`) **e o Discord** (gateway WebSocket próprio e REST via `fetch` — **sem SDK, sem
-dependência nova**). O objetivo da arquitetura é que **WhatsApp, Matrix, Signal, Slack e
+O worker do bot suporta **um provedor de mensageria: o Telegram** (via a biblioteca
+`grammY`). O objetivo da arquitetura é que **WhatsApp, Matrix, Signal, Slack e
 outros** entrem como unidades independentes atrás de um **contrato neutro comum** — **sem
 quebrar nada do que funciona hoje**.
 
@@ -34,14 +33,11 @@ A separação é dupla:
 
 - **O núcleo é neutro ao provedor.** O roteador de comandos, a allowlist de dois eixos, o
   pareamento, o enfileiramento (outbox), a coerência de 1 msg/s por chat e a emissão de
-  intents IPC vivem em `worker/surface/**` e não conhecem Telegram, Discord nem grammY.
+  intents IPC vivem em `worker/surface/**` e não conhecem Telegram nem grammY.
 - **Cada canal vive num adaptador.** Todo o conhecimento do grammY — long polling, parsing
   do update, teclados, cliente, transporte, token — está isolado em
-  `worker/providers/telegram/**`; o equivalente do Discord — gateway por WebSocket
-  (identify/heartbeat/resume), parsing do `MESSAGE_CREATE`/`INTERACTION_CREATE`, `custom_id`
-  `g1:<acao>:<token>`, REST — está em `worker/providers/discord/**`. `grammY` é a única
-  dependência de runtime do pacote e só é carregada dentro do seu diretório; o adaptador
-  Discord não adiciona nenhuma.
+  `worker/providers/telegram/**`. `grammY` é a única
+  dependência de runtime do pacote e só é carregada dentro do seu diretório.
 
 O que **não muda** (invariantes da refatoração, preservados em qualquer provedor):
 
@@ -52,8 +48,8 @@ O que **não muda** (invariantes da refatoração, preservados em qualquer prove
 - os **exit codes** do worker (10 a 14) e o contrato `WorkerRuntime` do boot, com o
   `ProviderError` canónico em `worker/lib/errors.ts` (§5.5).
 
-"Suportado" tem um significado preciso — o Discord fechou **todos** os 9 passos da checklist
-do §4 e é, com o Telegram, um **exemplo fechado** do padrão. Um provedor novo segue a mesma
+"Suportado" tem um significado preciso — o Telegram fechou **todos** os 9 passos da checklist
+do §4 e é o **exemplo fechado** do padrão. Um provedor novo segue a mesma
 checklist; ver o fecho no §4.
 
 ---
@@ -68,9 +64,9 @@ checklist; ver o fecho no §4.
         │  resolve o provedor por DSH_GUARD_PROVIDER                             │
         ▼                                                                        │
    worker/providers/registry.ts    (tabela fechada de provedores + a ponte IPC)  │
-        │  PROVEDORES['telegram'|'discord'].create(deps) → ProviderAdapter       │
+        │  PROVEDORES['telegram'].create(deps) → ProviderAdapter               │
         ▼                                                                        │
-   worker/providers/<id>/**        (ADAPTADOR — telegram: grammY; discord: WS)   │
+   worker/providers/<id>/**        (ADAPTADOR — telegram: grammY)                │
         │  start(handleEvent) empurra SurfaceEvent; sender() devolve SurfaceSender
         ▼                                                                        │
    worker/surface/core.ts          (NÚCLEO NEUTRO — roteador comando→intent)     │
@@ -102,22 +98,21 @@ Camadas e quem é dono do quê:
 
 ### 2.1 A tabela de provedores (factos por linha, da árvore real)
 
-| | `telegram` | `discord` |
-| --- | --- | --- |
-| **Transporte de consumo** | long polling (`getUpdates`) | gateway WebSocket (identify/heartbeat/resume) + REST (`fetch`) |
-| **Dependência** | `grammY` (única do pacote) | nenhuma (WS nativo + fetch do Node 24) |
-| **Limites** (`SurfaceLimits`) | `maxTextLength` 4096 · `maxActionRows` 1 · `maxActionPerRow` 1 · `maxActionDataBytes` 64 · `supportsEditing` true | `maxTextLength` 2000 · `maxActionRows` 5 · `maxActionPerRow` 5 · `maxActionDataBytes` 100 (o `custom_id`, 1..100) · `supportsEditing` true (PATCH da mensagem) |
-| **Payload do botão** | `callback_data` `g1:<acao>:<token>` (1..64 bytes) | `custom_id` `g1:<acao>:<token>` (1..100 bytes, ASCII) |
-| **Token (env)** | `TELEGRAM_BOT_TOKEN` | `DISCORD_BOT_TOKEN` |
-| **Raiz da API (env, opcional)** | `TELEGRAM_API_ROOT` | `DISCORD_API_ROOT` (default `https://discord.com/api/v10`) |
-| **Seletor do worker** | default (D1): `DSH_GUARD_PROVIDER` ausente/vazio → `telegram` | `discord` explícito; valor desconhecido → `ProvedorDesconhecidoError` (nunca degrada em silêncio para outro provedor) |
-| **Identidade** | `from.id`/`chat.id` → string na fronteira (D4) | snowflakes (uint64) — o servidor serializa como string; `String(...)` UMA vez na fronteira, **nunca** `Number(...)` (estouraria `MAX_SAFE_INTEGER`) |
-| **Intents de gateway** | — | `INTENTS_DO_BOT` = **37376** (`GUILD_MESSAGES` 1<<9 + `DIRECT_MESSAGES` 1<<12 + `MESSAGE_CONTENT` 1<<15). `MESSAGE_CONTENT` é **privilegiado**: tem de estar ativo no Developer Portal, senão o gateway fecha com **4014** |
-| **Comandos publicados** | `setMyCommands` (2 chamadas, escopos default/private) | **no-op documentado**: sem registro de slash commands — o bot lê **texto livre** (`MESSAGE_CREATE`); publicar exigiria `POST /applications/{id}/commands` e o id da aplicação, que o token sozinho não dá |
-| **Pareamento** | idêntico nos dois: código de 6 dígitos do painel/CLI → `/parear <código>` no bot; dono gravado pelo host via `pairing.owner` e re-semeado no boot | igual ao telegram (o pareamento é do **núcleo neutro**, `worker/surface/core.ts` — o adaptador só entrega o texto do comando) |
-| **Fluxo de onboarding** | `docs/ONBOARDING-TELEGRAM.md` | `docs/ONBOARDING-DISCORD.md` (Developer Portal + convite com permissão de mensagens) |
+| | `telegram` |
+| --- | --- |
+| **Transporte de consumo** | long polling (`getUpdates`) |
+| **Dependência** | `grammY` (única do pacote) |
+| **Limites** (`SurfaceLimits`) | `maxTextLength` 4096 · `maxActionRows` 1 · `maxActionPerRow` 1 · `maxActionDataBytes` 64 · `supportsEditing` true |
+| **Payload do botão** | `callback_data` `g1:<acao>:<token>` (1..64 bytes) |
+| **Token (env)** | `TELEGRAM_BOT_TOKEN` |
+| **Raiz da API (env, opcional)** | `TELEGRAM_API_ROOT` |
+| **Seletor do worker** | default (D1): `DSH_GUARD_PROVIDER` ausente/vazio → `telegram`; valor desconhecido → `ProvedorDesconhecidoError` (nunca degrada em silêncio para outro provedor) |
+| **Identidade** | `from.id`/`chat.id` → string na fronteira (D4) |
+| **Comandos publicados** | `setMyCommands` (2 chamadas, escopos default/private) |
+| **Pareamento** | código de 6 dígitos do painel/CLI → `/parear <código>` no bot; dono gravado pelo host via `pairing.owner` e re-semeado no boot |
+| **Fluxo de onboarding** | `docs/ONBOARDING-TELEGRAM.md` |
 
-> Os **comandos do bot são os MESMOS nos dois provedores** — `/menu`, `/parear`, `/ajuda`,
+> Os **comandos do bot são do núcleo neutro** — `/menu`, `/parear`, `/ajuda`,
 > `/ligar`, `/desligar`, `/acessar`, `/rotacionar`, `/status`, `/emergencia` e os de agentes
 > (`/agente`, `/agentes`, `/parar-agente` — Onda 5): quem decide o que cada um faz é o núcleo
 > neutro, e o adaptador só traduz mensagem/clique na forma do canal.
@@ -197,11 +192,8 @@ interface SurfaceLimits {
 - O núcleo **corta o texto aqui** (`cortarTexto`, `particionarTexto`), nunca após a ida à rede
   (TG-048), e renderiza as linhas de ação **dentro** destes limites.
 - Medidos em **bytes** (não em caracteres) para a ação — um acento vale 2 bytes; o Telegram
-  conca `callback_data` a 1..64 **bytes** e o Discord o `custom_id` a 1..100 **bytes**.
-- Os valores são **por provedor** — a tabela do §2.1: telegram 4096/1/1/64/true; discord
-  **2000/5×5/100/true** (o `DISCORD_LIMITS` de `worker/providers/discord/adapter.ts`, medido
-  contra a doc oficial do Discord: `content` de UMA mensagem, ActionRows e botões por linha,
-  `custom_id`, `PATCH /channels/{id}/messages/{id}`).
+  conca `callback_data` a 1..64 **bytes**.
+- Os valores são **por provedor** — a tabela do §2.1: telegram 4096/1/1/64/true.
 
 ### 3.5 `ActionRow` e `ActionRowLayout` — os botões neutros
 
@@ -249,7 +241,7 @@ interface SurfaceIpcBridge { send(pedido: IntencaoNeutra): boolean }
   canal (`from`/`chat` do `IpcIntentMessage` **V2**) é também **string** — a neutralização foi
   **executada** (EMENDA ONDA-1-IPC-ENVELOPE-STRING): a `criarSurfaceIpcBridge` de
   `worker/providers/registry.ts` monta o envelope completo via `montarEnvelopeDeIntent` **sem
-  `Number(...)` nenhum** (ver §7) e chama o canal `worker/ipc.ts`. Um snowflake do Discord
+  `Number(...)` nenhum** (ver §7) e chama o canal `worker/ipc.ts`. Um id nao-numerico
   atravessa a ponte byte a byte.
 - `nonce` só existe nas ações que **aumentam** a exposição; opaco (S5) — o host valida.
 - `params` (Onda 4 — agentes) existe sse a intent o exige: `agent.dispatch` carrega
@@ -305,7 +297,7 @@ deve ser anunciada como suportada. Siga pela ordem.
 
 ### Passo 1 — criar `worker/providers/<id>/**`
 
-Crie um diretório por provedor (ex.: `worker/providers/discord/**`). Como o Telegram
+Crie um diretório por provedor (ex.: `worker/providers/<id>/**`). Como o Telegram
 (`worker/providers/telegram/`), organize por responsabilidade:
 
 - `cliente.<ext>` — constrói o client do fornecedor a partir do token/secreto;
@@ -425,15 +417,15 @@ ganha o literal e a linha em `PROVIDER_ENV`.
 limites reais (4), segredo por allowlist (5), registado e configurável (6/7), testado com duble
 (8) e documentado (9). Um provedor sem docs (9) ou sem testes (8) **não** é suportado.
 
-> **A checklist PERMANECE VÁLIDA, e o Discord é o segundo exemplo fechado.** O adaptador
-> `worker/providers/discord/**` passou os 9 passos como o Telegram: diretório próprio com
-> `cliente`/`parse`/`teclado`/`token`/`transporte`/`gateway`/`adapter` (Passo 1), `ProviderAdapter`
-> completo com `answerTarget` sempre (2/3), `DISCORD_LIMITS` 2000/5×5/100/true (4),
-> `DISCORD_BOT_TOKEN` por allowlist do host e recusa em `argv` (5), linha `DESCRICAO_DISCORD` no
-> registry + `ProviderId` alargado + `PROVIDER_ENV` no host (6/7), suíte própria em
-> `test/unit/worker/providers/discord/**` e e2e `test/e2e/discord-boot.test.ts` com o duble
-> REST+WS local (8), e a doc §2.1 + `docs/ONBOARDING-DISCORD.md` (9). Um provedor novo deve
-> **copiar o padrão do discord**, não o inventar.
+> **A checklist PERMANECE VÁLIDA, e o Telegram é o exemplo fechado.** O adaptador
+> `worker/providers/telegram/**` passou os 9 passos: diretório próprio com
+> `cliente`/`parse`/`teclado`/`token`/`transporte`/`polling`/`adapter` (Passo 1), `ProviderAdapter`
+> completo com `answerTarget` sempre (2/3), os limites 4096/1/1/64/true (4),
+> `TELEGRAM_BOT_TOKEN` por allowlist do host e recusa em `argv` (5), linha `DESCRICAO_TELEGRAM` no
+> registry + `PROVIDER_ENV` no host (6/7), suíte própria em
+> `test/unit/worker/providers/telegram/**` e e2e `test/e2e/telegram-boot.test.ts` com o duble
+> local (8), e a doc §2.1 + `docs/ONBOARDING-TELEGRAM.md` (9). Um provedor novo deve
+> **copiar o padrão do telegram**, não o inventar.
 
 ---
 
@@ -454,13 +446,12 @@ O regime de segurança é o mesmo para qualquer provedor — são os invariantes
   sobrevivem ao retorno; o pareamento e a extração de comando varrem por `charCodeAt`, não por
   regex sobre texto da internet.
 - **Limites por provedor** — telegram `callback_data` 1..64 **bytes** (um acento vale 2) e
-  mensagem 4096; discord `custom_id` 1..100 bytes e mensagem 2000. O corte é do núcleo, **antes**
+  mensagem 4096. O corte é do núcleo, **antes**
   de ir à rede (TG-048), dentro do `SurfaceLimits` declarado por cada adaptador (§2.1).
 - **Exit codes 10–14** — o dono canónico é **`worker/lib/errors.ts`** (`WORKER_EXIT`,
-  `ProviderError` e o union `WorkerExitCode`); os `interno.ts` de **ambos** os provedores
-  re-exportam-nos (o discord também re-exporta `ProviderError`/`WORKER_EXIT`/`isWorkerExitCode`
-  — ver §5.5). Preservados pelo boot genérico: `10` config/token, `11` conflito 409 (telegram)
-  / gateway rejeitado, `12` não-autorizado 401, `13` polling/gateway, `14` boot timeout, `0` OK.
+  `ProviderError` e o union `WorkerExitCode`); o `interno.ts` do provedor
+  re-exporta-os (ver §5.5). Preservados pelo boot genérico: `10` config/token, `11` conflito 409 (telegram),
+  `12` não-autorizado 401, `13` polling, `14` boot timeout, `0` OK.
 - **S4 / S5** — nenhum tratador lança (o que falha é logado e segue); o nonce/token viaja **opaco**
   (S5): o worker não o gera (fora o token local do `/desligar`), não o valida, não o guarda — o
   host valida. O valor do nonce **nunca** é logado (S3).
@@ -481,14 +472,13 @@ e `worker/providers/telegram/interno.ts`). O **teste estrutural** deste cone est
 `ProviderError` (com o `code` NUMÉRICO `WorkerExitCode` 10..14 como chave de classificação do
 boot), o vocabulário `WorkerErrorCode`, o mapa `WORKER_EXIT` e o guard `isWorkerExitCode`.
 É a EXCEÇÃO sancionada ao "adaptador não importa de `worker/lib/*`": o erro tipado é o contrato
-que os DOIS adaptadores e o boot genérico partilham, e o boot classifica o erro terminal de
-**qualquer** provedor lendo o `code` — **sem `instanceof` de classe de provedor** (um erro do
-discord não pode cair em `POLLING_FAILED` 13 só porque o boot conhecia a classe do telegram).
-Os `interno.ts` dos dois provedores re-exportam o contrato para os seus ficheiros e testes
+que os adaptadores e o boot genérico partilham, e o boot classifica o erro terminal de
+**qualquer** provedor lendo o `code` — **sem `instanceof` de classe de provedor** (um erro de
+outro provedor não pode cair em `POLLING_FAILED` 13 só porque o boot conhecia a classe do telegram).
+O `interno.ts` do provedor re-exporta o contrato para os seus ficheiros e testes
 continuarem a importar do mesmo sítio:
 `worker/providers/telegram/interno.ts` re-exporta `ProviderError`, `WORKER_EXIT`, `exitCodeFor`,
-`isWorkerExitCode`; `worker/providers/discord/interno.ts` re-exporta `ProviderError`,
-`WORKER_EXIT`, `isWorkerExitCode` — ambos de `../../lib/errors.ts`.
+`isWorkerExitCode` — de `../../lib/errors.ts`.
 
 ---
 
@@ -509,16 +499,12 @@ pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm test:security && 
 - **Adaptador telegram** — `test/unit/worker/providers/telegram/**` (parse, teclado, token,
   transporte, cliente, polling, adapter) com o **duble local** (`test/support/`); o
   `adapter.test.ts` cobre `answerTarget`/TG-027 e o `descartados`/TG-089.
-- **Adaptador discord** — `test/unit/worker/providers/discord/**` (parse, teclado, token,
-  transporte, cliente, gateway, adapter, interno) contra o **duble local** (o `apoio.ts` com
-  REST+WS falsos em `:0`); ver `docs/TESTING.md` §2 para a nota do `gateway.test.ts` em lotes
-  grandes.
-- **Registry e boot** — `test/unit/worker/providers/registry.test.ts` (inclui a linha do
-  discord e o `ProvedorDesconhecidoError`), `test/unit/worker/telegram-bot.test.ts` (com
+- **Registry e boot** — `test/unit/worker/providers/registry.test.ts` (a tabela fechada
+  e o `ProvedorDesconhecidoError`), `test/unit/worker/telegram-bot.test.ts` (com
   `WorkerRuntime` injectável, sem subprocesso).
-- **E2E com o duble** — `test/e2e/**` sobe o worker contra os dublês locais (telegram E
-  discord: `discord-boot.test.ts` spawna o processo real com `DSH_GUARD_PROVIDER=discord` e
-  um gateway falso, cobre boot feliz, comando→resposta, clique→intent e token em argv
+- **E2E com o duble** — `test/e2e/**` sobe o worker contra os dublês locais (o
+  `telegram-boot.test.ts` spawna o processo real contra o duble da Bot API e cobre boot feliz,
+  comando→resposta, clique→intent e token em argv
   recusado); a re-confirmação **através** da borda real é a suíte `test/live/**`, opt-in e fora
   do gate.
 
@@ -532,8 +518,8 @@ que este manual listava como trabalho futuro): `from`/`chat` do `IpcIntentMessag
 `IPC_PROTOCOL_VERSION` subiu para 2 — a invariante S4 (versão desconhecida = linha descartada,
 canal sobrevive) tornou o bump seguro: host e worker são spawnados pelo MESMO build. A conversão
 numérica morreu na fronteira dos provedores (o parse converte `from.id`/`chat.id` para string
-UMA vez) e `montarEnvelopeDeIntent` monta o envelope **sem `Number(...)`** — um snowflake do
-Discord (> 2^53) atravessa a ponte byte a byte, sem truncar. A falsa atribuição
+UMA vez) e `montarEnvelopeDeIntent` monta o envelope **sem `Number(...)`** — um id nao-numerico
+(> 2^53) atravessa a ponte byte a byte, sem truncar. A falsa atribuição
 `as unknown as IpcIntentMessage` que a Onda 2 deixou em `worker/surface/commands.ts` deixou de
 ser o único caminho: o boot consome a ponte REAL do registry.
 
@@ -542,9 +528,6 @@ Restam, de trabalho futuro real:
 - Varrer o restante do caminho de consumo do provedor no host: `src/index.ts` resolve o
   `tokenVar` por `provider`, `src/ui-contrib/bot-state.ts` já é provider-agnóstico e o estado
   persistido tem o campo aditivo `provider?` (`src/contracts/state.ts`).
-- Registrar **slash commands** do Discord (`POST /applications/{id}/commands`) como publicação
-  de comandos de verdade — hoje o `publishCommands` do discord é **no-op documentado** (o bot
-  entende texto livre) e o id da aplicação não é derivável do token (ver §2.1).
 
 ---
 
@@ -553,11 +536,10 @@ Restam, de trabalho futuro real:
 - Contrato neutro: `worker/surface/contract.ts` (documentação inline tipo-a-tipo).
 - Núcleo neutro: `worker/surface/core.ts` (§3.1 a §3.10 descrevem o fluxo real).
 - Registry + ponte IPC + ponte de nonce: `worker/providers/registry.ts`.
-- Adaptador telegram: `worker/providers/telegram/**`; adaptador discord:
-  `worker/providers/discord/**` (gateway, parse, teclado, cliente, transporte, token, adapter);
+- Adaptador telegram: `worker/providers/telegram/**`;
   boot genérico: `worker/telegram-bot.ts`.
 - Contrato de erro canónico do processo: `worker/lib/errors.ts` (`ProviderError`, `WORKER_EXIT`,
-  `WorkerExitCode` — re-exportado pelos `interno.ts` dos dois provedores, §5.5).
+  `WorkerExitCode` — re-exportado pelo `interno.ts` do provedor, §5.5).
 - Envelope IPC V2: `src/contracts/ipc.ts` (`IPC_PROTOCOL_VERSION = 2`, `from`/`chat` string) e
   `montarEnvelopeDeIntent` em `worker/providers/registry.ts` (§7).
 - Host provedor-aware: `src/proc/env.ts` (allowlist + `PROVIDER_ENV` + `DSH_GUARD_PROVIDER`),

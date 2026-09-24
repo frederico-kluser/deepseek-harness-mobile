@@ -58,7 +58,7 @@ FONTES DE PESQUISA citadas aqui:
   `A consultar…`), e o roteador ganha três comandos digitados — `/agente`,
   `/agentes`, `/parar-agente` — que falam com o dispatcher de agentes do host
   (ver §10). Os comandos de agentes são do núcleo neutro e **funcionam igual no
-  Telegram e no Discord**.
+  Telegram e em qualquer provedor futuro**.
 
 ---
 
@@ -489,7 +489,7 @@ Envia /parear seguido do código de 6 dígitos que aparece no painel, assim:
 > está em `docs/AGENTS.md` — aqui congela-se só o texto EXATO final (PT-BR).
 >
 > **Neutro ao provedor:** os comandos de agentes são do núcleo neutro —
-> funcionam byte a byte iguais no Telegram e no Discord.
+> funcionam byte a byte iguais no Telegram e em qualquer provedor futuro.
 
 ### 10.1 `/agente <skill> <o que o agente deve fazer>` — validações e confirmação
 

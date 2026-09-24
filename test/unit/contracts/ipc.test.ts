@@ -14,7 +14,7 @@
  *     antiga descarta a linha nova em vez de partir;
  *   - as QUATRO razoes de recusa do veredito sao as do contrato, produzidas
  *     por comportamento (S4 e um tipo de retorno, nao excecao);
- *   - uma snowflake do Discord (> 2^53) atravessa os DOIS codecs byte a byte,
+ *   - uma snowflake (> 2^53) atravessa os DOIS codecs byte a byte,
  *     sem `Number(...)` nem truncagem (criterio de aceite 1 da onda).
  */
 

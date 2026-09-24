@@ -27,7 +27,7 @@ celular, **sem nunca alargar o bind para fora do loopback** (o túnel termina em
 `127.0.0.1`; o acesso local abre direto e o acesso remoto só entra com a chave
 no link `?key=` ou numa sessão). É hoje um **gateway de mensageria
 multi-provedor**: o **Telegram é o provedor ativo hoje**, e a arquitetura de
-adaptadores (`worker/providers/<id>/**`) está pronta para **WhatsApp, Discord,
+adaptadores (`worker/providers/<id>/**`) está pronta para **WhatsApp,
 Matrix, Signal, Slack e outros** — o provedor ativo é escolhido por
 `DSH_GUARD_PROVIDER` (default `telegram`), e o núcleo de pareamento/comandos é
 neutro ao canal.
@@ -54,7 +54,7 @@ Flux, firefly, etc.):
 
 > **flat icon, rounded square, deep blue gradient background, a stylized shield
 > merging with a chat bubble, small paper-plane/send glyph, plus small generic
-> channel dots (telegram/whatsapp/discord) around the shield to signal
+> channel dots (telegram/whatsapp/matrix) around the shield to signal
 > multi-provider; minimalist, modern, no text, high contrast, vector style**
 
 ### Versão longa (recomendada para máxima fidelidade)
@@ -65,7 +65,7 @@ Flux, firefly, etc.):
 > shield** whose lower half blends into a **chat bubble** (the bubble tail points
 > lower-right, suggesting "sends a message"). Center-left of the bubble, a small
 > paper-plane / **send glyph**. Around the shield, three small **generic channel
-> dots** (one teal `#34d399`, one WhatsApp-green `#25D366`, one indigo/Discord
+> dots** (one teal `#34d399`, one WhatsApp-green `#25D366`, one indigo
 > `#5865F2`) arranged in a tight arc or orbit, signalling **multi-provider**
 > messaging. Palette sparing and high-contrast: white/very-light surface glyphs on
 > the blue gradient. **No text, no letters, no mascot, no 3D gloss, no photo

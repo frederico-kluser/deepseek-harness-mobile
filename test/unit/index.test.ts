@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { EventEmitter } from 'node:events'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ import type { TunnelSnapshot } from '../../src/contracts/tunnel.ts'
 import { PACKAGED_WORKER_ENTRYPOINT } from '../../src/config/schema.ts'
 import { WORKER_PROVIDER_ENV_VAR } from '../../src/proc/env.ts'
 import { apply, criarFanoutDeEstado, inject, name, type Config } from '../../src/index.ts'
-import { UI_PATH_PRIVACIDADE, UI_PATH_TELEGRAM } from '../../src/ui-contrib/routes.ts'
+import { UI_PATH_CSRF, UI_PATH_PRIVACIDADE, UI_PATH_TOKEN, UI_PATH_TELEGRAM } from '../../src/ui-contrib/routes.ts'
 import {
   createFakeLogger,
   FakeContext,
@@ -215,177 +216,133 @@ describe('ciclo de vida sob ctx.effect', () => {
     return JSON.parse(res.body) as { online: boolean; motivo?: string }
   }
 
-  describe('provider=discord REGISTRADO no host (Onda 2): spawn e sonda do painel', () => {
-    it('(c) o spawn rotula DSH_GUARD_PROVIDER=discord e injeta DISCORD_BOT_TOKEN, e a privacidade usa a sonda discord', async () => {
-      // O token do secrets.env e a CHAVE do DISCORD (sem dois-pontos — a forma
-      // do telegram rejeitava-o; o registro discord aceita a forma frouxa).
-      const casa = join(tmpdir(), 'dsh-guard-discord-' + process.pid + '-' + Math.random().toString(36).slice(2))
-      const dir = join(casa, 'guarded-bot')
-      mkdirSync(dir, { recursive: true })
-      chmodSync(dir, 0o700)
-      writeFileSync(join(dir, 'secrets.env'), 'DISCORD_BOT_TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto\n', {
-        mode: 0o600,
-      })
-      writeFileSync(
-        join(dir, 'state.json'),
-        JSON.stringify({
-          version: 1,
-          desiredState: 'STOPPED',
-          pairing: { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 },
-        }),
-        { mode: 0o600 },
-      )
-      process.env.DSH_HOME = casa
-      const limpar = (): void => {
-        delete process.env.DSH_HOME
-        rmSync(casa, { recursive: true, force: true })
-      }
+  /** GET a uma rota montada; espera o handler async ate ao fim real. */
+  async function getJson(
+    ctx: FakeContext,
+    url: string,
+  ): Promise<{ status: number; corpo: Record<string, unknown> }> {
+    const caminho = url.split('?')[0] ?? url
+    const rota = ctx.webServer.routes.find((r) => r.path === caminho)
+    assert.ok(rota !== undefined, `rota nao registada: ${caminho}`)
+    const handler = rota.handler as (req: IncomingMessage, res: FakeResponse) => void | Promise<void>
+    const res = new FakeResponse()
+    await handler(makeRequest({ url, method: 'GET' }), res)
+    return { status: res.statusCode ?? 0, corpo: JSON.parse(res.body) as Record<string, unknown> }
+  }
+
+  /** POST JSON a uma rota montada (corpo pelo fluxo `data`/`end` do pedido). */
+  async function postJson(
+    ctx: FakeContext,
+    caminho: string,
+    corpo: Record<string, unknown>,
+  ): Promise<{ status: number; corpo: Record<string, unknown> }> {
+    const rota = ctx.webServer.routes.find((r) => r.path === caminho)
+    assert.ok(rota !== undefined, `rota nao registada: ${caminho}`)
+    const req = new EventEmitter() as unknown as IncomingMessage
+    const bruto = req as unknown as {
+      method: string
+      url: string
+      headers: Record<string, string>
+      destroy(): void
+    }
+    bruto.method = 'POST'
+    bruto.url = caminho
+    bruto.headers = {}
+    bruto.destroy = () => undefined
+    const res = new FakeResponse()
+    const pendente = (
+      rota.handler as (pedido: IncomingMessage, resposta: FakeResponse) => void | Promise<void>
+    )(req, res)
+    req.emit('data', Buffer.from(JSON.stringify(corpo)))
+    req.emit('end')
+    await pendente
+    return { status: res.statusCode ?? 0, corpo: JSON.parse(res.body) as Record<string, unknown> }
+  }
+
+  /** O token anti-CSRF fresco da rota GET /__guard-ui/api/csrf (HIGH-2). */
+  async function tokenDoCsrf(ctx: FakeContext): Promise<string> {
+    const resposta = await getJson(ctx, UI_PATH_CSRF)
+    assert.equal(resposta.status, 200)
+    assert.equal(typeof resposta.corpo.token, 'string', 'o /csrf devolve um token')
+    return resposta.corpo.token as string
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* A sonda do painel: o tokenOps REAL (montado por apply()) usa o probe do  */
+  /* provedor ativo — o wiring `apiRootDe`/`criarSonda`, o colapso            */
+  /* "nunca inventa estado" e o `sondar` com botNome -> handle.               */
+  /* ---------------------------------------------------------------------- */
+  describe('a sonda do painel usa o probe do provedor (tokenOps REAL via apply())', () => {
+    it('probe 401 -> privacidade "indisponivel" sem vazar o veredito; getMe contra TELEGRAM_API_ROOT; botNome -> handle no POST /token', async () => {
+      // O tokenOps REAL nasce de apply(). (a) QUALQUER `ok:false` do probe
+      // colapsa em `indisponivel` — nem o veredito (`token-invalido`) nem o
+      // corpo da API sobem para a UI ("nunca inventa estado",
+      // `tokenOps.privacidade` em src/index.ts); (b) a sonda e o `getMe` do
+      // provedor ativo contra a raiz de `apiRootDe` (TELEGRAM_API_ROOT), com o
+      // token no CAMINHO do URL (a forma da Bot API); (c) o `sondar` mapeia
+      // `botNome` -> `handle` na resposta 200 do POST /token (o handle so e
+      // "committed" em `gravar`).
+      const { limpar } = comSecretsEnv('123456789:AAsegredoDoSecretsEnv', { withPairing: true })
       let ctx: FakeContext | undefined
       const fetchOriginal = globalThis.fetch
+      const apiRootOriginal = process.env.TELEGRAM_API_ROOT
       const pedidos: Array<{ url: string; authorization: string | null }> = []
+      let resposta: { status: number; corpo: unknown } = {
+        status: 401,
+        corpo: { message: '401: Unauthorized' },
+      }
+      process.env.TELEGRAM_API_ROOT = 'https://duble.telegram.test'
       globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
         pedidos.push({
           url: String(url),
           authorization: new Headers(init?.headers).get('authorization'),
         })
-        return new Response(JSON.stringify({ id: '123', username: 'meu_bot_discord' }), {
-          status: 200,
+        return new Response(JSON.stringify(resposta.corpo), {
+          status: resposta.status,
           headers: { 'content-type': 'application/json' },
         })
       }) as typeof fetch
       try {
         const config = makeConfig()
         config.worker.token = ''
-        config.worker.provider = 'discord'
+        config.worker.provider = 'telegram'
         config.tunnel = { mode: 'quick', ttlMinutes: 60 } // para o surface da UI montar
         ctx = new FakeContext()
         apply(ctx.asContext(), config)
 
-        // O worker SPAWNA com o token resolvido do secrets.env (chave DISCORD)
-        // e o rotulo do provedor ativo.
-        assert.equal(ctx.subprocess.calls.length, 1)
-        const spec = ctx.subprocess.calls[0]
-        assert.equal(spec?.env?.['DISCORD_BOT_TOKEN'], 'MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto')
-        assert.equal(spec?.env?.[WORKER_PROVIDER_ENV_VAR], 'discord')
-        assert.equal(spec?.env?.['TELEGRAM_BOT_TOKEN'], undefined)
+        // (a) o probe recusa (401) -> `{ok:false, erro:'indisponivel'}` e MAIS
+        // NADA: o deepEqual exato e o que impede o veredito do probe de vazar.
+        const privacidade = await getJson(ctx, `${UI_PATH_PRIVACIDADE}?forcar=true`)
+        assert.equal(privacidade.status, 200)
+        assert.deepEqual(privacidade.corpo, { ok: false, erro: 'indisponivel' })
 
-        // A sonda do painel e a DISCORD: a privacidade (GET sem CSRF) bate em
-        // /users/@me com Bearer — nunca em api.telegram.org — e devolve o nome.
-        const rota = ctx.webServer.routes.find((r) => r.path === UI_PATH_PRIVACIDADE)
-        assert.ok(rota !== undefined, `rota da privacidade nao registada: ${UI_PATH_PRIVACIDADE}`)
-        const handler = rota.handler as (req: IncomingMessage, res: FakeResponse) => void
-        const res = new FakeResponse()
-        handler(makeRequest({ url: UI_PATH_PRIVACIDADE, method: 'GET' }), res)
-        // O handler da privacidade e async: a resposta chega numa promessa.
-        await new Promise((resolve) => setTimeout(resolve, 0))
-        assert.equal(res.statusCode, 200)
-        assert.deepEqual(JSON.parse(res.body), {
-          ok: true,
-          handle: 'meu_bot_discord',
-          fonte: 'secrets',
+        // (b)+(c) o probe aceita agora: POST /token (com CSRF) sonda, grava e
+        // devolve o `botNome` do getMe como `handle`.
+        resposta = {
+          status: 200,
+          corpo: { ok: true, result: { id: 123456789, username: 'meu_painel_bot' } },
+        }
+        const token = '123456789:AAsegredoDoSecretsEnv'
+        const criado = await postJson(ctx, UI_PATH_TOKEN, {
+          token,
+          csrf: await tokenDoCsrf(ctx),
         })
-        assert.equal(pedidos.length, 1)
-        assert.equal(pedidos[0]?.url, 'https://discord.com/api/v10/users/@me')
-        assert.equal(pedidos[0]?.authorization, 'Bearer MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto')
+        assert.equal(criado.status, 200)
+        assert.deepEqual(criado.corpo, { ok: true, handle: 'meu_painel_bot', fonte: 'secrets' })
+
+        // (b) o wiring `apiRootDe`/`criarSonda`: as DUAS sondas foram getMe
+        // contra TELEGRAM_API_ROOT (nunca a raiz publica), com o token no
+        // caminho do URL — a privacidade (401) e a do `sondar` do POST.
+        assert.equal(pedidos.length, 2, 'uma chamada da privacidade + uma do sondar')
+        for (const pedido of pedidos) {
+          assert.equal(pedido.url, `https://duble.telegram.test/bot${token}/getMe`)
+        }
       } finally {
         for (const disposer of ctx?.effects ?? []) disposer()
         limpar()
         globalThis.fetch = fetchOriginal
-      }
-    })
-
-    it('(d) o GET /__guard-ui/api/telegram emite provider=discord (o painel rotula por provedor)', () => {
-      // Mesmo cenario do teste (c): provider discord com token no secrets.env.
-      // O contrato (d) e por provedor: o corpo do GET /__guard-ui/api/telegram
-      // devolve `provider: 'discord'` — e o que faz o painel trocar os rotulos
-      // do onboarding (mapa + fallback telegram).
-      const casa = join(tmpdir(), 'dsh-guard-discord-' + process.pid + '-' + Math.random().toString(36).slice(2))
-      const dir = join(casa, 'guarded-bot')
-      mkdirSync(dir, { recursive: true })
-      chmodSync(dir, 0o700)
-      writeFileSync(
-        join(dir, 'secrets.env'),
-        'DISCORD_BOT_TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto\n',
-        { mode: 0o600 },
-      )
-      writeFileSync(
-        join(dir, 'state.json'),
-        JSON.stringify({
-          version: 1,
-          desiredState: 'STOPPED',
-          pairing: { ownerUserId: 42, ownerChatId: -1001234567890, pairedAt: 2_000 },
-        }),
-        { mode: 0o600 },
-      )
-      process.env.DSH_HOME = casa
-      let ctx: FakeContext | undefined
-      try {
-        const config = makeConfig()
-        config.worker.token = ''
-        config.worker.provider = 'discord'
-        config.tunnel = { mode: 'quick', ttlMinutes: 60 } // para o surface da UI montar
-        ctx = new FakeContext()
-        apply(ctx.asContext(), config)
-
-        assert.deepEqual(estadoTelegramaDoUi(ctx), { online: true, provider: 'discord' })
-      } finally {
-        for (const disposer of ctx?.effects ?? []) disposer()
-        delete process.env.DSH_HOME
-        rmSync(casa, { recursive: true, force: true })
-      }
-    })
-
-    it('a sonda discord a recusar (401) chega a privacidade como indisponivel — nunca inventa estado', async () => {
-      // A privacidade colapsa QUALQUER ok:false do probe em 'indisponivel'
-      // (src/index.ts, tokenOps.privacidade): nem token-invalido nem o corpo da
-      // API saem para a UI — so o estado que a UI pode representar.
-      const casa = join(tmpdir(), 'dsh-guard-discord-' + process.pid + '-' + Math.random().toString(36).slice(2))
-      const dir = join(casa, 'guarded-bot')
-      mkdirSync(dir, { recursive: true })
-      chmodSync(dir, 0o700)
-      writeFileSync(
-        join(dir, 'secrets.env'),
-        'DISCORD_BOT_TOKEN=MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto\n',
-        { mode: 0o600 },
-      )
-      process.env.DSH_HOME = casa
-      let ctx: FakeContext | undefined
-      const fetchOriginal = globalThis.fetch
-      const pedidos: Array<{ url: string; authorization: string | null }> = []
-      globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
-        pedidos.push({
-          url: String(url),
-          authorization: new Headers(init?.headers).get('authorization'),
-        })
-        return new Response(JSON.stringify({ message: '401: Unauthorized' }), {
-          status: 401,
-          headers: { 'content-type': 'application/json' },
-        })
-      }) as typeof fetch
-      try {
-        const config = makeConfig()
-        config.worker.token = ''
-        config.worker.provider = 'discord'
-        config.tunnel = { mode: 'quick', ttlMinutes: 60 }
-        ctx = new FakeContext()
-        apply(ctx.asContext(), config)
-
-        const rota = ctx.webServer.routes.find((r) => r.path === UI_PATH_PRIVACIDADE)
-        assert.ok(rota !== undefined, `rota da privacidade nao registada: ${UI_PATH_PRIVACIDADE}`)
-        const handler = rota.handler as (req: IncomingMessage, res: FakeResponse) => void
-        const res = new FakeResponse()
-        handler(makeRequest({ url: UI_PATH_PRIVACIDADE, method: 'GET' }), res)
-        await new Promise((resolve) => setTimeout(resolve, 0))
-        assert.equal(res.statusCode, 200)
-        assert.deepEqual(JSON.parse(res.body), { ok: false, erro: 'indisponivel' })
-        assert.equal(pedidos.length, 1)
-        assert.equal(pedidos[0]?.url, 'https://discord.com/api/v10/users/@me')
-        assert.equal(pedidos[0]?.authorization, 'Bearer MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token-secreto')
-      } finally {
-        for (const disposer of ctx?.effects ?? []) disposer()
-        delete process.env.DSH_HOME
-        rmSync(casa, { recursive: true, force: true })
-        globalThis.fetch = fetchOriginal
+        if (apiRootOriginal === undefined) delete process.env.TELEGRAM_API_ROOT
+        else process.env.TELEGRAM_API_ROOT = apiRootOriginal
       }
     })
   })

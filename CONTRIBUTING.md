@@ -115,7 +115,7 @@ Estes nomes foram substituídos e **não podem voltar** ao código, aos testes n
 ## 5. Adicionar um provedor de mensageria
 
 O worker é neutro ao provedor; o Telegram é o único fornecedor hoje. Adicionar um novo (WhatsApp,
-Discord, Matrix…) é implementar o contrato `ProviderAdapter` e registá-lo. O **checklist completo
+Matrix…) é implementar o contrato `ProviderAdapter` e registá-lo. O **checklist completo
 passo-a-passo está em [`docs/PROVIDERS.md`](docs/PROVIDERS.md) §4** — siga-o e não salte passos; um
 fornecedor só é **suportado** quando a checklist toda fecha. Em resumo:
 

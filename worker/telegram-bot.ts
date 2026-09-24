@@ -103,8 +103,8 @@ export interface WorkerRuntime {
 /**
  * O `code` NUMERICO do CONTRATO COMUM (`ProviderError` de
  * `worker/lib/errors.ts`), em QUALQUER erro — sem `instanceof` de classe de
- * provedor. Fora da gama fechada 10..14 (ex.: o `code` do corpo do Discord
- * num `DiscordApiError` que escape) NAO e do contrato e o erro cai no default.
+ * provedor. Fora da gama fechada 10..14 (ex.: o `code` do corpo de uma API
+ * externa que escape) NAO e do contrato e o erro cai no default.
  */
 function codeDoContrato(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined
@@ -189,7 +189,7 @@ export async function runTelegramWorker(runtime: WorkerRuntime = {}): Promise<nu
     // Nunca engolir: a causa sai mascarada, com codigo quando ha codigo. O
     // codigo e lido do CAMPO `code` do erro (contrato comum, numerico) — nao
     // ha `instanceof` de classe de provedor: o erro de QUALQUER adaptador
-    // (telegram hoje, discord amanha) classifica-se por si.
+    // (telegram hoje, outros amanha) classifica-se por si.
     if (error instanceof ProvedorDesconhecidoError) {
       log.error(error.message)
       return WORKER_EXIT.CONFIG

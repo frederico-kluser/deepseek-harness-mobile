@@ -134,7 +134,7 @@ describe('os DOIS analisadores dao o MESMO veredito (a duplicacao esta presa)', 
     // V2 (EMENDA ONDA-1-IPC-ENVELOPE-STRING): um from NAO-numerico e aceite —
     // a politica minima e trim + nao vazio, sem validar formato de provedor.
     '{"v":2,"type":"pairing.success","from":"@nao-numerico","chat":"222","pairedAt":1}',
-    // V2: uma snowflake do Discord (> 2^53) atravessa byte a byte, sem NaN.
+    // V2: uma snowflake (> 2^53) atravessa byte a byte, sem NaN.
     '{"v":2,"type":"intent","intent":"tunnel.status","requestId":"r","from":"1057992969437413409","chat":"1057992969437413409"}',
     // Recusadas.
     '',

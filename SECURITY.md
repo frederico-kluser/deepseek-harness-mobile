@@ -114,7 +114,7 @@ faça *fork* — a licença MIT permite-o explicitamente.
 ## 5. Não-vulnerabilidades — decisões conhecidas e documentadas
 
 Estes pontos são **do desenho**, estão escritos, e um relato sobre eles será fechado como
-«conhecido». Se discordar do desenho, abra uma issue de discussão — não um advisory.
+«conhecido». Se não concordar com o desenho, abra uma issue de discussão — não um advisory.
 
 - **A URL do túnel não é segredo.** Hostnames `*.trycloudflare.com` são descobríveis por
   amostragem pública, e uma amostragem real devolveu dezenas de hostnames vivos. A URL é um

@@ -39,7 +39,7 @@ plano de controlo responde sem credencial enquanto o worker ainda está vivo.
    controlador serializa a máquina de estados do túnel (ligar/desligar).
 4. **Worker de mensageria** — o supervisor a instanciar o boot genérico
    (`dist/worker/telegram-bot.js`), por provedor (`config.worker.provider`, default
-   `telegram`; `discord` como segundo provedor), com ambiente de allowlist e o rótulo
+   `telegram`), com ambiente de allowlist e o rótulo
    `DSH_GUARD_PROVIDER`.
 5. **Dispatcher de agentes** — o `AgentRegistry` (`src/agents/registry.ts`) num `ctx.effect`
    com disposer LIFO: allowlist de skills (default deny), teto de runs, auditoria e a difusão
@@ -132,8 +132,8 @@ inválidas) ou ao derrubar o túnel.
 
 ### Worker do bot
 
-O worker é **neutro ao provedor de mensageria** (arquitetura de provedores; dois
-fornecedores hoje: **telegram** e **discord**). O núcleo vive em `worker/surface/**`,
+O worker é **neutro ao provedor de mensageria** (arquitetura de provedores; um
+fornecedor hoje: **telegram**). O núcleo vive em `worker/surface/**`,
 os adaptadores em `worker/providers/**` e o boot genérico em `worker/telegram-bot.ts`.
 
 - `worker/telegram-bot.ts` — entry do processo; **boot genérico por provedor** (nome preservado por D1). Resolve o provedor por `DSH_GUARD_PROVIDER` (`resolverProvedor`, fail-closed: ausente → telegram, desconhecido → recusa), monta núcleo + auth + comandos + adaptador + ponte IPC, e devolve os exit codes 0/10–14 — classificando o erro terminal de QUALQUER provedor pelo `code` numérico do `ProviderError` (sem `instanceof`).
@@ -142,10 +142,9 @@ os adaptadores em `worker/providers/**` e o boot genérico em `worker/telegram-b
 - `worker/surface/core.ts` — o **núcleo neutro**: roteador comando→intent (funil pareamento→allowlist, outbox, autolink, pendentes, difusão proativa `agent.report`) sobre tipos neutros; re-exporta a lista canónica.
 - `worker/surface/{auth,commands}.ts` — allowlist de dois eixos default deny + receptor de pareamento + guard; e os comandos neutros (/ligar… /emergencia **+ os de agentes**: `/agente`, `/agentes`, `/parar-agente` — Onda 5) + `COMANDOS_PUBLICADOS`.
 - `worker/surface/{ids,tokens,outbox,text,actions}.ts` — normalização de identidade, requestId ULID e token opaco, partição/serialização 1 msg/s, texto de estado **e o texto dos agentes** (rótulos de status, `haQuantoTempo`, `linhaDeRun`, relatório e difusão).
-- `worker/providers/registry.ts` — tabela fechada de provedores (`telegram` default, `discord`; `ProvedorDesconhecidoError` fail-closed), `resolverProvedor`, `montarEnvelopeDeIntent`/`criarSurfaceIpcBridge` (**envelope V2 em string, sem conversão** — a neutralização do envelope IPC foi executada) e `criarPonteDeNonce` (com a entrada `agent.dispatch → 'reset'`).
+- `worker/providers/registry.ts` — tabela fechada de provedores (`telegram` default; `ProvedorDesconhecidoError` fail-closed), `resolverProvedor`, `montarEnvelopeDeIntent`/`criarSurfaceIpcBridge` (**envelope V2 em string, sem conversão** — a neutralização do envelope IPC foi executada) e `criarPonteDeNonce` (com a entrada `agent.dispatch → 'reset'`).
 - `worker/providers/telegram/**` — **adaptador telegram** (dono do grammY): cliente, polling, parse do update, teclado, token, transporte, adapter.
-- `worker/providers/discord/**` — **adaptador discord** (sem SDK — WebSocket nativo + fetch): `gateway.ts` (identify/heartbeat/resume, close codes 4004/4013/4014 fatais, backoff, zombie), `cliente.ts` (REST), `parse.ts` (MESSAGE_CREATE/INTERACTION_CREATE, snowflakes em string na fronteira), `teclado.ts` (custom_id `g1:<acao>:<token>` 1..100, PATCH in-place), `token.ts` (`DISCORD_BOT_TOKEN`, `DISCORD_API_ROOT`), `transporte.ts`, `adapter.ts` (`DISCORD_LIMITS` 2000/5×5/100/true).
-- `worker/lib/*` → só os auxiliares neutros/estruturais do processo (clock, log, redact) **+ o contrato de erro canónico** `errors.ts` (`ProviderError` com o `code` numérico `WorkerExitCode`, `WORKER_EXIT`, `isWorkerExitCode` — re-exportado pelos `interno.ts` dos dois provedores, a exceção sancionada à regra "adaptador não importa de `worker/lib/*`"); os antigos `client/polling/keyboard/token/transport-log/auto-retry/outbox` moveram-se para `worker/providers/telegram/**` e `worker/surface/outbox.ts`.
+- `worker/lib/*` → só os auxiliares neutros/estruturais do processo (clock, log, redact) **+ o contrato de erro canónico** `errors.ts` (`ProviderError` com o `code` numérico `WorkerExitCode`, `WORKER_EXIT`, `isWorkerExitCode` — re-exportado pelo `interno.ts` do provedor, a exceção sancionada à regra "adaptador não importa de `worker/lib/*`"); os antigos `client/polling/keyboard/token/transport-log/auto-retry/outbox` moveram-se para `worker/providers/telegram/**` e `worker/surface/outbox.ts`.
 
 ## 5. Relação com o DSH upstream
 
@@ -160,13 +159,13 @@ os adaptadores em `worker/providers/**` e o boot genérico em `worker/telegram-b
   `src/index.ts:957-1005`), mesmo havendo comentários antigos no ficheiro a dizer o
   contrário. Leia o código, não os comentários, para saber o que está servido.
 - O worker é Node, não Python: resíduos `bot_long_polling.py` do projeto
-  pré-plano **não existem** nesta árvore. O telegram usa grammY; o discord usa o
-  **WebSocket nativo e o fetch do Node 24** — o `package.json`/`pnpm-lock` continuam sem
+  pré-plano **não existem** nesta árvore. O telegram usa grammY — o
+  `package.json`/`pnpm-lock` continuam sem
   dependência nova.
 - O desacoplamento para provedores é **concluído** e o envelope IPC **V2 em string** foi
   neutralizado: `worker/auth/*`, `worker/commands/*` e
   `worker/lib/{client,polling,keyboard,token,transport-log,auto-retry,outbox}` **foram
   eliminados** — o núcleo neutro vive em `worker/surface/**`, os provedores em
-  `worker/providers/{telegram,discord}/**` e o `from`/`chat` do canal viajam em string sem
+  `worker/providers/telegram/**` e o `from`/`chat` do canal viajam em string sem
   `Number(...)` (a conversão morreu na fronteira dos adaptadores). Referências antigas a
   esses caminhos são código morto.

@@ -385,7 +385,7 @@ describe('S4: linha malformada e descartada, e o canal SOBREVIVE', () => {
 
 /* ========================================================================== */
 /* V2 — ids NAO-numericos atravessam o canal intactos (EMENDA ONDA-1-IPC-      */
-/* ENVELOPE-STRING: o prerequisito do provedor Discord)                        */
+/* ENVELOPE-STRING: o prerequisito de ids nao-numericos)                       */
 /* ========================================================================== */
 
 describe('V2: um id nao-numerico (snowflake) atravessa intent -> host -> ack sem NaN', () => {
@@ -930,7 +930,7 @@ describe('nada do que este canal escreve no log leva segredo em claro', () => {
 /* ========================================================================== */
 /* V2 — a politica minima de isId: trim + nao vazio + sem controlo + teto     */
 /* (EMENDA ONDA-1-IPC-ENVELOPE-STRING: from/chat sao STRING; a forma nao      */
-/* valida FORMATO de provedor nenhum — um snowflake do Discord, um id de      */
+/* valida FORMATO de provedor nenhum — uma snowflake, um id de               */
 /* Matrix, um `-100...` de grupo sao todos strings utilizaveis)               */
 /* ========================================================================== */
 

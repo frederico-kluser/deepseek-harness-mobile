@@ -10,20 +10,16 @@ description: >-
   o registo no registry (ProvedorDescrito.apiRootVar), a allowlist de ambiente
   do host (src/proc/env.ts), a checklist de aceite e os invariantes de
   segurança (ids-string na fronteira, envelope IPC V2, token opaco S5, limite
-  por provider, cone de import). Referências concretas IMPLEMENTADAS:
-  dsh-telegram-provider (1º, telegram) e worker/providers/discord/** (2º, sem
-  SDK). NÃO duplica o contrato.
+  por provider, cone de import). Referência concreta IMPLEMENTADA:
+  dsh-telegram-provider (telegram). NÃO duplica o contrato.
 ---
 
 # Adicionar um provedor de mensageria (dsh-provider-bot)
 
-Guia **genérico** para acrescentar um canal de mensageria a este repo. Há DUAS
-referências concretas de implementação: o adaptador **Telegram** (1º
-implementado — carregue a skill **`dsh-telegram-provider`**, que cobre só o
-telegram-específico) e o adaptador **Discord** (2º implementado —
-`worker/providers/discord/**`, sem SDK: `fetch` REST + WebSocket nativo do
-Node; use-o como segunda referência, especialmente onde ele diverge do
-telegram — ver §4.5.3). Ambas referenciam este ficheiro para a
+Guia **genérico** para acrescentar um canal de mensageria a este repo. Há UMA
+referência concreta de implementação: o adaptador **Telegram**
+(carregue a skill **`dsh-telegram-provider`**, que cobre só o
+telegram-específico). Ela referencia este ficheiro para a
 arquitectura/contrato.
 
 - Língua do repo: **PT-BR** (identificadores e comentários ficam em PT-BR).
@@ -58,7 +54,7 @@ UPDATE do canal (long polling / webhook / socket do PROVEDOR)
    │   `resolverProvedor(env)` lê DSH_GUARD_PROVIDER (fail-closed; ausente/vazio
    │   → `telegram`; desconhecido → ProvedorDesconhecidoError). Tabela
    │   `PROVIDERS` (provider → { create, lerToken, assertTokenNaoEmArgv,
-   │   apiRootVar }) — telegram e discord, uma linha cada.
+   │   apiRootVar }) — uma linha por provedor (telegram hoje).
    │   `criarSurfaceIpcBridge(ipc)` monta o envelope V2 STRING via
    │   `montarEnvelopeDeIntent(IntencaoNeutra)` — SEM conversão numérica.
    │   `criarPonteDeNonce` (nonce.request/nonce.issued, timeout 5 s fail-closed).
@@ -174,11 +170,11 @@ export interface ProvedorDescrito {
   readonly id: ProviderId
   readonly create: (deps: ProvedorCreateDeps) => TelegramAdapter
   // ^ o tipo declarado é TelegramAdapter (o tipo mais rico, com
-  //   `descartados()`); o DiscordAdapter satisfaz estruturalmente.
+  //   `descartados()`).
   readonly lerToken: (env: NodeJS.ProcessEnv) => string
   readonly assertTokenNaoEmArgv: (argv: readonly string[], token?: string) => void
   readonly apiRootVar?: string
-  // ^ a env com a raiz da API DO PROVEDOR (ex.: 'DISCORD_API_ROOT'). O boot lê
+  // ^ a env com a raiz da API DO PROVEDOR (ex.: 'TELEGRAM_API_ROOT'). O boot lê
   //   `env[apiRootVar]` e passa o valor como `apiRoot` ao `create` SÓ quando
   //   definido — cada provedor com a SUA variável, sem vazamento cruzado
   //   (o boot da Onda 4 lia a raiz do telegram para qualquer provedor).
@@ -195,8 +191,7 @@ export interface ProvedorDescrito {
 classifica o erro terminal de QUALQUER provedor lendo o campo `code`
 (`codeDoContrato`/`isWorkerExitCode`) — **sem `instanceof` de classe de
 provedor**; um erro sem `code` do contrato cai no default `POLLING` 13. Os
-409/401 do telegram chegam já com 11/12; os close codes 4004/4013/4014 do
-gateway discord com 12; o prazo de arranque (45 s) com 14.
+409/401 do telegram chegam já com 11/12; o prazo de arranque (45 s) com 14.
 
 ---
 
@@ -227,10 +222,9 @@ worker/providers/<id>/
   parse.ts        # update cru do canal -> SurfaceEvent (comando|acao|acao-invalida)
   teclado.ts      # ActionRowLayout -> marcação visual + answer + edição in-place
   polling.ts      # (long polling/webhook) o loop e a classificação de saída
-  gateway.ts      # (canal por WebSocket — é o `polling.ts` do DISCORD: o loop
-                  #   do gateway + heartbeat/resume + close codes terminais)
-  cliente.ts      # o cliente do SDK do provedor (ou `fetch` REST puro, como o
-                  #   discord) + error handler
+  gateway.ts      # (canal por WebSocket) o loop
+                  #   do gateway + heartbeat/resume + close codes terminais
+  cliente.ts      # o cliente do SDK do provedor (ou `fetch` REST puro) + error handler
   transporte.ts   # (se o SDK expuser) transporte HTTP + auto-retry do 429
   adapter.ts      # create<Provider>Provider(deps) -> ProviderAdapter  ← o CONTRATO
 ```
@@ -353,20 +347,21 @@ allowlist do host — NUNCA por `argv` (`/proc/<pid>/cmdline` é legível por
 qualquer processo local; token em argv é falha TG-069).
 
 1. Em `src/proc/env.ts`:
-   - acrescente o literal ao enum/tipo `ProviderId` (hoje `'telegram' | 'discord'`);
+   - acrescente o literal ao enum/tipo `ProviderId` (hoje `'telegram'`);
    - adicione a linha a **`PROVIDER_ENV`** (a tabela REAL hoje):
      ````ts
      export const PROVIDER_ENV: Readonly<Record<ProviderId, { readonly tokenVar: string }>> = {
        telegram: { tokenVar: 'TELEGRAM_BOT_TOKEN' },
-       discord: { tokenVar: 'DISCORD_BOT_TOKEN' },
      }
      ````
    - `buildWorkerEnv(source, token, provider)` pisa `PROVIDER_ENV[provider].tokenVar`,
      `DSH_GUARD_PROVIDER = provider` e `DSH_GUARD_IPC = '1'` no ambiente do worker.
 2. Em `src/config/schema.ts`: alargue `worker.provider?: 'telegram'` para incluir
-   o mesmo literal (`worker.provider?: 'telegram' | 'discord'` hoje; `worker.token`
+   o mesmo literal (`worker.provider?: 'telegram'` hoje; `worker.token`
    passa a ser "o token do provedor ativo").
-3. Em `cordis.patch.yml`: acrescente o literal na linha `provider:` (`telegram` hoje).
+3. Em `cordis.patch.yml`: declare a linha `provider: <id>` no `config` do worker
+   quando quiser fixar explicitamente o provedor (ausente = default fechado
+   `telegram`).
 4. **Nunca reescreva uma variável existente** em `PROVIDER_ENV`: mudaria em
    silêncio o token de um bot já emparelhado.
 
@@ -379,25 +374,24 @@ rodar N canais ao mesmo tempo é evolução futura (§1, decisão documentada).
 
 ```ts
 // 1) Alargue o tipo (na tabela já fechada):
-export type ProviderId = 'telegram' | 'discord'   // ← + o novo
+export type ProviderId = 'telegram'   // ← + o novo literal
 export const DEFAULT_PROVIDER_ID: ProviderId = 'telegram'
 
-// 2) Importe o `create` do novo provedor:
-import { createDiscordProvider } from './discord/adapter.ts'
+// 2) Importe o `create` do provedor:
+import { createTelegramProvider } from './telegram/adapter.ts'
 
 // 3) Acrescente a DESCRICAO e a linha na tabela PROVIDERS (o padrão REAL,
 //    com a raiz da API própria — o boot lê `env[apiRootVar]` e passa como
-//    `apiRoot` ao `create` quando definida):
-const DESCRICAO_DISCORD: ProvedorDescrito = {
-  id: 'discord',
-  apiRootVar: DISCORD_API_ROOT_ENV_VAR,              // de ./discord/token.ts
-  create: (deps) => createDiscordProvider(deps),
-  lerToken: (env) => lerTokenDiscordDoAmbiente(env), // de ./discord/token.ts
-  assertTokenNaoEmArgv: (argv, token) => assertDiscordTokenNotInArgv(argv, token),
+//    `apiRoot` ao `create` quando definida). O exemplo CONCRETO é o telegram:
+const DESCRICAO_TELEGRAM: ProvedorDescrito = {
+  id: 'telegram',
+  apiRootVar: TELEGRAM_API_ROOT_ENV_VAR,               // de ./telegram/token.ts
+  create: (deps) => createTelegramProvider(deps),
+  lerToken: (env) => lerTokenDoAmbiente(env),          // de ./telegram/token.ts
+  assertTokenNaoEmArgv: (argv, token) => assertTokenNotInArgv(argv, token),
 }
 export const PROVIDERS: Readonly<Record<ProviderId, ProvedorDescrito>> = Object.freeze({
   telegram: DESCRICAO_TELEGRAM,
-  discord: DESCRICAO_DISCORD,
 })
 ```
 
@@ -409,19 +403,16 @@ degradar em silêncio para o default seria nascer com o token de outro provedor.
 
 - **Duplo local do canal**: espelhe o padrão
   `test/support/telegram-server.mjs` (servidor HTTP mínimo que responde aos
-  métodos do canal, pela `apiRoot`/token no path) — ou o
-  `test/support/discord-server.mjs` (REST + gateway WebSocket num único
-  `node:http`, se o canal for por WebSocket). Provê
+  métodos do canal, pela `apiRoot`/token no path; se o canal for por
+  WebSocket, um `node:http` com upgrade). Provê
   `calls`, `queueError(method, err)`, `CANONICAL_ERRORS`, e long-polling que
   segura a resposta. O grammY/adaptador aponta para ele via `apiRoot` (a env
   `apiRootVar` do provedor).
 - **Testes unitários** do parse/limites/token/polling (padrão
-  `test/unit/worker/providers/telegram/*.test.ts` e
-  `test/unit/worker/providers/discord/*.test.ts`).
+  `test/unit/worker/providers/telegram/*.test.ts`).
 - **E2E** do boot (padrão `test/e2e/telegram-*.test.ts` e
   `test/unit/worker/telegram-bot.test.ts`): boot feliz, 409→11, 401→12,
-  boot-timeout→14, token nunca em `argv` (no discord: close 4004/4013/4014→12,
-  boot-timeout→14).
+  boot-timeout→14, token nunca em `argv`.
 
 ### 3.9 O boot GRÁTIS (não mude nada aqui)
 
@@ -468,7 +459,7 @@ Um provedor só é **"suportado"** quando TODA a checklist fechar:
 
 ---
 
-## 4.5 Como plugar OUTROS provedores (WhatsApp, Discord, iMessage, Signal, Slack…)
+## 4.5 Como plugar OUTROS provedores (WhatsApp, iMessage, Signal, Slack…)
 
 Esta secção é o **receituário concreto** por provedor, sobre o esqueleto da §3
 e da §4. Para cada canal apontamos: o **estilo de entrega** (long-polling vs
@@ -479,9 +470,9 @@ arquivo novo"** para os casos-limite (sem edição, webhook, id não-numérico).
 
 > A regra absoluta é a mesma para todos: **todo segredo/provider-específico
 > fica DENTRO de `worker/providers/<id>/**`**, e o núcleo
-> `worker/surface/**` **nunca** importa grammY/discord.js/whatsapp-web.js nem
-> `worker/lib/*`. O **Telegram** (dsh-telegram-provider) e o **Discord** (§4.5.3)
-> já estão IMPLEMENTADOS — para eles os números valem os do código, não os das
+> `worker/surface/**` **nunca** importa grammY/whatsapp-web.js nem
+> `worker/lib/*`. O **Telegram** (dsh-telegram-provider)
+> está IMPLEMENTADO — para ele os números valem os do código, não os das
 > fontes. Os factos externos citados para os AINDA NÃO implementados vêm das
 > fontes oficiais ligadas; confirme na data de implementação (APIs mudam).
 
@@ -489,8 +480,7 @@ arquivo novo"** para os casos-limite (sem edição, webhook, id não-numérico).
 
 | Provedor | Entrega | SDK (vive no adapter) | `maxTextLength` | `supportsEditing` | id é numérico? | Estado |
 |---|---|---|---|---|---|---|---|
-| Telegram | long polling | `grammY` | 4096 | `true` | número (→string na fronteira) | ✅ IMPLEMENTADO (1º) |
-| Discord | WebSocket gateway + interactions | **sem SDK** (`fetch` REST + WebSocket nativo) | 2000 | `true` | snowflake (string) | ✅ IMPLEMENTADO (2º) |
+| Telegram | long polling | `grammY` | 4096 | `true` | número (→string na fronteira) | ✅ IMPLEMENTADO |
 | WhatsApp Cloud API | webhook | `participants.js`/HTTP próprio (sem SDK oficial Node) | 4096 | `true` (vonage) / parcial | string `${phone}` | ✅ recomendado |
 | WhatsApp (whatsapp-web.js / Baileys) | socket próprio | `whatsapp-web.js`/`baileys` (não-oficiais) | ~4096 | parcial | string | ⚠️ razão (segurança/sessão) |
 | Slack | WebSocket / HTTP + slash | `@slack/*` (bolt) | ~40 000 (blocos) | `true` (chat.update) | string (team/user) | ✅ recomendado |
@@ -518,56 +508,7 @@ arquivo novo"** para os casos-limite (sem edição, webhook, id não-numérico).
 Fontes: [WhatsApp Business API — tipos e limites de mensagem](https://clickatell.netlify.app/help-center/whatsapp/sending-receiving-messages/message-types-media-formats-supported/),
 [whatsapp-cloud-api — parâmetros de texto](https://gist.github.com/dani139/16d4c4ea272af8fe75cd28b89ab77ddb#2).
 
-### 4.5.3 Discord — IMPLEMENTADO (2ª referência concreta)
-
-O adaptador **já existe** em `worker/providers/discord/**` — use-o como
-segunda referência ao lado do telegram, especialmente onde diverge dele. Factos
-do CÓDIGO (não de fontes externas):
-
-1. **Entrega:** WebSocket **nativo do Node** (≥ 24 tem o client `WebSocket`
-   global) + `fetch` REST — **SEM SDK, SEM dependência nova**
-   (`package.json`/`pnpm-lock` intactos; o discord.js foi descartado na
-   implementação — o repo é zero-deps). O loop (`gateway.ts`) faz
-   `GET /gateway/bot` → `Identify` (op 2) / `Resume` (op 6) → `READY`, com
-   heartbeat com jitter, backoff de reconexão 1,2,4,…,30 s e **close codes
-   terminais**: 4004 (auth) / 4013 (intent inválido) / 4014 (intent
-   desaprovado) → `GATEWAY_UNAUTHORIZED` → **exit 12** (espelho do 401 do
-   telegram, ZERO reconexões). **Prazo de arranque 45 s → exit 14** (o mesmo
-   `BOOT_TIMEOUT` do telegram).
-2. **Interações, não slash commands:** o núcleo entende TEXTO LIVRE
-   (`MESSAGE_CREATE`) e cliques (`INTERACTION_CREATE`, type 3). O
-   `publishCommands` é **NO-OP documentado** (o `setMyCommands` do telegram não
-   tem equivalente REST sem registro de slash commands — mudança de modelo,
-   fica para o futuro).
-3. **`SurfaceLimits` (REAL):** `maxTextLength: 2000` · `maxActionRows: 5` ·
-   `maxActionPerRow: 5` · `maxActionDataBytes: 100` (o `custom_id`, 1..100
-   caracteres; o payload `g1:<acao>:<token>` é ASCII — bytes == chars) ·
-   `supportsEditing: true` (`PATCH /channels/{id}/messages/{id}`).
-4. **Identidade:** ids são **snowflakes (uint64 > 2^53)** — o servidor
-   serializa-os como STRING no JSON e o adaptador converte `String(...)` UMA
-   vez, na fronteira (`parse.ts`). `userKey` = o `author.id` (guild:
-   `member.user.id`; DM: `user.id`) e `chatKey = channel_id` — **nunca** o
-   `username` (TG-008) nem `Number(...)` (truncaria o snowflake; o envelope IPC
-   V2 existe por isso). **O `Number(...)` NÃO existe neste adaptador.**
-5. **Botões:** `ActionRow` → `components[].button`; o `custom_id` carrega a
-   **MESMA gramática `g1:<acao>:<token>`** do telegram (token opaco S5),
-   com teto de 100 chars. Responder ao clique SEMPRE (TG-027): `answerTarget`
-   = `interaction.id`/`token`, respondido por
-   `POST /interactions/{id}/{token}/callback` — type 7 `UPDATE_MESSAGE` (ACK
-   com messageTarget), 6 `DEFERRED_UPDATE_MESSAGE` (ACK sem), 4
-   `CHANNEL_MESSAGE_WITH_SOURCE` com `flags: 64` (EPHEMERAL — o "toast" do
-   núcleo). **`components: []` explícito DESTRÓI os botões** (anti
-   duplo-toque; omitir o campo PRESERVARIA os antigos).
-6. **Token:** `DISCORD_BOT_TOKEN` via `Authorization: Bearer` (NUNCA na URL —
-   ao contrário do telegram); `DISCORD_API_ROOT` (a `apiRootVar`; default
-   `https://discord.com/api/v10`); `DISCORD_TOKEN_SHAPE` conservador (≥ 50
-   chars base64url) só para DETETAR, nunca para validar.
-7. **429:** `retry_after` em SEGUNDOS no CORPO (float — o telegram dá inteiro);
-   o `transporte.ts` espera exatamente isso no relógio injetado; **erro de rede
-   (status 0) NUNCA se repete** no envio de mensagem (não-idempotente: repetir
-   DUPLICARIA a mensagem).
-
-### 4.5.4 Slack — app com slash commands
+### 4.5.3 Slack — app com slash commands
 
 1. **Entrega:** Socket Mode (WebSocket) ou HTTP. Use `@slack/bolt` como SDK SÓ no
    adapter `worker/providers/slack/**`. Roteie mensagens por `/comando` e por
@@ -582,7 +523,7 @@ do CÓDIGO (não de fontes externas):
    e o [issue bolt-js #2509 — “Blocks too long”](https://github.com/slackapi/bolt-js/issues/2509#1)).
    Configure o `maxTextLength` do teu `SurfaceLimits` NE abaixo do teto real.
 
-### 4.5.5 WhatsApp não-oficial (whatsapp-web.js / Baileys) e iMessage
+### 4.5.4 WhatsApp não-oficial (whatsapp-web.js / Baileys) e iMessage
 
 - **WhatsApp não-oficial:** `whatsapp-web.js` e `Baileys` são **engenharia
   reversa** do WhatsApp Web — exigem **uma sessão real de número de telefone**,
@@ -608,7 +549,7 @@ do CÓDIGO (não de fontes externas):
   primeiro provedor; se usado, td a ponte fica em `worker/providers/signal/**`.
   Fontes: [signal-cli-rest-api (DeepWiki)](https://deepwiki.com/bbernhard/signal-cli-rest-api/4-api-reference#1).
 
-### 4.5.6 Mini-mapa "antigo → novo" para os casos-limite
+### 4.5.5 Mini-mapa "antigo → novo" para os casos-limite
 
 | Caso | O que muda no **teu** adaptador | O que NÃO muda (núcleo) |
 |---|---|---|
@@ -617,7 +558,7 @@ do CÓDIGO (não de fontes externas):
 | **Id é username puro** (ex.: sem id numérico estável) | **RECUSAR** o provedor: a allowlist de 2 eixos exige `userKey`/`chatKey` **estáveis e não-identificáveis**; `username` muda e é TG-008. Alternativa: usar um id estável do provider (ex.: phone/snowflake) e NUNCA o nome de ecrã | contrato `SurfaceIdentity` (string, nunca username) |
 | **Sem analogo de callback/bottom** (`maxActionDataBytes:0`) | `answerTarget` pode ser o id do update; responde por mensagem/editação ou aceita não responder (mas mantenha a regra TG-027 o melhor possível) | `SurfaceEvent` com `answerTarget`; o `núcleo` responde sempre que houver |
 | **Payload de botão maior que o limite** | cortar/condensar o token no `teclado.ts`; se o driver estourar, marcar como `acao-invalida` | `SurfaceLimits.maxActionDataBytes` (BYTES UTF-8) |
-| **Id não-numérico** (WhatsApp/Discord/Slack) | **NÃO** fazer `Number(userKey)` no adaptador — o id nasce STRING no parse e o envelope IPC V2 é STRING; `Number(...)` só onde a API do canal exige inteiro (ex.: `message_id`) | `IntencaoNeutra` + envelope V2 (chaves STRING, **sem conversão** — não há ponte conversora) |
+| **Id não-numérico** (WhatsApp/Matrix/Slack) | **NÃO** fazer `Number(userKey)` no adaptador — o id nasce STRING no parse e o envelope IPC V2 é STRING; `Number(...)` só onde a API do canal exige inteiro (ex.: `message_id`) | `IntencaoNeutra` + envelope V2 (chaves STRING, **sem conversão** — não há ponte conversora) |
 | **Novo `tokenVar`** | nova linha em `src/proc/env.ts::PROVIDER_ENV` + literal em `ProviderId` (host e worker) + schema `worker.provider` + `cordis.patch.yml` | `buildWorkerEnv` injeta `DSH_GUARD_PROVIDER` + `tokenVar`; allowlist 2 eixos |
 
 > **Checklist por provedor novo:** siga §4 contra este mini-mapa. O que destoa

@@ -274,13 +274,6 @@ describe('GET /__guard-ui/api/telegram', () => {
     const online = await bancada.enviar(UI_PATH_TELEGRAM)
     assert.equal(online.corpo.provider, 'telegram')
   })
-
-  it('provider=discord: o GET /telegram emite o provedor ativo', async () => {
-    const bancada = criarBancada('discord')
-    bancada.definirTelegrama({ online: false, motivo: 'sem-pareamento' })
-    const resposta = await bancada.enviar(UI_PATH_TELEGRAM)
-    assert.equal(resposta.corpo.provider, 'discord')
-  })
 })
 
 /* ========================================================================== */

@@ -46,14 +46,10 @@ describe('fail loud at load', () => {
 })
 
 describe('worker.provider -- fail loud no literal (registro do host)', () => {
-  it('aceita `telegram` e `discord` (os dois literais de PROVIDER_ENV)', () => {
+  it('aceita `telegram` (o literal de PROVIDER_ENV)', () => {
     const comTelegram = makeConfig()
     comTelegram.worker.provider = 'telegram'
     assert.doesNotThrow(() => assertValidConfig(comTelegram))
-
-    const comDiscord = makeConfig()
-    comDiscord.worker.provider = 'discord'
-    assert.doesNotThrow(() => assertValidConfig(comDiscord))
   })
 
   it('rejeita um literal desconhecido com erro accionavel (nunca degrada em silencio)', () => {
@@ -64,7 +60,7 @@ describe('worker.provider -- fail loud no literal (registro do host)', () => {
     comWhatsapp.worker.provider = 'whatsapp' as never
     assert.throws(() => assertValidConfig(comWhatsapp), /provider/u)
     assert.throws(() => assertValidConfig(comWhatsapp), /whatsapp/u)
-    assert.throws(() => assertValidConfig(comWhatsapp), /telegram \| discord/u)
+    assert.throws(() => assertValidConfig(comWhatsapp), /telegram/u)
   })
 
   it('ausente continua a ser valido (o default fechado e do schema, nao do assert)', () => {

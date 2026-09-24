@@ -21,7 +21,7 @@
  * conversao numerica morre na FRONTEIRA dos provedores (o adaptador Telegram
  * converte `from.id`/`chat.id` numericos para string UMA vez, no parse do
  * update); todo o resto do pipeline e string — o prerequisito para provedores
- * com ids nao-numericos (snowflakes do Discord estouram Number.MAX_SAFE_INTEGER).
+ * com ids nao-numericos (ids grandes nao numericos estouram Number.MAX_SAFE_INTEGER).
  *
  * EMENDA ONDA-4-AGENTS-HOST (onda 4 — o DISPATCHER DE AGENTES no HOST): o
  * vocabulario de intents ganha TRES membros — `agent.dispatch`, `agent.status`
@@ -324,7 +324,7 @@ export type IpcIntentName =
  * nunca username — username e mutavel e sequestravel. O envelope foi numerico
  * na V1 por heranca Telegram; a V2 transporta a string ja normalizada na
  * fronteira do provedor, o que abre o canal a ids nao-numericos (WhatsApp,
- * Discord/snowflake, Matrix). Chegam aqui **ja filtrados** pela allowlist do
+ * snowflake, Matrix). Chegam aqui **ja filtrados** pela allowlist do
  * worker (S6); o host **volta a verificar** contra o pareamento persistido,
  * porque uma verificacao no processo que fala com a internet e a primeira a
  * cair se esse processo for comprometido.

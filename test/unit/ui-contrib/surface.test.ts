@@ -872,7 +872,7 @@ describe('isolamento da superficie', () => {
  * REPASSAR ao `core` que monta os handlers (`provider: deps.provider` em
  * surface.ts) — e o GET /__guard-ui/api/telegram e quem o emite no corpo para
  * o painel rotular o onboarding por provedor. Falsificavel sem host: fiar
- * 'discord' nos deps e ler o corpo da rota.
+ * o provedor nos deps e ler o corpo da rota.
  */
 describe('o provider atravessa a superficie ate o GET /telegram', () => {
   it('o default dos deps (telegram) sai no corpo da rota', async () => {
@@ -880,15 +880,6 @@ describe('o provider atravessa a superficie ate o GET /telegram', () => {
     const resposta = await bancada.enviar(UI_PATH_TELEGRAM)
     assert.equal(resposta.status, 200)
     assert.equal(resposta.corpo.provider, 'telegram')
-  })
-
-  it('provider=discord nos deps chega ao corpo (UiContribDeps.provider -> core.provider)', async () => {
-    const bancada = criarBancada({
-      provider: 'discord',
-      botState: () => ({ online: true, handle: 'meu_bot' }),
-    })
-    const resposta = await bancada.enviar(UI_PATH_TELEGRAM)
-    assert.deepEqual(resposta.corpo, { online: true, provider: 'discord', handle: 'meu_bot' })
   })
 })
 

@@ -12,8 +12,8 @@
  * passo atual fica aberto; os concluídos colapsam em `✓`):
  *   1. "Passo 1 de 3 · Criar o bot" — sem token: o formulário do token
  *      (`POST /token` com CSRF) + `<details>` "Como criar o bot do zero"
- *      (os passos de criação do PROVEDOR ATIVO — telegram: @BotFather;
- *      discord: Developer Portal); erro de token com a ação "Revisar token".
+ *      (os passos de criação do PROVEDOR ATIVO — telegram: @BotFather);
+ *      erro de token com a ação "Revisar token".
  *   2. "Passo 2 de 3 · Parear" — configurado e NÃO pareado: CTA "Gerar código",
  *      código de 6 dígitos em caixa monospace espaçada + "Copiar", countdown
  *      `expira em m:ss` + "Gerar novo", uma instrução `/parear`, e o status ao
@@ -41,7 +41,7 @@
  *
  * PROVIDER-AWARE: os rótulos de onboarding (passos de criação, canal do
  * provedor, variável de ambiente do token) vivem num mapa local por provedor
- * (`telegram`/`discord`, fallback `telegram` — ver `rotulosDoProvider`). O
+ * (`telegram`, fallback `telegram` — ver `rotulosDoProvider`). O
  * provedor ATIVO vem do campo `provider` do GET /telegram QUANDO o host o
  * emitir (`normalizarProvider`); hoje o host ainda não o emite e o painel usa
  * o default `telegram` — nada funcional depende do campo nesta onda.
@@ -543,15 +543,14 @@ const COMANDOS_ESSENCIAIS: readonly BlocoDeComando[] = [
  * o painel consome-o via {@link normalizarProvider} — sem ele, `'telegram'` é
  * o default (e o único provedor real hoje).
  */
-export type TipoProvider = 'telegram' | 'discord'
+export type TipoProvider = 'telegram'
 
 /**
  * Os rótulos de ONBOARDING por provedor — o mapa local do client, com fallback
  * 'telegram' (ver {@link rotulosDoProvider}). O passo 1 ("Criar o bot") e todo
  * texto que cita o canal de criação, a variável de ambiente do token ou a
  * conversa do provedor saem daqui. Os valores do telegram são os literais de
- * sempre; os do discord são GENÉRICOS apontando para a documentação oficial
- * (a Onda 3/6 refina os textos exatos). Mantidos como strings LITERAIS (não
+ * sempre. Mantidos como strings LITERAIS (não
  * compostas) para o smoke do bundle verificar a fidelidade por substring.
  *
  * Placeholders de render: `{codigo}`, `{ref}` e `{handle}` são substituídos
@@ -635,43 +634,8 @@ const ROTULOS_TELEGRAM: RotulosDoProvider = Object.freeze({
   ckpt3Conversas: 'As tuas conversas com o bot ficam neste aparelho e no Telegram, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.',
 })
 
-/** Discord — textos GENÉRICOS apontando para a documentação oficial (discord.com/developers); a Onda 3/6 refina os passos exatos. */
-const ROTULOS_DISCORD: RotulosDoProvider = Object.freeze({
-  botFather: 'o Developer Portal',
-  tokenVar: 'DISCORD_BOT_TOKEN',
-  tokenPlaceholder: 'cole o token do bot aqui',
-  coleToken: 'Cole o token do bot que criaste no Developer Portal (discord.com/developers/applications). Fica guardado seguro nesta máquina.',
-  rotuloCampoToken: 'Token do bot (Developer Portal)',
-  conectando: 'A conectar ao Discord…',
-  criacao: [
-    'Abra o Developer Portal do Discord (discord.com/developers/applications).',
-    'Crie uma aplicação nova e entre na secção "Bot".',
-    'Dê um nome para o bot (ex.: "Meu dsh-messenger").',
-    'Em "Token", toque em "Reset Token" para gerar o token do bot — copie-o e não o mostres a ninguém.',
-    'Cole o token no campo abaixo e clique em "Salvar bot".',
-  ],
-  notaCriacao: 'Se precisar trocar o token depois, gere um novo no Developer Portal ("Reset Token") — o antigo deixa de valer.',
-  notaPrivado: 'Opcional — bot privado: no Developer Portal, desative "Public Bot" para o bot não poder ser adicionado por terceiros.',
-  formatoInvalido: 'Formato errado. O token do Discord é uma cadeia longa sem dois pontos — cola-a inteira.',
-  tokenRecusado: 'O Discord não aceitou este token. Gere um novo no Developer Portal ("Reset Token") e tenta de novo.',
-  envManda: 'A variável DISCORD_BOT_TOKEN do ambiente manda; remova-a ou use o token dela.',
-  naConversa: 'No Discord, envia:',
-  parearNoBot: 'No Discord, envia: /parear {codigo} no {ref} — ou só /parear e o bot pede o código',
-  acessoIntro: 'Acesso remoto ao Harness pelo Discord — sem login no túnel.',
-  encontravel: 'O bot é encontrável na busca do Discord como @{handle}. Se não quiser isso, restrinja o acesso:',
-  naoEncontravel: 'Não encontrável na busca ✓ — ninguém adiciona o bot a servidores novos.',
-  passosRemoverUsername: [
-    'No Developer Portal, abra a aplicação e a secção "Bot".',
-    'Desative "Public Bot" — o bot deixa de poder ser adicionado a servidores novos.',
-    'Confirme em "Save Changes" (as alterações valem na hora).',
-  ],
-  semUsernameNota: 'Sem o bot público, ele deixa de ser adicionado a novos servidores — as conversas já abertas e o pareamento continuam a funcionar.',
-  ckpt3Conversas: 'As tuas conversas com o bot ficam neste aparelho e no Discord, com privacidade por omissão: nenhum comando de estranho funciona e quem não pareou não recebe resposta.',
-})
-
 const ROTULOS_POR_PROVIDER: Readonly<Record<TipoProvider, RotulosDoProvider>> = {
   telegram: ROTULOS_TELEGRAM,
-  discord: ROTULOS_DISCORD,
 }
 
 /**
@@ -681,17 +645,17 @@ const ROTULOS_POR_PROVIDER: Readonly<Record<TipoProvider, RotulosDoProvider>> = 
  * exercitar a escolha por provedor e o fallback sem montar React.
  */
 export function rotulosDoProvider(provider?: TipoProvider | null): RotulosDoProvider {
-  return provider === 'telegram' || provider === 'discord' ? ROTULOS_POR_PROVIDER[provider] : ROTULOS_TELEGRAM
+  return provider === 'telegram' ? ROTULOS_POR_PROVIDER[provider] : ROTULOS_TELEGRAM
 }
 
 /**
  * Normaliza o campo `provider` do GET /telegram (OPCIONAL — o host ainda não o
- * emite) para um TipoProvider: só `'discord'` e `'telegram'` passam; qualquer
+ * emite) para um TipoProvider: só `'telegram'` passa; qualquer
  * outro valor (incl. `undefined`) cai no `'telegram'`. Exportada para o teste
  * exercitar o consumo do campo sem montar React.
  */
-export function normalizarProvider(valor: unknown): TipoProvider {
-  return valor === 'discord' ? 'discord' : 'telegram'
+export function normalizarProvider(_valor: unknown): TipoProvider {
+  return 'telegram'
 }
 
 
@@ -846,7 +810,7 @@ const GARANTIAS_PRIVACIDADE: readonly string[] = [
  * telegram são os passos conservadores do /setusername (a documentação do
  * BotFather confirma que o comando `/setusername` é o ponto de edição/remoção
  * do `@username` — https://www.grambots.com/bots/botfather e
- * https://cnvrse.com/what-is-botfather); o discord aponta para o "Public Bot".
+ * https://cnvrse.com/what-is-botfather).
  */
 
 /**

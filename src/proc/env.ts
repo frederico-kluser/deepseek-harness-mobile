@@ -75,17 +75,13 @@ export const WORKER_IPC_ENV_MARK = 'DSH_GUARD_IPC'
  *
  * FECHADO e paralelo ao enum de `Config.worker.provider` (o `PersistedState`
  * vive no contrato congelado e ainda so admite `telegram` — a ausencia le-se
- * como o default fechado). `'discord'` e uma entrada REGISTRADA neste host
- * desde ja: o adaptador do worker chega na Onda 3, mas o host precisa de estar
- * pronto para rotular o filho com `DSH_GUARD_PROVIDER=discord` e injetar o
- * `DISCORD_BOT_TOKEN` no mesmo dia. Ate la, `provider: 'discord'` na config
- * faz o worker falhar-closed no registry (provedor desconhecido) — o contrario
- * de degradar em silencio para o telegram, que nasceria com o token de outro
- * provedor. Um provedor futuro ACRESCENTA um literal AQUI e a sua linha em
- * {@link PROVIDER_ENV} — nunca reescreve uma variavel existente, para que
- * nenhuma mudanca mude silenciosamente o token de um bot ja emparelhado.
+ * como o default fechado). Hoje `telegram` e a UNICA entrada registrada neste
+ * host e no registry do worker; um provedor futuro ACRESCENTA um literal AQUI
+ * e a sua linha em {@link PROVIDER_ENV} — nunca reescreve uma variavel
+ * existente, para que nenhuma mudanca mude silenciosamente o token de um bot
+ * ja emparelhado.
  */
-export type ProviderId = 'telegram' | 'discord'
+export type ProviderId = 'telegram'
 
 /** O default fechado do provedor (D1): ausente em config/estado = telegram. */
 export const DEFAULT_PROVIDER: ProviderId = 'telegram'
@@ -105,11 +101,6 @@ export const DEFAULT_PROVIDER: ProviderId = 'telegram'
  */
 export const PROVIDER_ENV: Readonly<Record<ProviderId, { readonly tokenVar: string }>> = {
   telegram: { tokenVar: 'TELEGRAM_BOT_TOKEN' },
-  // REGISTRADA (Onda 2 do host): o adaptador discord do worker (Onda 3) le
-  // `DISCORD_BOT_TOKEN` como `TOKEN_ENV_VAR` proprio. A paridade e um teste
-  // (`test/unit/proc/env.test.ts`), nao um import — o worker so pode importar
-  // `src/contracts/ipc.ts` de `src/` (cone de import).
-  discord: { tokenVar: 'DISCORD_BOT_TOKEN' },
 }
 
 /**
@@ -134,7 +125,7 @@ export const WORKER_PROVIDER_ENV_VAR = 'DSH_GUARD_PROVIDER'
  * O `provider` e OPCIONAL com default fechado `telegram` (D1): quem chama sem
  * provider e quem corre hoje, e o alvo da variavel e o MESMO —
  * `TELEGRAM_BOT_TOKEN`. O token vai para `PROVIDER_ENV[provider].tokenVar`
- * (`TELEGRAM_BOT_TOKEN` para telegram, `DISCORD_BOT_TOKEN` para discord); a
+ * (o `tokenVar` proprio de cada provedor); a
  * assinatura faz um provedor futuro mudar apenas o `tokenVar` de destino,
  * nunca o parametro `token`.
  *
@@ -150,7 +141,8 @@ export const WORKER_PROVIDER_ENV_VAR = 'DSH_GUARD_PROVIDER'
  * rotulos do texto, sonda). Ausente/vazio = default fechado `telegram`.
  *
  * VALOR DESCONHECIDO = ERRO, nao default. Degradar em silencio para o
- * telegram quando alguem pediu discord leria a CHAVE ERRADA do `secrets.env`
+ * telegram quando alguem pediu OUTRO provedor leria a CHAVE ERRADA do
+ * `secrets.env`
  * e mostraria os rotulos errados — a mesma razao do `resolverProvedor`
  * fail-closed do registry do worker (`worker/providers/registry.ts`).
  */

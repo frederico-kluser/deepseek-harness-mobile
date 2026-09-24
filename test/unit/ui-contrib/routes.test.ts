@@ -530,8 +530,6 @@ describe('o estado do pareamento (GET /pair-state)', () => {
  *  - online SEM handle devolve `{online:true, provider}` SEM a chave `handle`
  *    (ausencia = ausente — o codigo usa o spread condicional, linha 638);
  *  - online COM handle devolve `{online:true, provider, handle}`;
- *  - o provider 'discord' sai TANTO em offline quanto em online (o contrato da
- *    Onda 2: o corpo sempre carrega o provedor ativo);
  *  - o corpo tem EXATAMENTE as chaves do contrato — o token nunca entra aqui
  *    (deepEqual de forma exata + a enumeracao de chaves).
  */
@@ -563,25 +561,12 @@ describe('projetarEstadoTelegrama (funcao pura)', () => {
     })
   })
 
-  it('o provider discord sai TANTO em offline quanto em online', () => {
-    assert.deepEqual(projetarEstadoTelegrama({ online: false, motivo: 'sem-chave' }, 'discord'), {
-      online: false,
-      provider: 'discord',
-      motivo: 'sem-chave',
-    })
-    assert.deepEqual(projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'discord'), {
-      online: true,
-      provider: 'discord',
-      handle: 'meu_bot',
-    })
-  })
-
   it('o corpo tem EXATAMENTE as chaves do contrato — o token nunca sai', () => {
     const offline = projetarEstadoTelegrama({ online: false, motivo: 'sem-chave' }, 'telegram')
     assert.deepEqual(Object.keys(offline).toSorted(), ['motivo', 'online', 'provider'])
-    const onlineSemHandle = projetarEstadoTelegrama({ online: true }, 'discord')
+    const onlineSemHandle = projetarEstadoTelegrama({ online: true }, 'telegram')
     assert.deepEqual(Object.keys(onlineSemHandle).toSorted(), ['online', 'provider'])
-    const onlineComHandle = projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'discord')
+    const onlineComHandle = projetarEstadoTelegrama({ online: true, handle: 'meu_bot' }, 'telegram')
     assert.deepEqual(Object.keys(onlineComHandle).toSorted(), ['handle', 'online', 'provider'])
     assert.ok(!JSON.stringify([offline, onlineSemHandle, onlineComHandle]).includes('AA'), 'nenhum padrao de chave real no corpo')
   })

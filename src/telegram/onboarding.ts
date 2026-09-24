@@ -153,8 +153,7 @@ export type MotivoDeFormato =
  * A forma de um token VALIDO, por provedor.
  *
  * `botId` e OPCIONAL de proposito: e o `bot_user_id` do TELEGRAM (a parte
- * antes dos dois pontos do token). O token do DISCORD nao tem id numerico —
- * a forma discord nao preenche o campo, e nenhum consumidor do retrato usa o
+ * antes dos dois pontos do token), e nenhum consumidor do retrato usa o
  * `botId` (os textos so leem `valido`/`motivo`).
  */
 export type FormatoDoToken =
@@ -279,9 +278,8 @@ export interface PassoDeOnboarding {
  */
 export function proximoPasso(retrato: RetratoDoAmbiente, opcoes: OpcoesDePasso): PassoDeOnboarding {
   const estado = detectarEstado(retrato)
-  // Os TITULOS e o TEXTO sao provider-aware (rotulos: @BotFather no telegram,
-  // portal de desenvolvimento no discord) — o provedor vem das opcoes, com o
-  // default fechado telegram (D1).
+  // Os TITULOS e o TEXTO sao provider-aware (rotulos: @BotFather no telegram)
+  // — o provedor vem das opcoes, com o default fechado telegram (D1).
   switch (estado) {
     case 'SEM_TOKEN':
       return { estado, titulo: tituloSemToken(opcoes.provedor), texto: textoSemToken(opcoes) }
@@ -635,9 +633,9 @@ export function gravarSecretsEnv(ctx: EscritaDeSegredos, chave: string, valor: s
  * plano, nao risco residual (`01-ARQUITETURA.md` 9.5).
  *
  * A `chave` e o NOME da variavel a ler nas DUAS fontes — a CHAVE do provedor
- * ativo (`PROVIDER_ENV[provider].tokenVar`): `TELEGRAM_BOT_TOKEN` por omissao,
- * `DISCORD_BOT_TOKEN` para o discord. O default e o telegram para que quem
- * chama sem provedor continue a correr exatamente como antes (D1).
+ * ativo (`PROVIDER_ENV[provider].tokenVar`): `TELEGRAM_BOT_TOKEN` por omissao.
+ * O default e o telegram para que quem chama sem provedor continue a correr
+ * exatamente como antes (D1).
  */
 export function resolverToken(
   caminho: string,
@@ -688,7 +686,7 @@ export function caminhoApresentavel(caminho: string, casa: string = homedir()): 
 
 // O TRANSPORTE de rede (`criarSondaHttp`, `SondaTelegram`, a classificacao de
 // falha e a sonda comum por provedor) foi portado para
-// `src/onboarding/sonda.ts`, onde vive ao lado da sonda discord — o probe
+// `src/onboarding/sonda.ts`, onde vive ao lado do transporte portado — o probe
 // comum `criarSonda(provider, ...)` e a superficie provider-aware que o
 // painel de T5.3 consome. Este ficheiro re-exporta o que moveu para o CLI
 // (`bin/`), o `src/index.ts` e os testes continuarem a encontrar a MESMA
@@ -715,61 +713,11 @@ export {
 /* ========================================================================== */
 
 /**
- * `true` se `texto` tem um espaco (`\s`, incluindo espacos unicode) ou um
- * caracter de controlo (U+0000 a U+001F). Checagem SEM regex de controlo
- * (`no-control-regex` do lint): a faixa de controlo sai por `charCodeAt`,
- * o espaco pelo meta-caracter `\s` — a mesma semantica da checagem
- * original (espacos OU controlo).
- */
-function temEspacoOuControlo(texto: string): boolean {
-  if (/\s/u.test(texto)) return true
-  for (let i = 0; i < texto.length; i += 1) {
-    if (texto.charCodeAt(i) < 0x20) return true
-  }
-  return false
-}
-
-/**
- * A forma minimamente exigida a um token do DISCORD pelo HOST.
- *
- * DELIBERADAMENTE FROUXA, e por duas razoes:
- *
- *   1. o juiz real de um token e a API (`GET /users/@me`), nunca uma regex —
- *      o mesmo principio do telegram, onde "o unico juiz de um token e o
- *      `getMe`" (`worker/providers/telegram/token.ts`);
- *   2. a gramatica do token discord (base64 do "Bot <id>:<segredo>", com
- *      pontos e ate ~75 caracteres) e do ADAPTADOR — `worker/providers/
- *      discord/token.ts` da Onda 3 — e nao se inventa aqui.
- *
- * O que esta checagem faz e impedir TG-061 de novo, por canal: recusar ANTES
- * da rede o que obviamente nao e um token — vazio, longo demais, ou com
- * espacos/controlo (uma linha inteira colada, ou um URL). Devolve a MESMA
- * {@link FormatoDoToken} do telegram (sem `botId`), para o retrato do
- * onboarding e os seus textos consumirem os dois provedores por igual.
- */
-
-export function validarFormatoDoTokenDoDiscord(bruto: string): FormatoDoToken {
-  const token = bruto.trim()
-  if (token.length === 0) return { valido: false, motivo: 'vazio' }
-  if (token.length > COMPRIMENTO_MAXIMO_DO_TOKEN) {
-    return { valido: false, motivo: 'comprimento-excessivo' }
-  }
-  // Espacos ou controlo: o que se colou foi uma linha inteira, um URL, ou
-  // lixo da area de transferencia — recusa-se antes da rede (TG-061).
-  if (temEspacoOuControlo(token)) return { valido: false, motivo: 'caracteres-invalidos' }
-  // Valido SEM `botId`: o token do discord nao tem id numerico (ver
-  // {@link FormatoDoToken}).
-  return { valido: true }
-}
-
-/**
  * A checagem de formato do PROVEDOR ATIVO (a porta usada pelo painel).
  *
- * Telegram: a forma estrita `\d{5,12}:[A-Za-z0-9_-]{20,}` (TG-061). Discord:
- * a forma frouxa de {@link validarFormatoDoTokenDoDiscord}. Um provedor novo
- * acrescenta o ramo aqui, nao nos chamadores.
+ * Telegram: a forma estrita `\d{5,12}:[A-Za-z0-9_-]{20,}` (TG-061). Um
+ * provedor novo acrescenta o ramo aqui, nao nos chamadores.
  */
-export function validarFormatoDe(provedor: ProviderId, bruto: string): boolean {
-  if (provedor === 'discord') return validarFormatoDoTokenDoDiscord(bruto).valido
+export function validarFormatoDe(_provedor: ProviderId, bruto: string): boolean {
   return validarFormatoDoToken(bruto).valido
 }

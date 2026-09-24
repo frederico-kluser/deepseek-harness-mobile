@@ -29,8 +29,9 @@
  * recebe {@link IntencaoNeutra} e monta o `IpcIntentMessage` completo
  * (`v:2`, `type:'intent'`, `from: userKey`, `chat: chatKey`) SEM `Number(...)`.
  * O que outrora era o "preco de coexistir com o envelope V1" (ids
- * nao-numericos quebravam o cast) deixou de existir: um snowflake do Discord
- * atravessa a ponte byte a byte, sem truncar em Number.MAX_SAFE_INTEGER.
+ * nao-numericos quebravam o cast) deixou de existir: um id nao-numerico de um
+ * provedor futuro atravessa a ponte byte a byte, sem truncar em
+ * Number.MAX_SAFE_INTEGER.
  *
  * E a falsa atribuicao `as unknown as IpcIntentMessage` que a Onda 2 deixou
  * como "pegada" em `worker/surface/commands.ts` DEIXA de ser o unico caminho:
@@ -59,13 +60,6 @@ import {
   lerTokenDoAmbiente,
 } from './telegram/token.ts'
 
-import { createDiscordProvider, type DiscordAdapter } from './discord/adapter.ts'
-import {
-  API_ROOT_ENV_VAR as DISCORD_API_ROOT_ENV_VAR,
-  assertTokenNotInArgv as assertDiscordTokenNotInArgv,
-  lerTokenDoAmbiente as lerTokenDiscordDoAmbiente,
-} from './discord/token.ts'
-
 /* ========================================================================== */
 /* 1. O ROTULO DO PROVEDOR (D1)                                               */
 /* ========================================================================== */
@@ -73,8 +67,8 @@ import {
 /** Nome que o HOST escreve no ambiente do worker. Contrato com o host. */
 export const WORKER_PROVIDER_ENV_VAR = 'DSH_GUARD_PROVIDER'
 
-/** O identificador fechado do provedor ativo. `telegram` e `discord`. */
-export type ProviderId = 'telegram' | 'discord'
+/** O identificador fechado do provedor ativo. `telegram` e a entrada da tabela. */
+export type ProviderId = 'telegram'
 
 /** O default fechado (D1): ausente em config/estado = telegram. */
 export const DEFAULT_PROVIDER_ID: ProviderId = 'telegram'
@@ -145,19 +139,9 @@ const DESCRICAO_TELEGRAM: ProvedorDescrito = {
     assertTokenNotInArgv(argv, token),
 }
 
-const DESCRICAO_DISCORD: ProvedorDescrito = {
-  id: 'discord',
-  apiRootVar: DISCORD_API_ROOT_ENV_VAR,
-  create: (deps: ProvedorCreateDeps): DiscordAdapter => createDiscordProvider(deps),
-  lerToken: (env: NodeJS.ProcessEnv): string => lerTokenDiscordDoAmbiente(env),
-  assertTokenNaoEmArgv: (argv: readonly string[], token?: string): void =>
-    assertDiscordTokenNotInArgv(argv, token),
-}
-
 /** A tabela FECHADA provedor -> descricao. Acrescentar um provedor = +1 linha. */
 export const PROVIDERS: Readonly<Record<ProviderId, ProvedorDescrito>> = Object.freeze({
   telegram: DESCRICAO_TELEGRAM,
-  discord: DESCRICAO_DISCORD,
 })
 
 /**

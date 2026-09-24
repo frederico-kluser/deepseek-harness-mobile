@@ -119,14 +119,13 @@ export function formatarHaQuanto(startedAt: number, agoraMs: number): string
  * `provider` no GET /telegram (a paridade vem na onda do host); o painel
  * consome-o quando existir e cai no default `'telegram'` sem ele.
  */
-export type TipoProvider = 'telegram' | 'discord'
+export type TipoProvider = 'telegram'
 
 /**
  * Os rótulos de ONBOARDING por provedor (o mapa local do client, com fallback
  * 'telegram'). O passo 1 ("Criar o bot") e todo texto que cita o canal de
  * criação, a variável de ambiente do token ou a conversa do provedor saem
- * daqui. Os valores do discord são GENÉRICOS apontando para a documentação
- * oficial (a Onda 3/6 refina os textos exatos). Placeholders de render:
+ * daqui. Placeholders de render:
  * `{codigo}`, `{ref}` e `{handle}` são substituídos no ponto de uso.
  */
 export interface RotulosDoProvider {
@@ -180,7 +179,7 @@ export function rotulosDoProvider(provider?: TipoProvider | null): RotulosDoProv
 
 /**
  * Normaliza o campo `provider` do GET /telegram (opcional; o host ainda não o
- * emite) para um TipoProvider: só `'discord'` e `'telegram'` passam; qualquer
+ * emite) para um TipoProvider: só `'telegram'` passa; qualquer
  * outro valor (incl. `undefined`) cai no `'telegram'`.
  */
 export function normalizarProvider(valor: unknown): TipoProvider

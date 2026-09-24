@@ -1,7 +1,7 @@
 # AGENTS.md — O dispatcher de agentes: manual completo
 
 Este documento é o manual do **dispatcher de agentes**: a feature que liga o bot
-(Telegram ou Discord) ao `ctx.subagents` do DeepSeek Harness. O dono escolhe uma
+(Telegram) ao `ctx.subagents` do DeepSeek Harness. O dono escolhe uma
 **skill da allowlist** e escreve um **prompt**; o host spawna um **subagente
 in-process** do harness (sessão fresca, zero contexto do pai) que trabalha na
 própria máquina; o resultado chega ao chat.
@@ -136,7 +136,7 @@ ONDA-4-FIX-REPORT-CAPS).
 ## 4. Comandos do bot (textos EXATOS)
 
 Os comandos de agentes são do **núcleo neutro** (`worker/surface/commands.ts` +
-`worker/surface/text.ts`) — funcionam **igual no Telegram e no Discord**. Os
+`worker/surface/text.ts`) — funcionam **igual no Telegram e em qualquer provedor futuro**. Os
 textos abaixo são os do código; estão congelados também em
 [`docs/ux/01-CONTRATO-BOT.md`](ux/01-CONTRATO-BOT.md) §10.
 

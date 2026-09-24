@@ -85,19 +85,18 @@ describe('provedor ativo (D1) -- default fechado e tabela PROVIDER_ENV', () => {
   })
 })
 
-describe('discord REGISTRADO (Onda 2 do host) -- PROVIDER_ENV, buildWorkerEnv e o ambiente', () => {
-  it('(a) PROVIDER_ENV resolve o tokenVar certo por provider: telegram e discord', () => {
+describe('o provedor registrado -- PROVIDER_ENV, buildWorkerEnv e o ambiente', () => {
+  it('(a) PROVIDER_ENV resolve o tokenVar certo por provider: telegram', () => {
     assert.equal(PROVIDER_ENV['telegram'].tokenVar, 'TELEGRAM_BOT_TOKEN')
-    assert.equal(PROVIDER_ENV['discord'].tokenVar, 'DISCORD_BOT_TOKEN')
   })
 
   it('(a) paridade com o registry do worker: todo provedor registado LA existe AQUI', () => {
-    // O registry (worker/providers/registry.ts) e o espelho do worker: quando
-    // a Onda 3 registar o adaptador discord LA, este teste obriga o host a ja
-    // ter a linha em PROVIDER_ENV — e, ate la, garante que o host nao apaga a
-    // do telegram. A direcao e worker -> host: o host PODE ter entradas que o
-    // worker ainda nao implementa (o filho falha-closed por provedor
-    // desconhecido ate o adaptador existir), nunca o contrario.
+    // O registry (worker/providers/registry.ts) e o espelho do worker: este
+    // teste obriga o host a ter a linha em PROVIDER_ENV de todo provedor
+    // registado la — e garante que o host nao apaga a do telegram. A direcao
+    // e worker -> host: o host PODE ter entradas que o worker ainda nao
+    // implementa (o filho falha-closed por provedor desconhecido ate o
+    // adaptador existir), nunca o contrario.
     for (const id of Object.keys(PROVIDERS)) {
       assert.ok(
         id in PROVIDER_ENV,
@@ -109,24 +108,14 @@ describe('discord REGISTRADO (Onda 2 do host) -- PROVIDER_ENV, buildWorkerEnv e 
     assert.equal(PROVIDER_ENV['telegram'].tokenVar, 'TELEGRAM_BOT_TOKEN')
   })
 
-  it('(d) buildWorkerEnv com provider=discord injeta DISCORD_BOT_TOKEN e NAO deixa TELEGRAM_BOT_TOKEN', () => {
-    const env = buildWorkerEnv({ PATH: '/usr/bin' }, 'token-do-bot-discord', 'discord')
-    assert.equal(env['DISCORD_BOT_TOKEN'], 'token-do-bot-discord')
-    assert.equal(env['TELEGRAM_BOT_TOKEN'], undefined, 'o token do discord NAO pode ir para a chave do telegram')
-    assert.equal(env[WORKER_PROVIDER_ENV_VAR], 'discord')
-    assert.equal(env[WORKER_IPC_ENV_MARK], '1')
-  })
-
   it('o default fechado nao muda: sem provider, o alvo continua TELEGRAM_BOT_TOKEN', () => {
     const env = buildWorkerEnv({ PATH: '/usr/bin' }, 'token-do-bot')
     assert.equal(env['TELEGRAM_BOT_TOKEN'], 'token-do-bot')
-    assert.equal(env['DISCORD_BOT_TOKEN'], undefined)
   })
 
-  it('resolverProvedorDoAmbiente: ausente/vazio = telegram; discord explicito = discord', () => {
+  it('resolverProvedorDoAmbiente: ausente/vazio = telegram; telegram explicito = telegram', () => {
     assert.equal(resolverProvedorDoAmbiente({}), DEFAULT_PROVIDER)
     assert.equal(resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: '   ' }), 'telegram')
-    assert.equal(resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: 'discord' }), 'discord')
     assert.equal(resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: 'telegram' }), 'telegram')
   })
 
@@ -138,7 +127,7 @@ describe('discord REGISTRADO (Onda 2 do host) -- PROVIDER_ENV, buildWorkerEnv e 
       (error: unknown) => {
         assert.ok(error instanceof Error)
         assert.match(error.message, /whatsapp/u)
-        assert.match(error.message, /telegram \| discord/u, 'nomeia os antecipados')
+        assert.match(error.message, /telegram/u, 'nomeia os antecipados')
         return true
       },
     )
@@ -191,24 +180,5 @@ describe('bordas da allowlist -- pai hostil, Windows e TLS', () => {
     assert.equal(env['SSL_CERT_FILE'], '/etc/ssl/certs.pem')
     assert.equal(env['SSL_CERT_DIR'], '/etc/ssl/certs')
     assert.equal(env['REQUESTS_CA_BUNDLE'], '/etc/ssl/ca-bundle.pem')
-  })
-
-  it('a chave do OUTRO provedor herdada do pai NAO passa: o token do filho e so o parametro', () => {
-    // A allowlist nao conhece TELEGRAM_BOT_TOKEN nem DISCORD_BOT_TOKEN. Um pai
-    // que os carregue nao os entrega ao filho: o token do filho e SEMPRE o
-    // parametro, para o tokenVar do provedor ativo — e o token do provedor
-    // INATIVO (a chave que o pai porventura tenha) fica de fora, para o filho
-    // nunca nascer com um token que ninguem lhe pediu.
-    const env = buildWorkerEnv(
-      { PATH: '/usr/bin', TELEGRAM_BOT_TOKEN: 'do-pai', DISCORD_BOT_TOKEN: 'do-pai' },
-      'token-do-bot-discord',
-      'discord',
-    )
-    assert.equal(env['DISCORD_BOT_TOKEN'], 'token-do-bot-discord')
-    assert.equal(env['TELEGRAM_BOT_TOKEN'], undefined, 'a chave do outro provedor herdada e descartada')
-  })
-
-  it('resolverProvedorDoAmbiente aparra espacos: ` discord ` vale discord', () => {
-    assert.equal(resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: ' discord ' }), 'discord')
   })
 })

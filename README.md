@@ -11,7 +11,7 @@
 
 </div>
 
-**Usa o teu próprio DeepSeek Harness pelo celular — a Web UI inteira, para codificar de verdade — sem nunca alargar o bind para fora do loopback: o túnel termina em `127.0.0.1` (acesso local abre direto), e pelo túnel só entra quem tem a chave no link `?key=` (que o bot envia) — ligas e desligas o acesso pelo Telegram ou pelo Discord.**
+**Usa o teu próprio DeepSeek Harness pelo celular — a Web UI inteira, para codificar de verdade — sem nunca alargar o bind para fora do loopback: o túnel termina em `127.0.0.1` (acesso local abre direto), e pelo túnel só entra quem tem a chave no link `?key=` (que o bot envia) — ligas e desligas o acesso pelo Telegram.**
 
 ![Demo](docs/assets/demo.gif)
 
@@ -72,7 +72,7 @@ Quem não aceitar esta troca deve usar Tailscale ou SSH — e dizemo-lo com mais
 1. **Protege o túnel, não o loopback.** O DSH abre **direto** em `127.0.0.1` (sem login); quem expõe é um **proxy dedicado** que autentica tudo o que chega da internet — `/api`, o fallback da SPA e o handshake de WebSocket. Recusa endereços de bind fora do loopback no carregamento e recusa permissões proibidas (`danger-full-access`). Resolve a superfície da discussão upstream [#853](https://github.com/deepseek-ai/deepseek-harness/discussions/853).
 2. **Nunca pede senha a ninguém.** O acesso pelo túnel entra por **sessão** ou pela **chave no link** `?key=` (CSPRNG, 256 bits, digest em disco). A chave é **reutilizável** até `/rotacionar` (que gera chave nova, invalida sessões **e encerra ativamente as conexões já abertas** — quem tiver o link antigo cai na hora, incluindo WebSockets) ou derrubar o túnel. O 401 é **sem desafio de login** — não há prompt nem formulário de login.
 3. **Suba um túnel efémero** para acederes pelo celular, com TTL que o derruba sozinho e um *probe fail-closed* que impede um túnel "nu" (sem proxy autenticado atrás).
-4. **Ligar/desligar pelo Telegram, Discord ou pela aba "Remote Access" das settings do DSH** — o botão de matar na mão.
+4. **Ligar/desligar pelo Telegram ou pela aba "Remote Access" das settings do DSH** — o botão de matar na mão.
 5. **Dispara agentes do harness pelo bot** — com uma skill da allowlist e um prompt, o dono manda um subagente do DeepSeek Harness trabalhar na própria máquina (`/agente`), acompanha os runs (`/agentes`) e cancela (`/parar-agente`). O dispatch **executa código no host**: exige confirmação em duas etapas, e o agente corre com as permissões do harness — **nunca** com o token do bot. Manual completo: [`docs/AGENTS.md`](docs/AGENTS.md).
 
 ### Bot e túnel: a aba "Remote Access" das settings do DSH
@@ -88,15 +88,12 @@ e os botões **Ligar túnel** (confirmação em duas etapas), **Desligar túnel*
 
 O botão **"Ver instruções"** ("Como ligar o bot") pede ao servidor os passos do
 **provedor ativo**:
-- **OFFLINE** → as instruções de conexão (Telegram: criar o bot no `@BotFather`;
-  Discord: criar a aplicação no Developer Portal — ver `docs/ONBOARDING-DISCORD.md`),
+- **OFFLINE** → as instruções de conexão (Telegram: criar o bot no `@BotFather`),
   `dsh-guard-setup --pedir-token`, `--parear`, enviar `/parear <código>`; quem
   segue esse passo a passo de facto coloca o bot **online**;
 - **ONLINE** → dicas de uso.
 
-Depois de pareado (`docs/ONBOARDING-TELEGRAM.md` para o Telegram,
-`docs/ONBOARDING-DISCORD.md` para o Discord — os comandos são os **MESMOS** nos
-dois provedores), os comandos de controlo do bot:
+Depois de pareado (`docs/ONBOARDING-TELEGRAM.md`), os comandos de controlo do bot:
 
 | Comando | O que faz |
 | --- | --- |
@@ -147,10 +144,9 @@ disparável** — fail-closed por construção.
 
 O worker do bot é **neutro ao provedor**: o núcleo (roteador, allowlist, pareamento, outbox)
 vive em `worker/surface/**` e cada canal vive isolado no seu **adaptador**:
-`worker/providers/telegram/**` (única carga de `grammY`) e `worker/providers/discord/**`
-(gateway WebSocket próprio, sem SDK). O boot lê o provedor ativo por `DSH_GUARD_PROVIDER`
-(`config.worker.provider`, default `telegram`); o token é `TELEGRAM_BOT_TOKEN` no Telegram e
-`DISCORD_BOT_TOKEN` no Discord — o `secrets.env` guarda as duas linhas e `dsh-guard-setup`
+`worker/providers/telegram/**` (única carga de `grammY`). O boot lê o provedor ativo por `DSH_GUARD_PROVIDER`
+(`config.worker.provider`, default `telegram`); o token é `TELEGRAM_BOT_TOKEN` no Telegram —
+o `secrets.env` guarda a linha do provedor ativo e `dsh-guard-setup`
 sabe qual é a do provedor ativo.
 
 Adicionar um provedor novo (WhatsApp, Matrix…) é implementar o contrato neutro
@@ -187,8 +183,8 @@ dsh plugin --profile web add dsh-guard-messenger
 # 2. corre o DSH — o acesso local abre direto (sem login)
 dsh web
 
-# 3. (opcional) liga o bot: dsh-guard-setup + /parear (docs/ONBOARDING-TELEGRAM.md
-#    para o Telegram, docs/ONBOARDING-DISCORD.md para o Discord); depois, no bot,
+# 3. (opcional) liga o bot: dsh-guard-setup + /parear (docs/ONBOARDING-TELEGRAM.md);
+#    depois, no bot,
 #    /ligar envia o link com a chave ?key=
 
 # 4. confirma que o acesso local abre (o DSH responde direto); a borda sem chave
@@ -203,7 +199,7 @@ dsh plugin remove dsh-guard-messenger
 
 ## Quando NÃO usar isto
 
-- **Time / multiusuário.** É um plugin de dono único: uma allowlist de `userKey`/`chatKey` do Telegram ou Discord (ids numéricos, nunca usernames) e a chave do link. Não há RBAC nem auditoria multi-tenant.
+- **Time / multiusuário.** É um plugin de dono único: uma allowlist de `userKey`/`chatKey` do Telegram (ids numéricos, nunca usernames) e a chave do link. Não há RBAC nem auditoria multi-tenant.
 - **Produção / uptime.** O *quick tunnel* é, nas palavras da própria Cloudflare, "intended for testing and development only" e "We don't guarantee any SLA or uptime".
 - **Quem precisa de compliance.** O TLS termina na borda da Cloudflare; o texto claro passa por lá. Não é E2E.
 - **Quem quer "seguro por padrão sem pensar".** Isto não existe aqui. Estás a expor um agente com shell; o plugin reduz superfície e entrega o kill switch, não elimina a categoria.
@@ -269,7 +265,6 @@ Deixa zero processos remanescentes e a Web UI volta ao comportamento original. P
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — instalação passo a passo
 - [`docs/ONBOARDING-TELEGRAM.md`](docs/ONBOARDING-TELEGRAM.md) — conectar o bot do Telegram e parear
-- [`docs/ONBOARDING-DISCORD.md`](docs/ONBOARDING-DISCORD.md) — criar o bot do Discord, convidar e parear
 - [`docs/AGENTS.md`](docs/AGENTS.md) — o dispatcher de agentes: config, comandos, segurança e limites
 - [`docs/EXPOSURE.md`](docs/EXPOSURE.md) — o que muda quando o túnel sobe
 - [`docs/TUNNEL.md`](docs/TUNNEL.md) — quick vs named, TTL, modelo de ameaça do transporte

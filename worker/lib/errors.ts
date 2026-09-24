@@ -148,8 +148,8 @@ export function isWorkerExitCode(code: number): code is WorkerExitCode {
  *
  * Antes da Onda 3-fix cada adaptador definia a SUA classe `ProviderError` (e o
  * boot telegram classificava por `instanceof` da classe do telegram — um erro
- * do discord caia em POLLING_FAILED 13 em vez do codigo certo). A classe e o
- * contrato que os DOIS adaptadores e o boot partilham:
+ * de outro provedor caia em POLLING_FAILED 13 em vez do codigo certo). A classe
+ * e o contrato que os DOIS adaptadores e o boot partilham:
  *
  *   - `code` e o NUMERICO {@link WorkerExitCode} — o boot classifica lendo
  *     ESTE campo (10..14), sem conhecer o provedor;

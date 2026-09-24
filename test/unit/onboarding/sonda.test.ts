@@ -1,12 +1,10 @@
 /**
  * `src/onboarding/sonda.ts` — a sonda provider-aware: o probe comum por
- * provedor (`criarSonda`), a sonda discord (fetch puro, sem SDK) e a raiz da
- * API por provedor (`apiRootDe`).
+ * provedor (`criarSonda`) e a raiz da API por provedor (`apiRootDe`).
  *
  * O transporte telegram (`criarSondaHttp`/`getMe`/`getUpdates`) e testado a
  * fundo em `test/unit/telegram/onboarding.test.ts` (contra o duplo local da
- * Bot API); aqui prova-se a FABRICA e o RAMO DISCORD — com `fetch` STUB, sem
- * rede nenhuma (nunca discord.com).
+ * Bot API); aqui prova-se a FABRICA — com `fetch` STUB, sem rede nenhuma.
  */
 
 import assert from 'node:assert/strict'
@@ -15,14 +13,11 @@ import { describe, it } from 'node:test'
 import {
   apiRootDe,
   criarSonda,
-  criarSondaDiscord,
   criarSondaHttp,
-  DISCORD_API_ROOT_PADRAO,
   type OpcoesDeSondaDeProvedor,
 } from '../../../src/onboarding/sonda.ts'
 import { criarSondaHttp as criarSondaHttpReexportado } from '../../../src/telegram/onboarding.ts'
 
-const TOKEN_DISCORD = 'MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gf3x9.token.secreto'
 const TOKEN_TELEGRAM = '123456789:AAsegredoDoBotTelegram'
 
 /** Um `fetch` stub: devolve a resposta dada e REGISTA o pedido. */
@@ -39,72 +34,7 @@ function fetchStub(
   }
 }
 
-/** Resposta JSON do Discord (o corpo de `/users/@me`). */
-function respostaDiscord(status: number, corpo: unknown): Response {
-  return new Response(JSON.stringify(corpo), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  })
-}
-
 describe('criarSonda -- probe comum do provedor', () => {
-  it('discord: 200 {username} -> ok com botNome, e o pedido e GET /users/@me com Bearer', async () => {
-    const stub = fetchStub(() => respostaDiscord(200, { id: '123', username: 'meu_painel_bot' }))
-    const sonda = criarSonda('discord', { buscar: stub.buscar })
-
-    const prova = await sonda.verificar(TOKEN_DISCORD)
-
-    assert.deepEqual(prova, { ok: true, botNome: 'meu_painel_bot' })
-    assert.equal(stub.pedidos.length, 1)
-    const pedido = stub.pedidos[0]
-    assert.ok(pedido !== undefined)
-    const init = pedido.init
-    assert.ok(init !== undefined, 'o fetch stub recebeu as opcoes do pedido')
-    // A FORMA do transporte discord: o token no CABECALHO, nunca no URL —
-    // o oposto do telegram (`/bot<token>/<metodo>`). Sem isto, o token do
-    // discord iria no caminho de um URL (TG-069 tem outra cara aqui).
-    assert.equal(pedido.url, `${DISCORD_API_ROOT_PADRAO}/users/@me`)
-    assert.equal(init.method, 'GET')
-    const cabecalhos = new Headers(init.headers)
-    assert.equal(cabecalhos.get('authorization'), `Bearer ${TOKEN_DISCORD}`)
-  })
-
-  it('discord: 401 -> falha token-invalido', async () => {
-    const stub = fetchStub(() => respostaDiscord(401, { message: '401: Unauthorized' }))
-    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: false, erro: 'token-invalido' })
-  })
-
-  it('discord: sem resposta (rede) -> falha rede, e a mensagem do fetch (com o URL) e descartada', async () => {
-    const stub = fetchStub(() => {
-      throw new Error(`fetch failed: ${DISCORD_API_ROOT_PADRAO}/users/@me`)
-    })
-    const sonda = criarSonda('discord', { buscar: stub.buscar })
-    const prova = await sonda.verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: false, erro: 'rede' })
-    assert.ok(!JSON.stringify(prova).includes(DISCORD_API_ROOT_PADRAO))
-  })
-
-  it('discord: 500 inesperado -> falha indisponivel', async () => {
-    const stub = fetchStub(() => respostaDiscord(500, { message: 'Internal Server Error' }))
-    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: false, erro: 'indisponivel' })
-  })
-
-  it('discord: 200 sem username (corpo nao-User) -> ok sem botNome (espelho do caso telegram)', async () => {
-    const stub = fetchStub(() => respostaDiscord(200, { id: '123' }))
-    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: true })
-  })
-
-  it('discord: a raiz da API aceita barra final (o duplo de teste pode traze-la)', async () => {
-    const stub = fetchStub(() => respostaDiscord(200, { username: 'x' }))
-    await criarSonda('discord', { apiRoot: 'http://127.0.0.1:9/api/v10/', buscar: stub.buscar }).verificar(
-      TOKEN_DISCORD,
-    )
-    assert.equal(stub.pedidos[0]?.url, 'http://127.0.0.1:9/api/v10/users/@me')
-  })
-
   it('telegram: 200 com identidade -> ok com botNome (a MESMA logica do getMe, sem duplicar)', async () => {
     const stub = fetchStub(() =>
       new Response(JSON.stringify({ ok: true, result: { id: 123456789, username: 'meu_painel_bot' } }), {
@@ -143,41 +73,17 @@ describe('criarSonda -- probe comum do provedor', () => {
   })
 })
 
-describe('criarSondaDiscord -- o transporte discord em si (fetch puro, sem SDK)', () => {
-  it('o token viaja no cabecalho Authorization: Bearer e em mais lado nenhum', async () => {
-    const stub = fetchStub(() => respostaDiscord(200, { username: 'bot' }))
-    await criarSondaDiscord({ buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    const pedido = stub.pedidos[0]
-    assert.ok(pedido !== undefined)
-    const url = pedido.url
-    assert.ok(!url.includes(TOKEN_DISCORD), 'o token NAO pode estar no URL')
-    assert.ok(!url.includes(encodeURIComponent(TOKEN_DISCORD)), 'nem codificado')
-    const cabecalhos = new Headers(pedido.init?.headers)
-    assert.equal(cabecalhos.get('authorization'), `Bearer ${TOKEN_DISCORD}`)
-  })
-
-  it('401 -> token-invalido (o unico juiz do valor e a API)', async () => {
-    const stub = fetchStub(() => respostaDiscord(401, { message: '401: Unauthorized' }))
-    const prova = await criarSondaDiscord({ buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    assert.equal(prova.ok, false)
-    assert.equal(prova.erro, 'token-invalido')
-  })
-})
-
 describe('apiRootDe -- a raiz da API por provedor (espelho do worker)', () => {
-  it('telegram le TELEGRAM_API_ROOT; discord le DISCORD_API_ROOT', () => {
+  it('telegram le TELEGRAM_API_ROOT', () => {
     const ambiente = {
       TELEGRAM_API_ROOT: 'http://127.0.0.1:1/telegram',
-      DISCORD_API_ROOT: 'http://127.0.0.1:1/discord',
     }
     assert.equal(apiRootDe('telegram', ambiente), 'http://127.0.0.1:1/telegram')
-    assert.equal(apiRootDe('discord', ambiente), 'http://127.0.0.1:1/discord')
   })
 
   it('ausente ou so espacos = a raiz publica (undefined)', () => {
-    assert.equal(apiRootDe('discord', {}), undefined)
-    assert.equal(apiRootDe('discord', { DISCORD_API_ROOT: '   ' }), undefined)
-    assert.equal(apiRootDe('telegram', { DISCORD_API_ROOT: 'http://x' }), undefined)
+    assert.equal(apiRootDe('telegram', {}), undefined)
+    assert.equal(apiRootDe('telegram', { TELEGRAM_API_ROOT: '   ' }), undefined)
   })
 })
 
@@ -193,32 +99,7 @@ describe('o transporte telegram portado continua no mesmo lugar para quem ja imp
   })
 })
 
-describe('bordas do contrato provider-aware (Onda 2) -- timeout, classificacao e raiz da API', () => {
-  /** Um `fetch` stub que HONRA o signal de aborto, como o fetch real o faz. */
-  function fetchQueHonraTimeout(atrasoMs: number): typeof fetch {
-    return async (_url, init) => {
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, atrasoMs)
-        init?.signal?.addEventListener('abort', () => {
-          clearTimeout(timer)
-          reject(init.signal?.reason ?? new Error('abortado'))
-        })
-      })
-      return respostaDiscord(200, { username: 'tarde-demais' })
-    }
-  }
-
-  it('(a) o timeout e aplicado: uma API que nao responde a tempo vira rede, cortada pelo AbortSignal', async () => {
-    const comeco = Date.now()
-    const sonda = criarSonda('discord', { buscar: fetchQueHonraTimeout(500), timeoutMs: 25 })
-    const prova = await sonda.verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: false, erro: 'rede' })
-    assert.ok(
-      Date.now() - comeco < 300,
-      'o AbortSignal cortou a chamada muito antes dos 500 ms que o stub levaria',
-    )
-  })
-
+describe('bordas do contrato provider-aware (Onda 2) -- timeout e raiz da API', () => {
   it('(a) o MESMO teto vale no probe telegram (o abort colapsa em rede)', async () => {
     const comeco = Date.now()
     const sonda = criarSonda('telegram', {
@@ -239,54 +120,12 @@ describe('bordas do contrato provider-aware (Onda 2) -- timeout, classificacao e
     assert.ok(Date.now() - comeco < 300, 'o abort do getMe telegram tambem corta')
   })
 
-  it('(a) 401 com corpo variado (vazio ou nao-JSON) continua a ser token-invalido', async () => {
-    for (const corpo of ['', 'nao-json', JSON.stringify({ message: '401: Unauthorized' })]) {
-      const stub = fetchStub(() => new Response(corpo, { status: 401 }))
-      const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-      assert.deepEqual(prova, { ok: false, erro: 'token-invalido' }, `corpo: ${JSON.stringify(corpo)}`)
-    }
-  })
-
-  it('(a) token vazio: a sonda NAO julga a forma — envia `Bearer ` e a API decide', async () => {
-    // A validacao de forma e do onboarding (TG-061), nunca da sonda: o probe
-    // so transporta o que lhe derem e classifica a resposta da API.
-    const stub = fetchStub(() => respostaDiscord(401, { message: '401: Unauthorized' }))
-    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar('')
-    assert.deepEqual(prova, { ok: false, erro: 'token-invalido' })
-    // O valor BRUTO do init e `Bearer ` (com espaco) — e o que o codigo manda.
-    // (Na linha, o Headers do fetch normaliza e tira o espaco final: `Bearer`.)
-    assert.deepEqual(stub.pedidos[0]?.init?.headers, {
-      authorization: 'Bearer ',
-      accept: 'application/json',
-    })
-  })
-
-  it('(a) 429 -> indisponivel (qualquer status inesperado)', async () => {
-    const stub = fetchStub(() => respostaDiscord(429, { message: 'Too Many Requests' }))
-    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: false, erro: 'indisponivel' })
-  })
-
-  it('(a) 200 com corpo nao-JSON -> ok sem botNome (o corpo ininteligivel e descartado, nao explode)', async () => {
-    const stub = fetchStub(() => new Response('<html>pagina de bloqueio</html>', { status: 200 }))
-    const prova = await criarSonda('discord', { buscar: stub.buscar }).verificar(TOKEN_DISCORD)
-    assert.deepEqual(prova, { ok: true })
-  })
-
-  it('(a) a raiz da API aceita VARIAS barras finais (o duplo de teste pode traze-las)', async () => {
-    const stub = fetchStub(() => respostaDiscord(200, { username: 'x' }))
-    await criarSonda('discord', { apiRoot: 'http://127.0.0.1:9/api/v10///', buscar: stub.buscar }).verificar(
-      TOKEN_DISCORD,
-    )
-    assert.equal(stub.pedidos[0]?.url, 'http://127.0.0.1:9/api/v10/users/@me')
-  })
-
   it('apiRootDe: espacos em volta sao aparados; a barra final passa INTACTA (o trim e so de espacos)', () => {
     // Quem aparar a barra final aqui quebraria o contrato do `replace` que
     // vive nas sondas: `apiRootDe` devolve o que o ambiente diz, e a sondas
-    // normalizam. O trim de espacos e para um `DISCORD_API_ROOT="  x  "` nao
+    // normalizam. O trim de espacos e para um `TELEGRAM_API_ROOT="  x  "` nao
     // virar um URL com espacos.
-    const ambiente = { DISCORD_API_ROOT: '  http://127.0.0.1:9/api/v10/  ' }
-    assert.equal(apiRootDe('discord', ambiente), 'http://127.0.0.1:9/api/v10/')
+    const ambiente = { TELEGRAM_API_ROOT: '  http://127.0.0.1:9/api/v10/  ' }
+    assert.equal(apiRootDe('telegram', ambiente), 'http://127.0.0.1:9/api/v10/')
   })
 })

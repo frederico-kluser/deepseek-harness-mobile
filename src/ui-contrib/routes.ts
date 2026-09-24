@@ -149,7 +149,7 @@ export interface UiContribRoute {
  * (regra de isolamento do mapa de importacoes). A costura em `src/index.ts`
  * passa o `ProviderId` real — estruturalmente identico.
  */
-export type ProviderDoBot = 'telegram' | 'discord'
+export type ProviderDoBot = 'telegram'
 
 /**
  * O nucleo da superficie: tudo o que os handlers precisam, injetado por

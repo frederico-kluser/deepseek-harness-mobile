@@ -3,7 +3,7 @@
  * A SONDA — o unico I/O de rede do onboarding, agora POR PROVEDOR.
  * =============================================================================
  *
- * Tres camadas num ficheiro, e elas nao se separam:
+ * Duas camadas num ficheiro, e elas nao se separam:
  *
  *   1. o TRANSPORTE TELEGRAM (portado de `src/telegram/onboarding.ts`): o
  *      `criarSondaHttp` com `getMe`/`getUpdates` e a classificacao de falha
@@ -11,11 +11,7 @@
  *      sonda telegram completa importa daqui (o `src/telegram/onboarding.ts`
  *      re-exporta para o CLI e os testes continuarem a encontrar a MESMA
  *      origem — o mesmo padrao da extracao de `texts.ts`);
- *   2. a SONDA DISCORD (nova): sem SDK, so `fetch` — `GET /users/@me` com o
- *      token no cabecalho `Authorization: Bearer`. O token do Discord nao
- *      viaja na URL (ao contrario do Telegram), e e essa diferenca de
- *      transporte que obriga a uma sonda propria por provedor;
- *   3. `criarSonda(provider, ...)`: a FABRICA provider-aware que devolve o
+ *   2. `criarSonda(provider, ...)`: a FABRICA provider-aware que devolve o
  *      probe comum `{ ok, botNome? }` — a superficie que o painel de T5.3
  *      consome sem saber com que provedor esta a falar.
  *
@@ -30,11 +26,10 @@
  * sonda telegram completa — por injecao, nunca por duplicacao.
  *
  * -----------------------------------------------------------------------------
- * A RAZ DA API E CONFIGURAVEL POR PROVEDOR (TELEGRAM_API_ROOT / DISCORD_API_ROOT)
+ * A RAIZ DA API E CONFIGURAVEL POR PROVEDOR (TELEGRAM_API_ROOT)
  * -----------------------------------------------------------------------------
- * O worker telegram le `TELEGRAM_API_ROOT` (`API_ROOT_ENV_VAR`); a sonda
- * discord le `DISCORD_API_ROOT` (o adaptador discord da Onda 3 tera o espelho
- * proprio). E a MESMA disciplina do `tokenVar`: o nome e DUPLICADO do lado do
+ * O worker telegram le `TELEGRAM_API_ROOT` (`API_ROOT_ENV_VAR`) e a sonda le a
+ * MESMA variavel. E a disciplina do `tokenVar`: o nome e DUPLICADO do lado do
  * worker e a paridade e um teste, nao um import — o worker so pode importar
  * `src/contracts/ipc.ts` de `src/` (`05-QUALIDADE-CODIGO.md` 5.5). Omissa,
  * cada provedor usa a raiz publica.
@@ -308,9 +303,6 @@ export function criarSondaHttp(opcoes: OpcoesDaSonda = {}): SondaTelegram {
 /* O probe comum por provedor                                                  */
 /* ========================================================================== */
 
-/** Raiz publica da API do Discord (v10). SEM barra final. */
-export const DISCORD_API_ROOT_PADRAO = 'https://discord.com/api/v10'
-
 /**
  * Variavel de ambiente da raiz da API, por provedor — o nome DUPLICADO do lado
  * do worker (`TELEGRAM_API_ROOT` em `worker/providers/telegram/token.ts`); a
@@ -318,7 +310,6 @@ export const DISCORD_API_ROOT_PADRAO = 'https://discord.com/api/v10'
  */
 const API_ROOT_VAR: Readonly<Record<ProviderId, string>> = {
   telegram: 'TELEGRAM_API_ROOT',
-  discord: 'DISCORD_API_ROOT',
 }
 
 /**
@@ -326,7 +317,7 @@ const API_ROOT_VAR: Readonly<Record<ProviderId, string>> = {
  *
  * Omissa (ou vazia) = a raiz publica do provedor — o valor que o painel usa
  * quando ninguem apontou para um duplo de teste. Configuravel por
- * `TELEGRAM_API_ROOT` (telegram) e `DISCORD_API_ROOT` (discord).
+ * `TELEGRAM_API_ROOT` (telegram).
  */
 export function apiRootDe(
   provider: ProviderId,
@@ -368,62 +359,6 @@ export interface OpcoesDeSondaDeProvedor {
 }
 
 /**
- * A sonda discord: `GET /users/@me` com o token no cabecalho, sem SDK.
- *
- * DIFERENCA DE TRANSPORTE QUE OBRIGA A ISTO, e vale a pena dizer em voz alta:
- * o token do Telegram viaja no CAMINHO do URL (`/bot<token>/getMe`) — a forma
- * daquela API; o token do Discord viaja no CABECALHO `Authorization: Bearer`.
- * O probe comum esconde essa diferenca, mas o transporte nao podia ser o
- * mesmo. A raiz e configuravel (`DISCORD_API_ROOT`) para o duplo de teste.
- *
- * O que se classifica: 200 com `username` -> ok; 200 sem `username` -> ok sem
- * nome (espelho do caso medido no telegram); 401 -> token recusado; qualquer
- * outro status -> indisponivel; sem resposta -> rede. A mensagem de erro do
- * `fetch` e DELIBERADAMENTE descartada (pode citar a URL; o corpo nunca e
- * devolvido em cru para a UI).
- */
-export function criarSondaDiscord(opcoes: OpcoesDeSondaDeProvedor = {}): SondaDeProvedor {
-  const apiRoot = (opcoes.apiRoot ?? DISCORD_API_ROOT_PADRAO).replace(/\/+$/u, '')
-  const buscar = opcoes.buscar ?? fetch
-  const timeoutMs = opcoes.timeoutMs ?? TIMEOUT_DA_SONDA_MS
-
-  return {
-    async verificar(token: string): Promise<ResultadoDeProva> {
-      try {
-        const resposta = await buscar(`${apiRoot}/users/@me`, {
-          method: 'GET',
-          headers: {
-            authorization: `Bearer ${token}`,
-            accept: 'application/json',
-          },
-          signal: AbortSignal.timeout(timeoutMs),
-        })
-        if (resposta.status === 401) return { ok: false, erro: 'token-invalido' }
-        const texto = await resposta.text()
-        let corpo: unknown
-        try {
-          corpo = JSON.parse(texto)
-        } catch (erroDeJson) {
-          void erroDeJson
-          corpo = undefined
-        }
-        if (resposta.status === 200) {
-          const username = textoDe(corpo, 'username')
-          if (username !== undefined) return { ok: true, botNome: username }
-          // 200 sem `username`: o endpoint respondeu mas nao como um User —
-          // espelho do caso telegram (bot existe sem nome publico).
-          return { ok: true }
-        }
-        return { ok: false, erro: 'indisponivel' }
-      } catch (erroDeRede) {
-        void erroDeRede
-        return { ok: false, erro: 'rede' }
-      }
-    },
-  }
-}
-
-/**
  * A FABRICA provider-aware: devolve o probe comum para o provedor ativo.
  *
  * O dispatcher e o `ProviderId` FECHADO de `src/proc/env.ts` — um provedor
@@ -433,8 +368,6 @@ export function criarSonda(
   provider: ProviderId,
   opcoes: OpcoesDeSondaDeProvedor = {},
 ): SondaDeProvedor {
-  if (provider === 'discord') return criarSondaDiscord(opcoes)
-
   // Telegram: o probe comum por cima do transporte portado — o getMe decide.
   // `ok:false` com HTTP 200 = o bot EXISTE e nao tem @username (o contrato do
   // getMe colapsa o "sem username" nesse 200) — verde legitimo, sem nome.

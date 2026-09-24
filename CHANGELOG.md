@@ -27,6 +27,13 @@ linha `[Unreleased]` é substituído a cada `changeset version`.
 
 ### Minor
 
+- **Remoção do provedor Discord — o plugin fica só Telegram.** Apagados o adaptador
+  `worker/providers/discord/**`, os testes/dublês/e2e do Discord, a `docs/ONBOARDING-DISCORD.md`
+  e todas as menções a Discord em código, configuração, docs atuais e skills. O `ProviderId`
+  (host e worker) passa a ser `'telegram'` e `worker.provider` aceita só o literal `'telegram'`.
+  A arquitetura multi-provedor mantém-se: o registry continua fechado e fail-closed
+  (`DSH_GUARD_PROVIDER` ausente → `telegram`; desconhecido → `ProvedorDesconhecidoError`).
+  Para quem usa o Telegram nada muda: mesmo token, pareamento e comandos.
 - **Arquitetura de provedores de mensageria.** O worker do bot passou a ser **neutro ao provedor**:
   o núcleo (roteador comando→intent, allowlist de dois eixos, pareamento, outbox, autolink e
   pendentes) vive agora em `worker/surface/**`, e o Telegram — hoje o único fornecedor — está

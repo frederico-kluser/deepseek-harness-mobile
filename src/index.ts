@@ -1159,9 +1159,8 @@ export function apply(
     // superficie so orquestra o HTTP. O token NUNCA sai daqui para a UI.
     const tokenOps = (() => {
       // A SONDA DO PROVEDOR ATIVO: o probe comum (`criarSonda`) confirma o
-      // token e devolve o nome do bot — telegram por `getMe`, discord por
-      // `GET /users/@me` com Bearer (sem SDK). A raiz da API segue a variavel
-      // do provedor (`TELEGRAM_API_ROOT` / `DISCORD_API_ROOT`, o MESMO nome
+      // token e devolve o nome do bot — telegram por `getMe`. A raiz da API
+      // segue a variavel do provedor (`TELEGRAM_API_ROOT`, o MESMO nome
       // que o worker le); omitida = a raiz publica do provedor.
       const apiRoot = apiRootDe(provider)
       const sonda = criarSonda(provider, apiRoot === undefined ? {} : { apiRoot })
@@ -1199,9 +1198,8 @@ export function apply(
       }
       return {
         // A checagem de formato do PROVEDOR ATIVO: estrita para o telegram
-        // (TG-061), frouxa para o discord (a gramatica real do token e do
-        // adaptador, Onda 3) — um token discord legitimo nao pode ser
-        // recusado pela forma do telegram.
+        // (TG-061). Um provedor novo acrescenta a sua forma no proprio
+        // `validarFormatoDe`, nao aqui.
         validarFormato: (bruto: string): boolean => validarFormatoDe(provider, bruto),
         fonte: fonteEfetiva,
         sondar: async (
