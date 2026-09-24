@@ -37,22 +37,43 @@ linha `[Unreleased]` é substituído a cada `changeset version`.
 
   **Promessa verificável (bitola literal):** o estado final desta versão tem **zero** código,
   funcionalidade, configuração, docs atuais ou skills do Discord. As menções ao nome que persistem
-  no repositório pertencem só a duas classes de exceções, nomeadas e verificáveis —
-  **(a) registos desta remoção**: este changelog e o `.changeset/remocao-provedor-discord.md`
-  (incluindo o nome do ficheiro); **(b) strings de guarda anti-regressão** que nomeiam o que
-  proíbem: `FORBIDDEN_PREFIXES` e o cabeçalho de `scripts/check-tarball.mjs`, a anotação
-  `"//scripts"` do `package.json` e o teste `test/unit/scripts/release-artefacts.test.ts`. Fora
-  destas duas classes — e do arquivo histórico de planeamento `docs/plano/**`, que nunca foi doc
-  atual — não resta qualquer menção a Discord (`grep -ri discord` devolve exactamente estas
-  exceções, mais uma pendência transitória e o seu eco compilado — ambos nomeados abaixo).
+  no repositório pertencem só a quatro classes de exceções, nomeadas e verificáveis — e o
+  `grep -ri discord` devolve **exactamente** estas classes (nem mais, nem menos):
+  **(a) registos desta remoção** (a decisão e o seu histórico): `.changeset/**` — hoje
+  `remocao-provedor-discord.md`, incluindo o nome do ficheiro — e este changelog
+  (`CHANGELOG.md`); **(b) strings de guarda anti-regressão** que nomeiam o que proíbem (3 paths
+  exatos): `FORBIDDEN_PREFIXES` e o cabeçalho de `scripts/check-tarball.mjs`, a anotação
+  `"//scripts"` do `package.json` e o teste `test/unit/scripts/release-artefacts.test.ts`;
+  **(c) arquivo histórico de planeamento** (nunca foi doc atual): `docs/plano/**` (inclui
+  `docs/plano/manifesto.md`), `docs/spikes/**`, `docs/manual-runs/**`, `docs/RELATORIO*`,
+  `docs/mutantes.md`; **(d) o ficheiro do próprio guarda**,
+  `test/unit/estrutural/golden-master.test.ts`, que precisa do nome para o procurar e dos paths
+  das classes para as nomear (auto-isenção, agora nomeada). Fora destas classes não resta
+  qualquer menção — e o recorte desta promessa é a **árvore versionada**. **Fora do recorte**
+  `node_modules/**` · `.git/**` · `.deep-orchestrator/**` · `dist/**` · `lib/**` — categorias
+  não-versionadas (dependências instaladas, controlo de versão, logs do orquestrador e emitidos de
+  build) que o grep cru sem exclusões também varre; a contagem nelas NÃO é facto e varia com a
+  instalação e com o clone. Facto estável, o único número desta promessa: git grep -il discord na
+  árvore versionada devolve **10** ficheiros, exactamente as classes (a)-(d) acima (a verificação
+  `git grep -il discord | wc -l` dá 10, e o mesmo sai de `grep -ril discord .
+  --exclude-dir=node_modules --exclude-dir=.deep-orchestrator --exclude-dir=dist
+  --exclude-dir=lib --exclude-dir=.git`). O guarda
+  `test/unit/estrutural/golden-master.test.ts` impõe este texto em `pnpm test` nos DOIS sentidos —
+  toda a isenção que ele concede está aqui nomeada (caso «lockstep») e toda a classe aqui nomeada
+  tem isenção viva no guarda — e qualquer menção nova fora das classes reprova, **excepto nos
+  formatos que o guarda não varre**: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.ico`, `.svg`,
+  `.tgz`, `.gz`, `.zip`, `.woff`, `.woff2`, `.ttf`, `.otf`, `.pdf`, `.lock`, `.tsbuildinfo`
+  (logos, tarballs, fontes e artefactos de build; `.svg` e `.lock` são textuais e ficam de fora
+  por decisão — uma menção aí não é vista pelo golden master).
 
-  **Pendências transitórias (condicionais):** a pendência transitória é **uma, com o seu eco
-  compilado** — e ambos estão nomeados: (1) o comentário em código vivo de
-  `worker/providers/telegram/parse.ts`; (2) o seu eco compilado transitório em
-  `dist/worker/providers/telegram/parse.js:328` (produto de build, gitignored e apagado pelo
-  `clean` a cada build — por isso invisível num `grep --exclude-dir=dist`). A menção (1) é
-  removida por um fix em paralelo que **tem de entrar na mesma versão**; se não entrar, esta
-  promessa fica sem efeito e as menções (1) e (2) persistem.
+  **Pendências transitórias — RESOLVIDAS nesta versão:** existiram duas menções transitórias e
+  ambas estão resolvidas antes do release: (1) um comentário em código vivo de
+  `worker/providers/telegram/parse.ts` citava o nome do provedor removido — reescrito pelo fix
+  que entrou nesta mesma versão (`grep -ri discord worker/providers/telegram/parse.ts` vazio);
+  (2) o seu eco compilado em `dist/worker/providers/telegram/parse.js` (produto de build,
+  gitignored) — o `clean` determinístico do `build:all` recompila sempre para uma árvore limpa, e
+  o que sobrar é build stale, fora do recorte. Não há pendências: se o `grep -ri discord` voltar
+  a encontrar o nome fora das classes acima, o golden master reprova o `pnpm test`.
 
   **SECURITY: exige ação do utilizador (migração):** quem tem `worker.provider: 'discord'` na
   configuração (o `INSTALL.md` antigo ensinava-o) tem de **remover a linha ou mudá-la para

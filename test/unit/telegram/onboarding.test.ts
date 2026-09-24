@@ -1206,6 +1206,46 @@ function codigoAtual(saida: string): string | undefined {
   return [...saida.matchAll(/código de pareamento:\s+(\d{6})/gu)].at(-1)?.[1]
 }
 
+/**
+ * TG-065 endurecido (colisao aleatoria de 6 digitos, ~1e-5/run): o estado
+ * persistido e comparado contra os CAMPOS REAIS e nao contra o JSON
+ * serializado. Os campos NAO-ALVO (`pairedAt`, `secretDigest`) sao alta
+ * entropia por CONSTRUCAO (epoch ms; sha256 hex de 64 carateres): um codigo de
+ * 6 digitos aparece la DENTRO como SUBSTRING por pura colisao e reprovava um
+ * estado LIMPO — o falso positivo que derrubava o caso sem nada ter vazado.
+ * A regra endurecida MANTÉM o comportamento esperado do caso («o codigo nao
+ * fica no estado»): os campos reais continuam a ser procurados por substring
+ * (e os nomes de campo tambem — e la que um vazamento vive) e os nao-alvo sao
+ * comparados por IGUALDADE (o codigo nao pode SER o valor deles). A mascara so
+ * fecha a janela de falso positivo; nada de legitimo passa a escapar.
+ */
+const CAMPOS_NAO_ALVO_DO_ESTADO = new Set(['pairedAt', 'secretDigest'])
+
+interface FolhaDoEstado {
+  readonly texto: string
+  readonly naoAlvo: boolean
+}
+
+/** As folhas REAIS do estado (valores e nomes de campo), com a marca de nao-alvo. */
+function folhasDoEstado(valor: unknown, chave?: string, sobNaoAlvo = false): FolhaDoEstado[] {
+  const naoAlvo = sobNaoAlvo || (chave !== undefined && CAMPOS_NAO_ALVO_DO_ESTADO.has(chave))
+  if (valor === null || typeof valor !== 'object') return [{ texto: String(valor), naoAlvo }]
+  const pares: ReadonlyArray<readonly [string | undefined, unknown]> = Array.isArray(valor)
+    ? valor.map((v) => [undefined, v] as const)
+    : Object.entries(valor)
+  return pares.flatMap(([k, v]) => [
+    ...(k === undefined ? [] : [{ texto: k, naoAlvo }]),
+    ...folhasDoEstado(v, k, naoAlvo),
+  ])
+}
+
+/** Onde e que o codigo ficou guardado no estado? (vazio = nada vazou) */
+function codigoNoEstado(estado: Record<string, unknown>, codigo: string): string[] {
+  return folhasDoEstado(estado)
+    .filter((folha) => (folha.naoAlvo ? folha.texto === codigo : folha.texto.includes(codigo)))
+    .map((folha) => folha.texto)
+}
+
 describe('TG-063/065/066: o pareamento, de ponta a ponta pela CLI', () => {
   it('pareia com o update que carrega o codigo CORRECTO, e so com esse', async () => {
     let sondagens = 0
@@ -1273,7 +1313,12 @@ describe('TG-063/065/066: o pareamento, de ponta a ponta pela CLI', () => {
       assert.ok(!auditoria.includes(mostrado), `o codigo vazou para o log:\n${auditoria}`)
       assert.ok(!auditoria.includes(TOKEN_VALIDO), 'a chave do bot vazou para o log')
       // E o estado persistido tambem nao o guarda: ele morre com o processo.
-      assert.ok(!JSON.stringify(bancada.estado()).includes(mostrado))
+      // TG-065 endurecido: comparado contra os CAMPOS REAIS (e nao o JSON
+      // serializado) — `pairedAt`/`secretDigest` comparam-se por igualdade, o
+      // resto por substring (ver `folhasDoEstado`; a colisao aleatoria de 6
+      // digitos dentro deles reprovaria este estado sem vazamento nenhum).
+      const vazado = codigoNoEstado(bancada.estado(), mostrado)
+      assert.deepEqual(vazado, [], `o codigo vazou para o estado: ${vazado.join(', ')}`)
     } finally {
       bancada.limpar()
     }

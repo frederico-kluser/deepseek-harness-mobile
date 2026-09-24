@@ -25,6 +25,12 @@
  * onde ele vive. NAO ha matcher reimplementado neste ficheiro: sabotar o
  * matcher real (ex.: `p === prefix.slice(0, -1)`) deixa o gate cego e o it 5
  * fica VERMELHO (prova por mutacao registada no handoff da onda 2).
+ *
+ * AMBIENTE (guarda dos its 4-5): o gate real chama `pnpm pack` e descompacta o
+ * .tgz (tar). Sem `pnpm`/`tar` no PATH os casos reprovavam em ENOENT --
+ * vermelho de AMBIENTE, nao de comportamento (o gate nem chegava a correr e o
+ * it 5 nunca via a mensagem canonica). A guarda SALTA com o motivo nomeado em
+ * vez de reprovar em silencio.
  */
 
 import assert from 'node:assert/strict'
@@ -127,6 +133,25 @@ function correrGate(raiz: string): { codigo: number; saida: string } {
   }
 }
 
+/**
+ * As ferramentas que o GATE REAL precisa no PATH (`pnpm pack` + descompactacao
+ * tar). Devolve o motivo do SALTO quando falta alguma: um ENOENT aqui reprovaria
+ * os its 4-5 sem que o gate chegasse a correr -- vermelho de ambiente, nao de
+ * comportamento (e o it 5 nunca veria a mensagem canonica).
+ */
+function motivoDeSaltoDoGate(): string | undefined {
+  for (const ferramenta of ['pnpm', 'tar']) {
+    try {
+      execFileSync(ferramenta, ['--version'], { stdio: 'ignore' })
+    } catch {
+      return `ambiente sem ${ferramenta} no PATH — o gate real precisa de pnpm (pack) e tar (descompactar)`
+    }
+  }
+  return undefined
+}
+
+const SALTO_DO_GATE = motivoDeSaltoDoGate()
+
 describe('caminho de release — o artefato nunca arrasta restos de modulos removidos', () => {
   it('clean apaga dist/ e lib/', () => {
     const clean = pkg.scripts['clean']
@@ -165,7 +190,8 @@ describe('caminho de release — o artefato nunca arrasta restos de modulos remo
     )
   })
 
-  it('gate real: aprova o artefacto limpo COM o adaptador telegram vivo presente (entrada nao-proibida)', () => {
+  it('gate real: aprova o artefacto limpo COM o adaptador telegram vivo presente (entrada nao-proibida)', (t) => {
+    if (SALTO_DO_GATE !== undefined) return t.skip(SALTO_DO_GATE)
     const raiz = craftarArtefacto(false)
     try {
       assert.ok(existsSync(join(raiz, ENTRADA_VIVA)), `o craft tem de levar ${ENTRADA_VIVA} (adaptador vivo)`)
@@ -182,7 +208,8 @@ describe('caminho de release — o artefato nunca arrasta restos de modulos remo
     }
   })
 
-  it('gate real: reprova os restos do provedor discord com a mensagem canonica', () => {
+  it('gate real: reprova os restos do provedor discord com a mensagem canonica', (t) => {
+    if (SALTO_DO_GATE !== undefined) return t.skip(SALTO_DO_GATE)
     const raiz = craftarArtefacto(true)
     try {
       const { codigo, saida } = correrGate(raiz)
