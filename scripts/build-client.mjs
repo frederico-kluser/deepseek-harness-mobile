@@ -96,12 +96,12 @@ const outMap = result.outputFiles.find((f) => f.path === `${jsPath}.map`)
 if (outMap) writeFileSync(`${jsPath}.map`, outMap.text)
 
 // Tipos do subpath `exports["./client"]`: o `.d.ts` em `client/` (FONTE,
-// commited) é COPIADO para `lib/client.d.ts` (produto de build, gitignored) —
-// a MESMA viagem que `lib/client.js`. Sem ele o tarball exporia `lib/client.js`
-// sem declaração irmã e o `attw` reprovaria o subpath com `UntypedResolution`
-// ("No types"). `prepare`/`prepack` (que correm `build:client`) garantem que o
-// tarball leva ambos de forma determinística. Manter a fonte em `client/`,
-// NUNCA editar `lib/client.d.ts` à mão.
+// commited) é COPIADO para `lib/client.d.ts` (produto de build, commitado no
+// git — como `lib/client.js`, o artefacto de um git-dep so leva o que o git
+// tem). Sem ele o tarball exporia `lib/client.js` sem declaração irmã e o `attw`
+// reprovaria o subpath com `UntypedResolution` ("No types"). O rebuild vem de
+// `build:all` (e do `prepublishOnly` antes do publish). Manter a fonte em
+// `client/`, NUNCA editar `lib/client.d.ts` à mão.
 const dtsSource = resolve(root, 'client/client.d.ts')
 const dtsPath = resolve(root, 'lib/client.d.ts')
 copyFileSync(dtsSource, dtsPath)

@@ -96,6 +96,14 @@
   ],
   "ignorePatterns": [
     "dist/**",
+    // Artefacto de build do dsh.client (`lib/client.js` bundle + `lib/client.d.ts`,
+    // copia de `client/client.d.ts`) — COMMITADO no git para o install-by-link
+    // (o artefacto de um git-dep so leva o que o git tem). Nao lintar codigo
+    // gerado: o gate real e `pnpm run build:client` + `package:check`. NAO
+    // confundir com `worker/lib/**`, que e FONTE e continua a ser lintado — o
+    // padrao e ancorado (`lib/**` so casa o `lib/` da raiz). Mesma regra do
+    // eslint.config.js.
+    "lib/**",
     "coverage/**",
     "node_modules/**",
     // Espelhos byte-a-byte de tarballs de terceiros (`pnpm types:fetch`).

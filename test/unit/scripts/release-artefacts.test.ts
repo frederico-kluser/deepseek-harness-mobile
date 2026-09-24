@@ -9,7 +9,9 @@
  *
  * Duas defesas, afirmadas aqui:
  *   1. `clean` (apaga `dist/` e `lib/`) corre ANTES da compilacao em
- *      `build:all` -- o caminho que `prepare`/`prepack`/`prepublishOnly` usam,
+ *      `build:all` -- o caminho que `prepublishOnly` usa (os hooks de build do
+ *      install/pack, `prepare`/`prepack`, foram REMOVIDOS de proposito: o pnpm
+ *      11 bloqueia-os em git-deps e impedia o install-by-link),
  *      ou seja, todo o caminho do artefato compila para uma arvore limpa
  *      (its 1-2, leitura direta da configuracao);
  *   2. FORBIDDEN_PREFIXES do verificador do tarball rejeita
@@ -19,8 +21,8 @@
  *      (it 3 guarda o contrato; its 4-5 correm o GATE REAL).
  *
  * Os its 4-5 executam o PROPRIO `scripts/check-tarball.mjs` contra um artefacto
- * craftado: um mini-pacote em tmpdir (sem scripts de lifecycle -- o `prepack`
- * real limparia os restos antes de o verificador os ver) levando o script
+ * craftado: um mini-pacote em tmpdir (sem scripts de lifecycle -- um `prepack`
+ * de build limparia os restos antes de o verificador os ver) levando o script
  * copiado byte-a-byte em runtime, porque o ROOT do script e a raiz do pacote
  * onde ele vive. NAO ha matcher reimplementado neste ficheiro: sabotar o
  * matcher real (ex.: `p === prefix.slice(0, -1)`) deixa o gate cego e o it 5
@@ -161,21 +163,32 @@ describe('caminho de release — o artefato nunca arrasta restos de modulos remo
     assert.match(clean, /\blib\b/, 'clean tem de apagar lib/ (bundle do cliente)')
   })
 
-  it('build:all limpa ANTES de compilar e os hooks de release passam todos por ele', () => {
+  it('build:all limpa ANTES de compilar e o unico hook de lifecycle passa por ele', () => {
     const buildAll = pkg.scripts['build:all']
     assert.ok(buildAll, 'falta o script `build:all`')
     const iClean = buildAll.indexOf('clean')
     const iBuild = buildAll.search(/\bbuild\b/)
     assert.ok(iClean >= 0, 'build:all nao chama `clean`')
     assert.ok(iBuild > iClean, 'build:all tem de limpar ANTES de compilar')
-    // prepare/prepack/prepublishOnly: os tres caminhos que chegam ao tarball
-    // publicado (install, `pnpm pack`, `pnpm publish`).
-    for (const hook of ['prepare', 'prepack', 'prepublishOnly']) {
-      assert.ok(
-        (pkg.scripts[hook] ?? '').includes('build:all'),
-        `${hook} tem de passar por build:all (limpeza determinica antes do build)`,
+    // `prepare`/`prepack` estao AUSENTES de proposito: hooks de build correm no
+    // install de um git-dep e o pnpm 11 bloqueia-os
+    // (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED em `pnpm add github:...`) — era
+    // EXATAMENTE isto que impedia o install-by-link. O artefacto compilado e
+    // commitado no git; guarda completa em test/unit/scripts/install-by-link.test.ts.
+    for (const hook of ['prepare', 'prepack']) {
+      assert.equal(
+        pkg.scripts[hook],
+        undefined,
+        `${hook} tem de estar AUSENTE — bloqueia o install por link (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED)`,
       )
     }
+    // `prepublishOnly` e o UNICO caminho de build que chega ao tarball
+    // publicado e so corre no `pnpm publish` (nunca para dependencias) — tem de
+    // passar por build:all (limpeza determinica antes do build).
+    assert.ok(
+      (pkg.scripts['prepublishOnly'] ?? '').includes('build:all'),
+      'prepublishOnly tem de passar por build:all (limpeza determinica antes do build)',
+    )
   })
 
   it('o contrato do gate proibe restos compilados do provedor discord (dist/ e lib/)', () => {

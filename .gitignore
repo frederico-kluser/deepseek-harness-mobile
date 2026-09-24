@@ -1,6 +1,8 @@
 node_modules/
-dist/
-lib/
+# dist/ e lib/ sao COMMITADOS DE PROPOSITO (sem prepare/prepack): o artefacto de
+# um git-dep so leva o que esta no git, e um hook de build no install e bloqueado
+# pelo pnpm 11 (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED). Guardas:
+# test/unit/scripts/install-by-link.test.ts + scripts/check-git-install.mjs.
 *.tsbuildinfo
 .env
 .env.local

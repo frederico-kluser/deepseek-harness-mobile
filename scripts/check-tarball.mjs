@@ -17,8 +17,10 @@
  * PORQUE `pnpm pack` E NAO `npm pack --dry-run`
  *   `--dry-run` lista o que o npm calcularia; correr o pack real e descompacta-lo
  *   prova a realidade: o .tgz existe, descomprime, e o que esta dentro e o que o
- *   consumidor recebe. Confirmar que `files` inclui `dist` e que `dist/` estar no
- *   .gitignore nao causa surpresa e exatamente o que este script verifica.
+ *   consumidor recebe. Confirmar que `files` inclui `dist` e `lib` e que o
+ *   artefacto COMMITADO (dist/ e lib/ rastreados pelo git, sem hooks de build —
+ *   ver scripts/check-git-install.mjs) esta completo e exatamente o que este
+ *   script verifica.
  *
  * DEPENDENCIAS DO SISTEMA
  *   Usa o `tar` de linha de comandos (disponivel em linux/darwin, os sistemas
@@ -43,8 +45,9 @@ const REQUIRED = [
   'dist/bin/dsh-guard-setup.js', // o alvo do campo `bin` (06 §9.2, item 10 do smoke)
   // HIGH-1: o bundle do dsh.client (`exports["./client"]` -> `lib/client.js`).
   // Sem ele o harness lanca MissingClientBundleError na ativacao do plugin
-  // (packages/client/modules/src/index.ts). `prepare`/`prepack` geram-no antes
-  // do pack; este gate prova que o tarball o leva.
+  // (packages/client/modules/src/index.ts). O artefacto COMMITADO no git leva-o
+  // (`prepublishOnly` reconstrui-o antes do publish); este gate prova que o
+  // tarball o leva.
   'lib/client.js',
   'dist/src/contracts/ipc.js', // o UNICO ficheiro de dist/src exigido em runtime:
   // `worker/ipc.ts` importa `../src/contracts/ipc.ts`, que o tsconfig.worker.json

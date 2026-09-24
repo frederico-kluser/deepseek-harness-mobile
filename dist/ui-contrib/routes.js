@@ -1,0 +1,797 @@
+/**
+ * As rotas HTTP da superficie de UI nativa e os seus handlers.
+ *
+ * O PREFIXO E IRMAO DE `/__guard`, NAO FILHO: `/__guard` e do painel (D5,
+ * T3.4 -> T5.3), que o registara como rota `prefix` — um caminho como
+ * `/__guard/ui/...` seria engolido pelo despachante do painel e responderia
+ * 404 por tabela. `/__guard-ui` e um SEGMENTO distinto: o `match` do host so
+ * casa `p` e `p/<algo>` (medido no spike S4), logo nao colide — e a barreira
+ * de autenticacao (L3) guarda-o por omissao, sem isencao nenhuma.
+ *
+ * A COSTURA da Onda 5 acrescentou o RESET (W3: FAILED so sai por reset
+ * humano, CTL-012) com o MESMO padrao de 2 etapas com nonce do LIGAR:
+ * `POST /__guard-ui/api/reset` (passo 1, emite o nonce) e
+ * `POST /__guard-ui/api/reset/confirm` (passo 2, emite o intent reset).
+ * As quatro originais:
+ *
+ *   GET  /__guard-ui/api/state         — a PROJECCAO: seq + estado + URL (so
+ *                                        READY) + expiracao + falha + nota de
+ *                                        TTL. E o que o bundle da aba
+ *                                        settings poe no DOM por
+ *                                        `textContent`.
+ *   POST /__guard-ui/api/start         — passo 1 do LIGAR: pede o nonce ao
+ *                                        HOST (T5.1) e devolve-o opaco.
+ *   POST /__guard-ui/api/start/confirm — passo 2: emite o `ControlIntent`
+ *                                        `start` com o nonce transportado
+ *                                        opaco; quem valida e o host (S5).
+ *   POST /__guard-ui/api/stop          — DESLIGAR: emite `stop` SEM nonce
+ *                                        (CTL-024: acao que reduz exposicao).
+ *
+ * DUAS rotas do Telegram (OFELINE/ONLINE), acrescidas para o botao da UI:
+ *   GET  /__guard-ui/api/telegram      — o estado do bot: `online`+`provider`
+ *                                        +`motivo` (offline) ou `online`
+ *                                        +`provider`+`handle` (online). O
+ *                                        disco e lido pela costura a cada
+ *                                        pedido; o token NUNCA sai.
+ *   POST /__guard-ui/api/telegram/click — o clique no botao: devolve o TEXTO
+ *                                        das instrucoes (conectar se offline,
+ *                                        uso se online). Exige CSRF, como todo
+ *                                        POST desta superficie.
+ *   GET  /__guard-ui/api/csrf       — um token anti-CSRF FRESCO para o bundle
+ *                                        (HIGH-2): a UNICA fonte de CSRF da
+ *                                        superficie, que o painel da aba
+ *                                        settings usa em cada POST.
+ *
+ * DUAS rotas dos AGENTES (Onda 6 — o painel espelha /agentes e /parar-agente):
+ *   GET  /__guard-ui/api/agents     — a lista de runs do dispatcher (id, skill,
+ *                                        status, startedAt, summary). A fonte e
+ *                                        o REGISTRY do HOST em memoria (a MESMA
+ *                                        do `agent.report`), fiado pela costura
+ *                                        via `agentsOps` — esta superficie NUNCA
+ *                                        toca no canal IPC.
+ *   POST /__guard-ui/api/agents/:id/cancel — cancela um run pelo id CURTO (8
+ *                                        chars). REDUZ exposicao (CTL-024, o
+ *                                        mesmo do STOP): CSRF basta, NAO exige
+ *                                        nonce. Id desconhecido/ja terminal =
+ *                                        noop idempotente (o mesmo do
+ *                                        `agent.cancel` do IPC). Regista como
+ *                                        rota PREFIXO no MESMO caminho da lista
+ *                                        (o id vive no segmento do caminho); o
+ *                                        despacho do host so consulta prefixos
+ *                                        depois de falhar a tabela exact, logo
+ *                                        o GET da lista nunca cai aqui.
+ *
+ * Toda rota POST exige o token anti-CSRF desta superficie (cabecalho
+ * `x-dsh-csrf` ou campo `csrf` do corpo) — doutrina NIST SP 800-63B-4 5.1.1.
+ * O metodo errado responde 405 (o despacho do host e por caminho, nao por
+ * metodo; quem responde ao pedido e este handler).
+ */
+import { CSRF_FIELD_NAME, CSRF_HEADER_NAME } from "./csrf.js";
+import { buildControlIntent, projectResultado } from "./intents.js";
+import { passosDoBot } from "./bot-state.js";
+export const UI_PREFIX = '/__guard-ui';
+export const UI_PATH_STATE = `${UI_PREFIX}/api/state`;
+export const UI_PATH_START = `${UI_PREFIX}/api/start`;
+export const UI_PATH_CONFIRM = `${UI_PREFIX}/api/start/confirm`;
+export const UI_PATH_STOP = `${UI_PREFIX}/api/stop`;
+export const UI_PATH_RESET = `${UI_PREFIX}/api/reset`;
+export const UI_PATH_RESET_CONFIRM = `${UI_PREFIX}/api/reset/confirm`;
+/** O estado Telegram OFFLINE/ONLINE — GET, so le. NUNCA carrega o token. */
+export const UI_PATH_TELEGRAM = `${UI_PREFIX}/api/telegram`;
+/** O clique no botao Telegram — POST, CSRF como as demais escritas. */
+export const UI_PATH_TELEGRAM_CLICK = `${UI_PREFIX}/api/telegram/click`;
+/** O token do bot, configurado VIA INTERFACE — POST, CSRF como as demais. */
+export const UI_PATH_TOKEN = `${UI_PREFIX}/api/token`;
+/** O estado do token (configurado/handle/fonte), SEM o valor — GET. */
+export const UI_PATH_TOKEN_STATE = `${UI_PREFIX}/api/token-state`;
+/**
+ * A privacidade do bot AO VIVO (GET): o `getMe` real decide se o bot tem
+ * `@username` (encontrável na busca) ou não. GET sem CSRF, como as demais
+ * leituras. NUNCA transporta o token.
+ */
+export const UI_PATH_PRIVACIDADE = `${UI_PREFIX}/api/privacidade`;
+/** Quem/quanto esta a acessar (sessoes e conexoes do proxy) — GET. */
+export const UI_PATH_ACCESS = `${UI_PREFIX}/api/access`;
+/**
+ * O token anti-CSRF FRESCO para o bundle — GET, so le. Nao exige CSRF (e uma
+ * leitura, como as demais GETs) e NUNCA transporta credencial: o valor emitido
+ * e o mesmo token stateless do guard da superficie que os POSTs verificam
+ * (`core.csrf.verify(token, UI_CSRF_BINDING)`).
+ */
+export const UI_PATH_CSRF = `${UI_PREFIX}/api/csrf`;
+/** Inicia o pareamento pelo painel — POST, CSRF como as demais escritas. */
+export const UI_PATH_PAIR = `${UI_PREFIX}/api/pair`;
+/** O estado do pareamento (pareado? handle? código ativo) — GET, só leitura. */
+export const UI_PATH_PAIR_STATE = `${UI_PREFIX}/api/pair-state`;
+/**
+ * O bloco de AGENTES (Onda 6): a MESMA string serve as DUAS rotas —
+ * `GET /__guard-ui/api/agents` (exact, a lista) e
+ * `POST /__guard-ui/api/agents/<id>/cancel` (PREFIXO no mesmo caminho: o id
+ * curto do run vive no segmento; o despacho do host so consulta prefixos
+ * depois de falhar a tabela exact, logo a lista nunca cai no cancelamento).
+ */
+export const UI_PATH_AGENTS = `${UI_PREFIX}/api/agents`;
+/** O vinculo do token anti-CSRF: a superficie inteira. */
+export const UI_CSRF_BINDING = 'ui-contrib';
+/** Teto do corpo de um POST. Os pedidos desta superficie cabem em 200 bytes. */
+const MAX_BODY_BYTES = 4096;
+export const NOTA_TTL_EXPIRADO = 'TTL expirado';
+/* ========================================================================== */
+/* Envelope e leitura do corpo                                                */
+/* ========================================================================== */
+function json(res, status, corpo, extra) {
+    res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        ...extra,
+    });
+    res.end(JSON.stringify(corpo));
+}
+function exigeMetodo(req, res, metodo) {
+    if (req.method === metodo)
+        return true;
+    json(res, 405, { erro: 'metodo-nao-suportado' }, { allow: metodo });
+    return false;
+}
+/**
+ * Le o corpo JSON, com teto. Corpo vazio conta como `{}` (o cliente da
+ * superficie envia `'{}'` nos POSTs sem payload).
+ */
+function lerCorpo(req) {
+    return new Promise((resolve) => {
+        const pedacos = [];
+        let total = 0;
+        let fechado = false;
+        const terminar = (resultado) => {
+            if (fechado)
+                return;
+            fechado = true;
+            // O corpo nao e consumido nem destruido — o padrao do painel
+            // (`readRequestBody`): a resposta e que fecha o pedido; derrubar o
+            // socket aqui mataria a resposta antes de ela sair.
+            req.removeAllListeners('data');
+            req.removeAllListeners('end');
+            req.removeAllListeners('error');
+            resolve(resultado);
+        };
+        req.on('data', (pedaco) => {
+            total += pedaco.length;
+            if (total > MAX_BODY_BYTES) {
+                terminar({ ok: false, erro: 'grande' });
+                return;
+            }
+            pedacos.push(pedaco);
+        });
+        req.on('end', () => {
+            if (total === 0) {
+                terminar({ ok: true, corpo: {} });
+                return;
+            }
+            try {
+                const bruto = JSON.parse(Buffer.concat(pedacos).toString('utf8'));
+                terminar({
+                    ok: true,
+                    corpo: bruto !== null && typeof bruto === 'object' && !Array.isArray(bruto)
+                        ? bruto
+                        : {},
+                });
+            }
+            catch {
+                terminar({ ok: false, erro: 'malformado' });
+            }
+        });
+        req.on('error', () => terminar({ ok: false, erro: 'malformado' }));
+    });
+}
+/** O token anti-CSRF: cabecalho ou campo `csrf` do corpo (paridade com o painel). */
+function csrfDoPedido(req, corpo) {
+    const noCabecalho = req.headers[CSRF_HEADER_NAME];
+    if (typeof noCabecalho === 'string' && noCabecalho.length > 0)
+        return noCabecalho;
+    const noCorpo = corpo[CSRF_FIELD_NAME];
+    return typeof noCorpo === 'string' && noCorpo.length > 0 ? noCorpo : undefined;
+}
+function csrfValido(core, req, corpo) {
+    const token = csrfDoPedido(req, corpo);
+    return token !== undefined && core.csrf.verify(token, UI_CSRF_BINDING);
+}
+/** Resposta comum de CSRF recusado. 403, nunca 401: o token nao e credencial. */
+function recusarCsrf(res) {
+    json(res, 403, { erro: 'csrf-recusado', motivo: 'recarregue a página e tente de novo' });
+}
+async function responderIntento(res, core, intent) {
+    let resultado;
+    try {
+        resultado = await core.emit(intent);
+    }
+    catch {
+        // Nenhum caminho de erro vaza topologia: 500 generico.
+        json(res, 500, { erro: 'interno' });
+        return;
+    }
+    const projetado = projectResultado(resultado);
+    if (projetado.recusa !== undefined) {
+        json(res, 409, projetado);
+        return;
+    }
+    json(res, 200, projetado);
+}
+/**
+ * Projeta o estado para o corpo da rota. Funcao PURA e exportada: e o coracao
+ * da pergunta falsificavel "a URL aparece antes de READY?" — aqui ela nunca
+ * sai, mesmo que o snapshot a traga por defeito do supervisor.
+ */
+export function projetarEstado(input) {
+    // A nota de TTL (CTL-038): o tunel saiu de READY e o prazo que a ultima
+    // projecao READY viu ja passou — o `STOPPED`/`STOPPING` nao traz `failure`,
+    // e esta nota e a explicacao em vez de um erro generico. E uma NOTA
+    // derivada do que a projecao observou, nao uma afirmacao de causa: um
+    // desligar manual depois do prazo mostra-a igualmente.
+    const expira = input.snapshot.state === 'READY'
+        ? (input.snapshot.expiresAt ?? Number.POSITIVE_INFINITY)
+        : (input.lastReady?.expiresAt ?? Number.POSITIVE_INFINITY);
+    return {
+        seq: input.seq,
+        estado: input.snapshot.state,
+        tentativas: input.snapshot.attempts,
+        ...(input.snapshot.state === 'READY' && input.snapshot.info !== undefined
+            ? { url: input.snapshot.info.url }
+            : {}),
+        ...(input.snapshot.state === 'READY' && input.snapshot.expiresAt !== undefined
+            ? { expiraEm: input.snapshot.expiresAt }
+            : {}),
+        falha: input.snapshot.failure === undefined
+            ? null
+            : { codigo: input.snapshot.failure.code, mensagem: input.snapshot.failure.message },
+        nota: input.now >= expira ? NOTA_TTL_EXPIRADO : null,
+    };
+}
+export function createStateHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        const snapshot = core.projection();
+        if (snapshot === undefined) {
+            // Nenhuma difusao chegou ainda: 503 explicito, nunca um estado inventado.
+            json(res, 503, { erro: 'sem-estado' });
+            return;
+        }
+        json(res, 200, projetarEstado({ seq: core.seq(), snapshot, lastReady: core.lastReady(), now: core.now() }));
+    };
+}
+/* ========================================================================== */
+/* LIGAR — duas etapas com nonce emitido pelo host                            */
+/* ========================================================================== */
+export function createStartHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        // O nonce e emitido pelo HOST (ConfirmService de T5.1) e devolvido OPACO:
+        // a superficie nao o le, nao o valida e nao o guarda — o script do
+        // cliente transporta-o ate ao passo 2.
+        const nonce = core.issueNonce('start');
+        json(res, 200, { passo: 'confirmar', nonce: nonce.valor, expiraEm: nonce.expiresAt });
+    };
+}
+export function createConfirmHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        // S5: quem valida o nonce e o HOST. A superficie transporta-o opaco — e
+        // se o corpo nao o trouxer, o host e quem responde NONCE_AUSENTE.
+        const bruto = corpo.corpo.nonce;
+        const nonce = typeof bruto === 'string' ? bruto : undefined;
+        const intent = buildControlIntent({
+            action: 'start',
+            requestedBy: core.requestedBy,
+            requestId: core.requestId(),
+            ...(nonce === undefined ? {} : { nonce }),
+            at: core.now(),
+        });
+        await responderIntento(res, core, intent);
+    };
+}
+/* ========================================================================== */
+/* DESLIGAR — reduz exposicao, dispensa nonce (CTL-024)                       */
+/* ========================================================================== */
+export function createStopHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        const intent = buildControlIntent({
+            action: 'stop',
+            requestedBy: core.requestedBy,
+            requestId: core.requestId(),
+            at: core.now(),
+        });
+        await responderIntento(res, core, intent);
+    };
+}
+/* ========================================================================== */
+/* RESET — CTL-012/036: a UNICA saida do FAILED, com nonce (CTL-023)          */
+/* ========================================================================== */
+/**
+ * Passo 1 do RESET: emite o nonce para a acao 'reset' no HOST e devolve-o
+ * opaco (S5) — o mesmo padrao do LIGAR. A rota so faz sentido em FAILED; em
+ * qualquer outro estado o controlador responde noop no passo 2.
+ */
+export function createResetHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        // W3 (revisao T5.5): FAILED so sai por reset humano (CTL-012), e o reset
+        // AUMENTA o risco de reabrir a exposicao — exige confirmacao (CTL-023).
+        const nonce = core.issueNonce('reset');
+        json(res, 200, { passo: 'confirmar', nonce: nonce.valor, expiraEm: nonce.expiresAt });
+    };
+}
+/**
+ * Passo 2 do RESET: emite o `ControlIntent` reset com o nonce transportado
+ * opaco. Quem valida e o HOST (S5); em FAILED com nonce valido, o controlador
+ * transita FAILED -> STOPPED e difunde (CTL-036).
+ */
+export function createResetConfirmHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        const bruto = corpo.corpo.nonce;
+        const nonce = typeof bruto === 'string' ? bruto : undefined;
+        const intent = buildControlIntent({
+            action: 'reset',
+            requestedBy: core.requestedBy,
+            requestId: core.requestId(),
+            ...(nonce === undefined ? {} : { nonce }),
+            at: core.now(),
+        });
+        await responderIntento(res, core, intent);
+    };
+}
+/* ========================================================================== */
+/* O estado e o clique do Telegram (OFFLINE/ONLINE)                           */
+/* ========================================================================== */
+/**
+ * Projeta o estado do bot para a rota GET. FUNCAO PURA e exportada: e o
+ * coracao da pergunta falsificavel "o token sai nesta resposta?" — o corpo so
+ * tem `online`+`provider`+`motivo` (offline) ou `online`+`provider`+`handle`
+ * (online); o valor do token e injetado na costura e nunca chega ate aqui.
+ */
+export function projetarEstadoTelegrama(estado, provider) {
+    if (!estado.online)
+        return { online: false, provider, motivo: estado.motivo };
+    return {
+        online: true,
+        provider,
+        ...(estado.handle === undefined ? {} : { handle: estado.handle }),
+    };
+}
+/**
+ * GET /__guard-ui/api/telegram — o estado OFFLINE/ONLINE. SO LE: o motivo
+ * aproximado ("sem pareamento" / "sem chave do bot") quando offline, o estado
+ * online quando pronto. O disco e lido pela costura a cada pedido.
+ */
+export function createTelegramHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        json(res, 200, projetarEstadoTelegrama(core.botState(), core.provider));
+    };
+}
+/**
+ * POST /__guard-ui/api/telegram/click — o CLIQUE no botao Telegram. E uma
+ * ESCRITA (abre o painel de instrucoes), por isso exige o token anti-CSRF da
+ * superficie como qualquer outro POST (NIST SP 800-63B-4 5.1.1). Devolve o
+ * TEXTO de instrucoes — a rota de conectar (offline) ou dicas de uso (online).
+ * O texto nunca traz a chave do bot nem o codigo de pareamento real.
+ */
+export function createTelegramClickHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        json(res, 200, { passos: passosDoBot(core.botState()) });
+    };
+}
+/* ========================================================================== */
+/* O painel de configuracao do token (POST /api/token)                        */
+/* ========================================================================== */
+/**
+ * Projeta o estado do token para a rota GET. FUNCAO PURA e exportada: e o
+ * coracao da pergunta falsificavel "o token sai nesta resposta?" — o corpo
+ * so tem `configurado`+`handle`+`fonte`; o valor do token nunca entra aqui.
+ */
+export function projetarEstadoToken(estado) {
+    return {
+        configurado: estado.configurado,
+        ...(estado.handle === undefined || estado.handle === null ? {} : { handle: estado.handle }),
+        fonte: estado.fonte,
+    };
+}
+/**
+ * GET /__guard-ui/api/token-state — o estado do token SEM o valor. SO LE; o
+ * disco e lido pela costura a cada pedido (`tokenOps.estado`).
+ */
+export function createTokenStateHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        json(res, 200, projetarEstadoToken(core.tokenOps.estado()));
+    };
+}
+/**
+ * Projeta o resultado da checagem de privacidade para a rota GET. FUNCAO PURA
+ * e exportada: e o coracao das perguntas falsificaveis "o token sai nesta
+ * resposta?" e "o `ok:false` nao vira verde?" — o corpo so tem
+ * `ok`+`handle`+`fonte`; o valor do token nunca entra aqui.
+ */
+export function projetarPrivacidade(resultado) {
+    if (!resultado.ok)
+        return { ok: false, erro: 'indisponivel' };
+    return { ok: true, handle: resultado.handle, fonte: resultado.fonte };
+}
+/**
+ * GET /__guard-ui/api/privacidade — a privacidade do bot AO VIVO. SO LE (GET
+ * sem CSRF, como as demais): a costura resolve o token efetivo e faz `getMe`
+ * para decidir se o bot tem `@username`. `handle:null` = bot SEM username
+ * (não encontrável); `ok:false` = getMe falhou (nunca inventa estado). O
+ * `forcar:true` na query contorna o cache curto da costura (botão "Verificar
+ * de novo"). NUNCA devolve nem loga o token.
+ */
+export function createPrivacidadeHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        const url = new URL(req.url ?? '/', 'http://localhost');
+        const forcar = url.searchParams.get('forcar') === 'true';
+        json(res, 200, projetarPrivacidade(await core.tokenOps.privacidade(forcar)));
+    };
+}
+/**
+ * POST /__guard-ui/api/token — configura o token do bot VIA INTERFACE.
+ *
+ * Fluxo (a ordem e contrato — TG-061: FORMATO antes de rede, e a fonte antes
+ * de TUDO quando o env manda):
+ *   - corpo vazio/token em branco -> 400 `{ok:false,erro:'token-vazio'}`;
+ *   - a fonte EFETIVA e `'env'` (variavel TELEGRAM_BOT_TOKEN a mandar) -> 409
+ *     `{ok:false,erro:'token-por-env', aviso}`, SEM sondar nem gravar: um token
+ *     gravado em `secrets.env` nao mudaria o bot enquanto o env o sombrear;
+ *   - formato `<id>:<segredo>` invalido (SEM rede) -> 400
+ *     `{ok:false,erro:'formato-invalido'}`;
+ *   - `getMe` na rede recusa o token -> 422 `{ok:false,erro:'token-invalido'}`;
+ *   - token aceito -> grava em `secrets.env` (0600, atomico), reinicia o
+ *     worker com ele e devolve 200 `{ok:true,handle,fonte:'secrets'}`.
+ *
+ * A FONTE da resposta 200 casa SEMPRE com a que o `/token-state` reporta
+ * depois: quando e `'env'` nao se chega a gravar (409), logo so responde 200
+ * com `fonte:'secrets'`.
+ *
+ * NUNCA ecoa o token nem o loga: o corpo so devolve `ok`+`handle`. Exige o
+ * token anti-CSRF como qualquer POST da superficie (NIST SP 800-63B-4 5.1.1).
+ */
+export function createTokenHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        const bruto = corpo.corpo.token;
+        if (typeof bruto !== 'string' || bruto.trim().length === 0) {
+            json(res, 400, { ok: false, erro: 'token-vazio' });
+            return;
+        }
+        // TRANSPARENCIA ANTES DE REDE: se a variavel TELEGRAM_BOT_TOKEN do ambiente
+        // for a fonte vigente, um token gravado em `secrets.env` nao mudaria o bot.
+        // Recusa-se com instrucao clara em vez de responder `{ok:true}` e o bot
+        // continuar com o token antigo (shadowing silencioso).
+        if (core.tokenOps.fonte() === 'env') {
+            json(res, 409, {
+                ok: false,
+                erro: 'token-por-env',
+                aviso: 'A variavel TELEGRAM_BOT_TOKEN do ambiente tem precedência e continua a mandar. ' +
+                    'Remova-a (ou use o token dela) — só então este painel passa a configurar o secrets.env.',
+            });
+            return;
+        }
+        // O token e aparado UMA vez aqui; `validarFormato` apara de novo por
+        // paridade com o CLI. O valor aparado e o que segue para `sondar`/`gravar`.
+        const token = bruto.trim();
+        if (!core.tokenOps.validarFormato(token)) {
+            json(res, 400, { ok: false, erro: 'formato-invalido' });
+            return;
+        }
+        const sonda = await core.tokenOps.sondar(token);
+        if (!sonda.ok) {
+            json(res, 422, { ok: false, erro: 'token-invalido' });
+            return;
+        }
+        try {
+            core.tokenOps.gravar(token, sonda.handle);
+        }
+        catch {
+            // Nenhum caminho de erro vaza topologia nem o token: 500 generico.
+            json(res, 500, { ok: false, erro: 'interno' });
+            return;
+        }
+        json(res, 200, { ok: true, handle: sonda.handle, fonte: 'secrets' });
+    };
+}
+/* ========================================================================== */
+/* As metricas de acesso (GET /api/access)                                    */
+/* ========================================================================== */
+/** Normaliza `undefined` para `null` no corpo — o painel le `null`, nao ausente. */
+function ouNull(valor) {
+    return valor === undefined ? null : valor;
+}
+/**
+ * Projeta a lista de sessoes para a rota GET. FUNCAO PURA e exportada: e o
+ * coracao das perguntas falsificaveis "o ?key ou o id em claro saem aqui?" e
+ * "o ip vaza quando nao e confiavel?" — o corpo so tem hashes e metadados.
+ */
+export function projetarAcesso(bruto) {
+    return {
+        totalConexoes: bruto.conexoesAtivas,
+        totalSessoes: bruto.totalSessoes,
+        conexoesAtivas: bruto.conexoesAtivas,
+        ipConfiavel: bruto.ipConfiavel,
+        sessoes: bruto.sessoes.map((registo) => ({
+            hash: registo.hash,
+            criadaEm: registo.criadaEm,
+            ultimoUsoEm: registo.ultimoUsoEm,
+            ip: ouNull(registo.ip),
+            userAgent: ouNull(registo.userAgent),
+        })),
+    };
+}
+/**
+ * GET /__guard-ui/api/access — quem/quanto esta a acessar. SO LE. Aglutina a
+ * contagem de sockets ativos do PROXY do tunel (a fonte de `totalConexoes`/
+ * `conexoesAtivas`) e a projecao das sessoes vivas do `SessionStore`. Um
+ * endpoint de METADADOS de quem acessa: atras da MESMA barreira (loopback/tunel
+ * autenticado) e sem nunca expor a `?key`-nem o id de sessao em claro.
+ */
+export function createAccessHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        json(res, 200, projetarAcesso(core.acesso()));
+    };
+}
+/* ========================================================================== */
+/* O pareamento VIA PAINEL (POST /api/pair + GET /api/pair-state)             */
+/* ========================================================================== */
+/**
+ * A mensagem PT-BR amigavel por codigo de erro de /pair. NUNCA vaza o codigo
+ * nem o token: cada entrada e uma causa acionavel, sem numeros nem chaves.
+ */
+const TEXTO_ERRO_PAIR = {
+    'ja-pareado': 'Este bot já tem um dono. Para trocar o dono, é preciso reset na máquina onde ele roda.',
+    'sem-token': 'Configura o token no Passo 1 — só depois dá para parear.',
+    'worker-indisponivel': 'O bot não está a correr agora. Confere o painel principal e tenta de novo.',
+    interno: 'Algo falhou ao gerar o código. Tenta de novo.',
+};
+/**
+ * GET /__guard-ui/api/pair-state — o estado do pareamento. SO LE: corpo com
+ * `pareado` + `handle?` (lido do token-state), e `codigo`/`expiraEm` enquanto
+ * houver sessao viva em memoria (re-exibicao no refresh). NUNCA vaza o token.
+ */
+export function createPairStateHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        const estado = core.pairOps.estado();
+        const corpo = { pareado: estado.pareado };
+        if (estado.handle !== undefined)
+            corpo['handle'] = estado.handle;
+        if (estado.codigo !== undefined && estado.expiraEm !== undefined) {
+            corpo['codigo'] = estado.codigo;
+            corpo['expiraEm'] = estado.expiraEm;
+        }
+        json(res, 200, corpo);
+    };
+}
+/**
+ * POST /__guard-ui/api/pair — inicia o pareamento pelo painel.
+ *
+ * Exige CSRF como qualquer POST desta superficie (NIST SP 800-63B-4 5.1.1).
+ * A costura (`core.pairOps.gerar`) gera o codigo com `criarSessaoDePareamento`,
+ * envia o digest (`pairing.challenge`) ao worker e guarda a sessao em memoria.
+ * Sucesso -> 200 `{codigo, expiraEm}`; ja-pareado/sem-token/worker-indisponivel
+ * -> 409 `{erro}` (mensagem amigavel PT-BR); o resto -> 500 `{erro:'interno'}`.
+ * O CODIGO NUNCA sai para log: so nesta resposta.
+ */
+export function createPairHandler(core) {
+    return async (req, res) => {
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        let resultado;
+        try {
+            resultado = await core.pairOps.gerar();
+        }
+        catch {
+            json(res, 500, { erro: 'interno', mensagem: TEXTO_ERRO_PAIR['interno'] });
+            return;
+        }
+        if (!resultado.ok) {
+            json(res, 409, {
+                erro: resultado.erro,
+                mensagem: TEXTO_ERRO_PAIR[resultado.erro] ?? TEXTO_ERRO_PAIR['interno'],
+            });
+            return;
+        }
+        json(res, 200, { codigo: resultado.codigo, expiraEm: resultado.expiraEm });
+    };
+}
+/* ========================================================================== */
+/* Os AGENTES (Onda 6) — lista (GET) e cancelamento (POST)                    */
+/* ========================================================================== */
+/**
+ * Projeta a lista de runs para o corpo da rota. FUNCAO PURA e exportada: e o
+ * coracao da pergunta falsificavel "o corpo da rota e EXATAMENTE o estado do
+ * registry do host?" — cada campo do `AgentRunReport` passa tal qual (o
+ * registry ja capou o `summary` em 300 chars e o historico em 32 runs), o
+ * vazio e `runs: []` (o painel mostra «Nenhum agente rodando.»), e nenhum
+ * campo a mais entra no corpo.
+ */
+export function projetarAgentes(runs) {
+    return {
+        runs: runs.map((run) => ({
+            id: run.id,
+            skill: run.skill,
+            status: run.status,
+            startedAt: run.startedAt,
+            ...(run.summary === undefined ? {} : { summary: run.summary }),
+        })),
+    };
+}
+/**
+ * GET /__guard-ui/api/agents — a lista de runs do dispatcher. SO LE (GET sem
+ * CSRF, como as demais leituras): a costura le o registry do HOST em memoria
+ * (`agentsOps.listar`) — a MESMA fonte do `agent.report`, nunca o canal IPC.
+ */
+export function createAgentsHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        json(res, 200, projetarAgentes(core.agentsOps.listar()));
+    };
+}
+/**
+ * Extrai o id curto de `POST /__guard-ui/api/agents/<id>/cancel`. FUNCAO PURA
+ * e exportada: e o coracao da pergunta falsificavel "o prefixo so conhece a
+ * forma /<id>/cancel" — um segmento nao-vazio basta (o id e OPACO para esta
+ * superficie; quem o valida e o registry, com noop idempotente). `undefined`
+ * = o caminho nao e desta rota (404, nao 405: o prefixo engoliu um pedido que
+ * nao e nosso).
+ */
+export function extrairIdDeCancelamentoDeAgente(caminho) {
+    const m = /^\/__guard-ui\/api\/agents\/([^/]+)\/cancel$/u.exec(caminho);
+    return m?.[1];
+}
+/**
+ * POST /__guard-ui/api/agents/:id/cancel — cancela um run pelo id CURTO.
+ *
+ * REDUZ exposicao (mata a execucao) -> dispensa nonce (CTL-024, o mesmo do
+ * STOP: em panico, o botao funciona de primeira). Exige o token anti-CSRF da
+ * superficie como qualquer POST (NIST SP 800-63B-4 5.1.1). O corpo devolve
+ * `{ok}`: `true` = cancelado; `false` = id desconhecido/ja terminal (noop
+ * idempotente — o mesmo do `agent.cancel` do IPC, nunca um erro). A rota e
+ * PREFIXO no caminho da lista: o id vive no segmento do caminho, e o
+ * despacho do host so consulta prefixos depois de falhar a tabela exact.
+ */
+export function createAgentsCancelHandler(core) {
+    return async (req, res) => {
+        const caminho = new URL(req.url ?? '/', 'http://localhost').pathname;
+        const agentId = extrairIdDeCancelamentoDeAgente(caminho);
+        if (agentId === undefined) {
+            // O prefixo so conhece /<id>/cancel; o resto NAO e esta rota.
+            json(res, 404, { erro: 'rota-nao-encontrada' });
+            return;
+        }
+        if (!exigeMetodo(req, res, 'POST'))
+            return;
+        const corpo = await lerCorpo(req);
+        if (!corpo.ok) {
+            json(res, 400, { erro: corpo.erro === 'grande' ? 'corpo-grande' : 'corpo-invalido' });
+            return;
+        }
+        if (!csrfValido(core, req, corpo.corpo)) {
+            recusarCsrf(res);
+            return;
+        }
+        const cancelado = core.agentsOps.cancelar(agentId);
+        json(res, 200, { ok: cancelado });
+    };
+}
+/* ========================================================================== */
+/* O token anti-CSRF fresco (GET /api/csrf — HIGH-2)                          */
+/* ========================================================================== */
+/**
+ * GET /__guard-ui/api/csrf — emite um token anti-CSRF NOVO para o VINCULO da
+ * superficie e devolve-o. E A UNICA fonte de CSRF da superficie (HIGH-2): o
+ * painel da aba settings faz um GET barato e stateless a cada escrita, sem
+ * nenhum meta de indice envolvido (o chrome injetado na home, que embutia o
+ * token num `<meta>`, foi removido).
+ *
+ * ATRAS DA MESMA BARREIRA (loopback/tunel autenticado) e SEM exigir CSRF — e
+ * uma LEITURA, como as outras GETs desta superficie; o token nao e credencial
+ * (quem alcanca o servidor consegue emitir um para si), e a extracao por
+ * leitura de resposta e exactamente o que o `SameSite`/CORS fecha para o
+ * navegador da vitima. O token devolvido e verificavel com o MESMO
+ * `core.csrf.verify(token, UI_CSRF_BINDING)` dos POSTs.
+ */
+export function createCsrfHandler(core) {
+    return (req, res) => {
+        if (!exigeMetodo(req, res, 'GET'))
+            return;
+        json(res, 200, { token: core.csrf.issue(UI_CSRF_BINDING) });
+    };
+}
+//# sourceMappingURL=routes.js.map
