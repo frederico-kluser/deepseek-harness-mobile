@@ -18,9 +18,12 @@
  *     de proposito — sao o registo da decisao).
  *
  * AUTO-EXCLUSAO: este ficheiro precisa da palavra para a procurar e para
- * nomear o bug no titulo do caso — e por isso ele e o UNICO ficheiro isento
- * (por caminho proprio; o conteudo dele nunca e procurado). Nenhum outro
- * ficheiro de teste a pode usar.
+ * nomear o bug no titulo do caso — e por isso o CONTEUDO dele e auto-isento
+ * (o caminho entra na varredura, como prova de que o walker chegou aqui).
+ * As restantes isencoes sao EXATAMENTE as classes nomeadas na promessa do
+ * `.changeset/remocao-provedor-discord.md`: a historia preservada (cima —
+ * classe (a), os registos da remocao) e as GUARDAS_ANTIREGRESSION (baixo —
+ * classe (b), strings de guarda que citam o nome para o PROIBIR).
  *
  * ESTADO ATUAL: o contrato (caso em `skip` abaixo) esta REPROVADO por um
  * residuo REAL em producao — `worker/providers/telegram/parse.ts:389`. Pela
@@ -128,6 +131,23 @@ function mencoesForaDaHistoria(): Mencoes {
  * isenta (revisao MED/M4b). O titulo do caso skipado fixa o arquivo:linha. */
 const RESIDUO_CONHECIDO = 'worker/providers/telegram/parse.ts:389'
 
+/**
+ * As strings de guarda anti-regressao — classe (b) da PROMESSA VERIFICAVEL do
+ * `.changeset/remocao-provedor-discord.md` ("strings de guarda anti-regressao
+ * que nomeiam o que proibem"): estes 3 ficheiros precisam de citar o nome do
+ * provedor removido para O PROIBIR — o FORBIDDEN_PREFIXES e o cabecalho do
+ * gate do tarball (`scripts/check-tarball.mjs`), a anotacao `"//scripts"` do
+ * `package.json` e o craft do teste do artefacto de release
+ * (`test/unit/scripts/release-artefacts.test.ts`). Isencao por PATH EXACTO
+ * (nunca prefixo de arvore) e so para o ratchet abaixo; o contrato puro do
+ * caso skipado continua a ve-las.
+ */
+const GUARDAS_ANTIREGRESSION: readonly string[] = [
+  'package.json',
+  'scripts/check-tarball.mjs',
+  'test/unit/scripts/release-artefacts.test.ts',
+]
+
 describe('golden master da limpeza — nenhuma mencao ao provedor removido fora da historia', () => {
   it('a varredura cobre MESMO a arvore inteira (guarda anti-vazio)', () => {
     const { ficheiros } = mencoesForaDaHistoria()
@@ -185,16 +205,21 @@ describe('golden master da limpeza — nenhuma mencao ao provedor removido fora 
     },
   )
 
-  it('ratchet: fora da ENTRADA EXATA do residuo conhecido, nenhuma mencao nova em lado nenhum', () => {
+  it('ratchet: fora das entradas isentas EXATAS (residuo conhecido + guard-strings da promessa), nenhuma mencao nova em lado nenhum', () => {
     // NAO valida o residuo: o contrato (zero) vive no caso skipado acima. Este
     // caso so garante que a superficie limpa CONTINUA limpa enquanto o bug nao
-    // e corrigido. A unica entrada tolerada e a EXATA `parse.ts:389`: qualquer
-    // mencao nova em QUALQUER outro sitio — inclusive OUTRA LINHA do proprio
-    // `worker/providers/telegram/parse.ts` — cai aqui. Quando o bug for
-    // corrigido, este caso continua verde e o caso acima volta a poder ser
-    // restaurado.
+    // e corrigido. Tolerancias EXATAS (nunca prefixo de arvore): a entrada
+    // `caminho:linha` do residuo conhecido (`parse.ts:389` — qualquer OUTRA
+    // LINHA do proprio parse.ts cai aqui) e os paths das GUARDAS_ANTIREGRESSION
+    // (classe (b) da promessa do `.changeset/remocao-provedor-discord.md`,
+    // fonte destas classes). Quando o bug for corrigido, este caso continua
+    // verde e o caso acima volta a poder ser restaurado.
     const { linhas } = mencoesForaDaHistoria()
-    const novas = linhas.filter((m) => m !== RESIDUO_CONHECIDO)
+    const novas = linhas.filter(
+      (m) =>
+        m !== RESIDUO_CONHECIDO &&
+        !GUARDAS_ANTIREGRESSION.includes(m.slice(0, m.lastIndexOf(':'))),
+    )
     assert.deepEqual(
       novas,
       [],
