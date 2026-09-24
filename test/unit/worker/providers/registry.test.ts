@@ -499,3 +499,66 @@ describe('worker/providers/registry — a ponte de nonce, caminhos de falha e de
     assert.equal(ponte.onMessage({ v: 2, type: 'error', code: 'INTERNAL', message: 'x' }), false)
   })
 })
+
+/* ========================================================================== */
+/* Guardas onda 1 (FOCO 1d) — resolverProvedor CONTINUA fail-closed nas       */
+/* bordas: a entrada e fechada, o erro e tipado e o default so no caso previsto */
+/* ========================================================================== */
+
+describe('worker/providers/registry — resolverProvedor, bordas do fail-closed (onda 1)', () => {
+  it('a resolucao e SENSIVEL A CAIXA: `TELEGRAM`/`Telegram` sao desconhecidos (erro, nunca default)', () => {
+    for (const grafia of ['TELEGRAM', 'Telegram', 'tELEGRAM']) {
+      assert.throws(
+        () => resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: grafia }),
+        ProvedorDesconhecidoError,
+        `a grafia '${grafia}' devia ser desconhecida`,
+      )
+    }
+  })
+
+  it('espacos em volta sao aparados na comparacao: `  telegram  ` resolve para a tabela', () => {
+    const prov = resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: '  telegram  ' })
+    assert.equal(prov, PROVIDERS.telegram)
+    // ...mas um quase-certo com sufixo continua desconhecido (fail-closed).
+    assert.throws(
+      () => resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: 'telegramx' }),
+      ProvedorDesconhecidoError,
+    )
+    assert.throws(
+      () => resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: ' telegram , whatsapp' }),
+      ProvedorDesconhecidoError,
+    )
+  })
+
+  it('o ProvedorDesconhecidoError carrega `id` (aparado) e `name` estaveis, e lista os antecipados', () => {
+    try {
+      resolverProvedor({ [WORKER_PROVIDER_ENV_VAR]: '  whats  ' })
+      assert.fail('devia ter lancado ProvedorDesconhecidoError')
+    } catch (erro: unknown) {
+      assert.ok(erro instanceof ProvedorDesconhecidoError)
+      assert.ok(erro instanceof Error)
+      assert.equal(erro.name, 'ProvedorDesconhecidoError')
+      assert.equal(erro.id, 'whats', 'o id e o valor APARADO que se pediu')
+      assert.match(erro.message, /"whats"/u)
+      assert.match(erro.message, /telegram/u, 'os antecipados vem da tabela')
+    }
+  })
+
+  it('o wiring da descricao: lerToken e o do telegram e LANCA TOKEN_MISSING (code 10) sem token', () => {
+    // Nao e o teste da funcao (isso e `telegram/token.test.ts`): e a prova de
+    // que a ENTRADA da tabela esta ligada ao contrato de erro comum — o boot
+    // classifica pelo code numerico 10 (CONFIG), nao por instanceof.
+    try {
+      PROVIDERS.telegram.lerToken({})
+      assert.fail('devia ter lancado por token ausente')
+    } catch (erro: unknown) {
+      assert.ok(erro instanceof Error)
+      const codigo = (erro as { code?: unknown }).code
+      const motivo = (erro as { reason?: unknown }).reason
+      assert.equal(codigo, 10, 'TOKEN_MISSING carrega o code CONFIG (10) do contrato comum')
+      assert.equal(motivo, 'TOKEN_MISSING')
+    }
+    // E com token presente, devolve-o (o caminho feliz da entrada).
+    assert.equal(PROVIDERS.telegram.lerToken({ TELEGRAM_BOT_TOKEN: 'token-sintetico' }), 'token-sintetico')
+  })
+})

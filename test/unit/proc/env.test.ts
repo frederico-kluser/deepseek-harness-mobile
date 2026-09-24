@@ -15,7 +15,11 @@ import {
 } from '../../../src/proc/env.ts'
 // O registry do worker e o ESPELHO do lado do processo filho: os provedores
 // registados la tem de existir aqui, com o `tokenVar` que o worker espera.
-import { PROVIDERS } from '../../../worker/providers/registry.ts'
+import { PROVIDERS, WORKER_PROVIDER_ENV_VAR as VAR_DO_WORKER } from '../../../worker/providers/registry.ts'
+// O NOME da variavel do token, do lado do worker. Os modulos nao se importam
+// por construcao (cone de import worker<-src); a PARIDADE e um teste — nunca
+// um literal repetido aqui.
+import { TOKEN_ENV_VAR } from '../../../worker/providers/telegram/token.ts'
 
 describe('ambiente do worker por allowlist (achado B-HIGH)', () => {
   it('nao propaga ADMIN_USER/ADMIN_PASS nem qualquer outro segredo do plano de controlo', () => {
@@ -180,5 +184,49 @@ describe('bordas da allowlist -- pai hostil, Windows e TLS', () => {
     assert.equal(env['SSL_CERT_FILE'], '/etc/ssl/certs.pem')
     assert.equal(env['SSL_CERT_DIR'], '/etc/ssl/certs')
     assert.equal(env['REQUESTS_CA_BUNDLE'], '/etc/ssl/ca-bundle.pem')
+  })
+})
+
+/* ========================================================================== */
+/* Guardas onda 1 — paridade tokenVar/variavel de rotulo (FOCO 2) e bordas     */
+/* do resolver fail-closed (FOCO 1d)                                           */
+/* ========================================================================== */
+
+describe('paridade tokenVar — a copia do host e a do worker sao o MESMO nome', () => {
+  it('PROVIDER_ENV[].tokenVar === TOKEN_ENV_VAR do worker (a paridade e um teste, nao um import)', () => {
+    assert.equal(PROVIDER_ENV['telegram'].tokenVar, TOKEN_ENV_VAR)
+  })
+
+  it('buildWorkerEnv injeta o token MESMO em TOKEN_ENV_VAR (o que o worker le)', () => {
+    const env = buildWorkerEnv({ PATH: '/usr/bin' }, 'token-sintetico')
+    assert.equal(env[TOKEN_ENV_VAR], 'token-sintetico')
+  })
+
+  it('um token HERDADO do pai nunca sobrevive: o do chamador sobrepoe sempre', () => {
+    // O pai hostil nao consegue semear o token do filho: a allowlist descarta a
+    // heranca e o `buildWorkerEnv` escreve o valor do chamador por cima.
+    const env = buildWorkerEnv({ [TOKEN_ENV_VAR]: 'token-do-pai' }, 'token-do-config')
+    assert.equal(env[TOKEN_ENV_VAR], 'token-do-config')
+  })
+
+  it('WORKER_PROVIDER_ENV_VAR tem o MESMO nome no host e no worker (espelho)', () => {
+    assert.equal(WORKER_PROVIDER_ENV_VAR, VAR_DO_WORKER)
+  })
+})
+
+describe('resolverProvedorDoAmbiente — bordas do fail-closed (onda 1)', () => {
+  it('sensivel a caixa: `TELEGRAM`/`Telegram` sao ERRO (nunca degradam em silencio)', () => {
+    for (const grafia of ['TELEGRAM', 'Telegram', 'tELEGRAM']) {
+      assert.throws(
+        () => resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: grafia }),
+        `a grafia '${grafia}' devia ser recusada`,
+      )
+    }
+  })
+
+  it('espacos em volta sao aparados; o quase-certo com sufixo continua a erro', () => {
+    assert.equal(resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: '  telegram  ' }), 'telegram')
+    assert.throws(() => resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: 'telegramx' }))
+    assert.throws(() => resolverProvedorDoAmbiente({ [WORKER_PROVIDER_ENV_VAR]: 'telegramnovo' }))
   })
 })
