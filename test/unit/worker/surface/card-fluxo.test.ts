@@ -249,3 +249,89 @@ describe('REPRODUÇÃO: caminho real do cartão (Ligar/Status) com comandos reai
     assert.match(restaurado.texto, /🎛 Remote Access/u, 'volta ao titulo/estado do cartao')
   })
 })
+
+/* ========================================================================== */
+/* Onda 3 — /status-tarefa FIM-A-FIM (comandos REAIS + nucleo real): o id      */
+/* filtra-se NO WORKER sobre o `agent.report`                                  */
+/* ========================================================================== */
+
+describe('Onda 3: /status-tarefa fim-a-fim — o filtro do id no worker', () => {
+  it('o intent e agent.status SEM params; o report rende o DETALHE do run pedido', async () => {
+    const banco = montarBanco()
+    await banco.tratar({ kind: 'comando', identity: DONO, text: '/status-tarefa 01HZABCD' })
+
+    const intent = banco.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.status', 'reusa a intent de leitura (contrato fechado)')
+    assert.equal(intent.params, undefined, 'SEM params — o id fica no pendente do worker')
+    assert.equal(Object.hasOwn(intent, 'nonce'), false)
+
+    banco.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        {
+          id: '01HZABCD',
+          skill: 'eco',
+          status: 'done',
+          startedAt: 1_000,
+          kind: 'worktree',
+          metrics: { outputTokens: 234, toolMs: 1_100 },
+        },
+        { id: '01HZQQQQ', skill: 'outra', status: 'running', startedAt: 1_000 },
+      ],
+    })
+    await tick()
+
+    const texto = banco.sender.mensagens.at(-1)?.texto ?? ''
+    assert.match(texto, /🧩 Tarefa 01HZABCD:/u)
+    assert.match(texto, /· worktree ·/u, 'o detalhe inclui o kind/worktree')
+    assert.match(texto, /📊 234 tokens \/ 1 s/u, 'a metrica resumida do run pedido')
+    assert.ok(!texto.includes('01HZQQQQ'), 'so o run pedido — a lista e do /agentes')
+
+    // O ack retira o pendente (o espelho do /agentes: silencioso).
+    const mensagensApos = banco.sender.mensagens.length
+    banco.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' })
+    await tick()
+    assert.equal(banco.sender.mensagens.length, mensagensApos, 'o ack de agent.status e silencioso')
+  })
+
+  it('id sem correspondencia no report: «Tarefa <id> nao encontrada (veja /agentes)»', async () => {
+    const banco = montarBanco()
+    await banco.tratar({ kind: 'comando', identity: DONO, text: '/status-tarefa 01HZQQQQ' })
+
+    banco.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZABCD', skill: 'eco', status: 'done', startedAt: 1_000 }],
+    })
+    await tick()
+
+    assert.equal(banco.sender.mensagens.at(-1)?.texto, 'Tarefa 01HZQQQQ não encontrada (veja /agentes)')
+  })
+
+  it('/novo-chat fim-a-fim: 2 etapas, intent chat.new com nonce + params e o ack edita a confirmacao', async () => {
+    const banco = montarBanco()
+    await banco.tratar({ kind: 'comando', identity: DONO, text: '/novo-chat diz oi' })
+    assert.equal(banco.ipc.intents.length, 0, 'a 1a etapa nao envia intent')
+
+    const confirmacao = banco.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'chat.new')
+    assert.equal(banco.host.emitidos.includes(botao.token), true, 'o token do botao e o nonce do host')
+
+    await banco.tratar(accao('chat.new', botao.token, confirmacao.id))
+
+    const intent = banco.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'chat.new')
+    assert.equal(intent.nonce, botao.token, 'o nonce viaja OPACO (S5)')
+    assert.deepEqual(intent.params, { prompt: 'diz oi' })
+
+    banco.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STOPPED' })
+    await tick()
+    assert.equal(banco.sender.edicoes.at(-1)?.texto, 'Chat novo iniciado.')
+  })
+})

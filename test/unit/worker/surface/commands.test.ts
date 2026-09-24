@@ -674,7 +674,7 @@ describe('criarComandosDeSuperficie — a factory PLANA que o nucleus consome (S
     assert.equal(bancada.canal.intents[0]?.intent, 'tunnel.down')
   })
 
-  it('tem as doze assinaturas directas exigidas pelo contrato SurfaceComandos', () => {
+  it('tem as dezassete assinaturas directas exigidas pelo contrato SurfaceComandos', () => {
     const bancada = montarBancada()
     const comandos = criarComandosDeSuperficie(bancada.ctx)
     for (const nome of [
@@ -690,6 +690,13 @@ describe('criarComandosDeSuperficie — a factory PLANA que o nucleus consome (S
       'agentes',
       'pararAgente',
       'confirmarDispatch',
+      // Onda 3: os comandos de tarefas.
+      'novoChat',
+      'novoChatWt',
+      'criarWorktree',
+      'statusTarefa',
+      'confirmarChatNovo',
+      'confirmarWorktree',
     ] as const) {
       assert.equal(typeof comandos[nome], 'function', `falta ${nome} na factory plana`)
     }
@@ -704,5 +711,344 @@ describe('criarComandosDeSuperficie — a factory PLANA que o nucleus consome (S
     const planoIntents = bancada.canal.intents.length
     await aninhado.access.acessar(DM)
     assert.equal(bancada.canal.intents.length, planoIntents + 1)
+  })
+})
+
+/* ========================================================================== */
+/* Onda 3 (EMENDA ONDA-2-CONTRATO-CAPACIDADES) — /novo-chat, /novo-chat-wt,   */
+/* /worktree e /status-tarefa                                                  */
+/* ========================================================================== */
+
+describe('Onda 3: /novo-chat — 1a etapa: forma + nonce `chat.new` + confirmacao', () => {
+  it('sem prompt mostra a instrucao de uso — sem intent nem nonce', async () => {
+    let pedidosDeNonce = 0
+    const bancada = montarBancada({
+      emitirNonce: async () => {
+        pedidosDeNonce += 1
+        return 'NONCE'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChat(DM, '   ')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.equal(pedidosDeNonce, 0, 'a forma invalida nao gasta confirmacao')
+    assert.equal(
+      bancada.emissor.ultimaMensagem()?.texto,
+      'Falta o prompt. Uso: /novo-chat <o que o chat deve fazer>',
+    )
+  })
+
+  it('pede o nonce ao HOST com a acao chat.new e mostra a confirmacao em 2 etapas', async () => {
+    const pedidos: string[] = []
+    const bancada = montarBancada({
+      emitirNonce: async (acao) => {
+        pedidos.push(acao)
+        return 'NONCE-1'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChat(DM, 'diz oi')
+
+    assert.deepEqual(pedidos, ['chat.new'], 'o chat pede o nonce (o host consome com reset)')
+    assert.equal(bancada.canal.intents.length, 0, 'so a confirmacao executa')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'chat.new')
+    assert.equal(botao.label, '✅ Sim, criar')
+    assert.equal(botao.kind, 'confirm')
+    assert.equal(botao.token, 'NONCE-1', 'o nonce do host viaja opaco no botao (S5)')
+    const linha = bancada.emissor.mensagens[0]?.opcoes?.actionRows?.[0]
+    assert.ok(linha !== undefined, 'a confirmacao tem a linha de acoes')
+    assert.equal(linha.map((b) => b.label).join(','), '✅ Sim, criar,✕ Não', 'cancelamento ao lado (Regra 4)')
+    assert.equal(linha.map((b) => b.action).join(','), 'chat.new,cancel')
+  })
+
+  it('CTL-023 (face worker): sem nonce do host, /novo-chat falha FECHADO — nenhum intent', async () => {
+    const bancada = montarBancada({ emitirNonce: async () => undefined })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChat(DM, 'diz oi')
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Não foi possível obter a confirmação/u)
+  })
+
+  it('o clique envia chat.new com nonce + params {prompt} e responde ao clique (TG-027)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChat(DM, 'diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarChatNovo(DM, botao.token, 'clique-1', 'msg-1')
+
+    assert.equal(bancada.emissor.respostas.length, 1, 'o clique foi respondido')
+    assert.equal(bancada.canal.intents.length, 1)
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'chat.new')
+    assert.equal(intent.nonce, botao.token, 'o nonce viaja OPACO no intent (S5)')
+    assert.deepEqual(intent.params, { prompt: 'diz oi' })
+  })
+
+  it('o prompt e sanado para UMA linha e cortado a 4096 ANTES do intent (TG-048)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+
+    await comandos.novoChat(DM, `primeira\nsegunda ${'x'.repeat(5_000)}`)
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    await comandos.confirmarChatNovo(DM, botao.token, 'clique-1', 'msg-1')
+
+    const prompt = bancada.canal.intents[0]?.params?.prompt
+    assert.ok(prompt !== undefined)
+    assert.ok(prompt.length <= 4096, `prompt com ${String(prompt.length)} caracteres`)
+    assert.ok(!prompt.includes('\n'), 'uma linha so (o codec recusa controlos)')
+    assert.ok(prompt.startsWith('primeira segunda '), 'o \\n virou espaco')
+    assert.ok(prompt.endsWith('…'), 'cortado com o marcador')
+  })
+
+  it('o token e de USO UNICO: o segundo clique nao envia nada', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChat(DM, 'diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    await comandos.confirmarChatNovo(DM, botao.token, 'clique-1', 'msg-1')
+    await comandos.confirmarChatNovo(DM, botao.token, 'clique-2', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 1, 'uso unico: um intent so')
+  })
+
+  it('confirmacao morta (forjada, expirada ou alheia): RESPOSTA UNIFORME, zero intents', async () => {
+    // (a) FORJADA — um token que o host nunca emitiu.
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.confirmarChatNovo(DM, 'FORJA', 'cq-forja', 'msg-1')
+    const respostaForjada = bancada.emissor.respostas.at(-1)?.outras?.text
+
+    // (b) EXPIRADA — o TTL de 60 s morreu (relogio injetado).
+    await comandos.novoChat(DM, 'diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    bancada.time.advance(TTL_CONFIRMACAO_DESPACHO_MS + 1)
+    await comandos.confirmarChatNovo(DM, botao.token, 'cq-expirada', 'msg-1')
+    const respostaExpirada = bancada.emissor.respostas.at(-1)?.outras?.text
+
+    // (c) ALHEIA — o token de outro emissor.
+    const bancada2 = montarBancada()
+    const comandos2 = criarComandosDeSuperficie(bancada2.ctx)
+    await comandos2.novoChat(DM, 'diz oi')
+    const botao2 = bancada2.emissor.botao(0)
+    assert.ok(botao2 !== undefined)
+    await comandos2.confirmarChatNovo(
+      { userKey: '999', chatKey: '111' },
+      botao2.token,
+      'cq-alheia',
+      'msg-1',
+    )
+    const respostaAlheia = bancada2.emissor.respostas.at(-1)?.outras?.text
+
+    // UNIFORME: os tres caminhos respondem EXATAMENTE o mesmo (sem oraculo).
+    assert.equal(respostaForjada, 'Confirmação expirada ou inválida. Mande /novo-chat de novo.')
+    assert.equal(respostaExpirada, respostaForjada, 'expirada == forjada')
+    assert.equal(respostaAlheia, respostaForjada, 'alheia == forjada')
+    assert.equal(bancada.canal.intents.length, 0, 'nenhum intent nos tres caminhos')
+    assert.equal(bancada2.canal.intents.length, 0)
+  })
+})
+
+describe('Onda 3: /novo-chat-wt — o mesmo fluxo com params.worktree', () => {
+  it('sem worktree ou sem prompt: instrucao de uso, sem intent nem nonce', async () => {
+    let pedidosDeNonce = 0
+    const bancada = montarBancada({
+      emitirNonce: async () => {
+        pedidosDeNonce += 1
+        return 'NONCE'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChatWt(DM, '')
+    assert.equal(
+      bancada.emissor.ultimaMensagem()?.texto,
+      'Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>',
+    )
+    await comandos.novoChatWt(DM, 'feature-x')
+    assert.equal(
+      bancada.emissor.ultimaMensagem()?.texto,
+      'Falta o prompt. Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>',
+    )
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.equal(pedidosDeNonce, 0)
+  })
+
+  it('worktree fora da gramatica [a-z0-9-]{1,40}: recusado ANTES do nonce', async () => {
+    let pedidosDeNonce = 0
+    const bancada = montarBancada({
+      emitirNonce: async () => {
+        pedidosDeNonce += 1
+        return 'NONCE'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    const invalidos = ['Feature', 'a_b', 'a.b', 'a'.repeat(41), 'CIÓN', 'a/b']
+    for (const invalido of invalidos) {
+      await comandos.novoChatWt(DM, `${invalido} diz oi`)
+      assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Worktree inválido/u, `<<${invalido}>>`)
+    }
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.equal(pedidosDeNonce, 0, 'a forma invalida nao gasta confirmacao')
+  })
+
+  it('o clique envia chat.new com params {prompt, worktree}', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChatWt(DM, 'feature-x diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'chat.new', 'a intent e a mesma do /novo-chat')
+
+    await comandos.confirmarChatNovo(DM, botao.token, 'clique-1', 'msg-1')
+
+    assert.deepEqual(bancada.canal.intents[0]?.params, { prompt: 'diz oi', worktree: 'feature-x' })
+  })
+
+  it('a confirmacao do /novo-chat NAO confirma um /novo-chat-wt e vice-versa (o tipo separa)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.novoChat(DM, 'diz oi')
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+
+    // O MESMO token, apresentado como confirmacao do OUTRO fluxo: morte uniforme.
+    await comandos.confirmarWorktree(DM, botao.token, 'clique-trocado', 'msg-1')
+
+    assert.equal(bancada.canal.intents.length, 0, 'o tipo errado nao executa')
+    assert.equal(
+      bancada.emissor.respostas.at(-1)?.outras?.text,
+      'Confirmação expirada ou inválida. Mande /worktree de novo.',
+    )
+  })
+})
+
+describe('Onda 3: /worktree — nome na gramatica, base saneada, nonce `worktree.create`', () => {
+  it('sem nome ou nome fora da gramatica: instrucao de uso, ANTES do host', async () => {
+    let pedidosDeNonce = 0
+    const bancada = montarBancada({
+      emitirNonce: async () => {
+        pedidosDeNonce += 1
+        return 'NONCE'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.criarWorktree(DM, '')
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Uso: \/worktree <nome> \[base\]/u)
+    await comandos.criarWorktree(DM, 'Nome_Invalido main')
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Nome inválido/u)
+
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.equal(pedidosDeNonce, 0)
+  })
+
+  it('pede o nonce com a acao worktree.create; o clique envia worktree.create com params {nome}', async () => {
+    const pedidos: string[] = []
+    const bancada = montarBancada({
+      emitirNonce: async (acao) => {
+        pedidos.push(acao)
+        return 'NONCE-1'
+      },
+    })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.criarWorktree(DM, 'feature-x')
+    assert.deepEqual(pedidos, ['worktree.create'])
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'worktree.create')
+    assert.equal(botao.label, '✅ Sim, criar')
+
+    await comandos.confirmarWorktree(DM, botao.token, 'clique-1', 'msg-1')
+
+    assert.equal(bancada.emissor.respostas.length, 1, 'TG-027: o clique responde')
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'worktree.create')
+    assert.equal(intent.nonce, botao.token, 'o nonce viaja OPACO (S5)')
+    assert.deepEqual(intent.params, { nome: 'feature-x' })
+  })
+
+  it('a base viaja em params.base — saneada para UMA linha e cortada a 256', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+
+    await comandos.criarWorktree(DM, `feature-x main\nrm ${'b'.repeat(300)}`)
+    const botao = bancada.emissor.botao(0)
+    assert.ok(botao !== undefined)
+    await comandos.confirmarWorktree(DM, botao.token, 'clique-1', 'msg-1')
+
+    const base = bancada.canal.intents[0]?.params?.base
+    assert.ok(base !== undefined)
+    assert.equal(base.length, 256, 'o teto do base e 256 (higiene de transporte)')
+    assert.ok(!base.includes('\n'), 'uma linha so')
+    assert.ok(base.startsWith('main rm '), 'o \\n virou espaco')
+    assert.ok(base.endsWith('…'), 'cortado com o marcador')
+  })
+
+  it('CTL-023: sem nonce do host, /worktree falha FECHADO; confirmacao morta responde UNIFORME', async () => {
+    const bancada = montarBancada({ emitirNonce: async () => undefined })
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.criarWorktree(DM, 'feature-x')
+    assert.equal(bancada.canal.intents.length, 0)
+    assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Não foi possível obter a confirmação/u)
+
+    await comandos.confirmarWorktree(DM, 'FORJA', 'cq-forja', 'msg-1')
+    assert.equal(
+      bancada.emissor.respostas.at(-1)?.outras?.text,
+      'Confirmação expirada ou inválida. Mande /worktree de novo.',
+    )
+    assert.equal(bancada.canal.intents.length, 0)
+  })
+})
+
+describe('Onda 3: /status-tarefa — leitura PURA (agent.status SEM params)', () => {
+  it('id valido: agent.status sem params e sem nonce, com o id no PENDENTE (o filtro e do worker)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.statusTarefa(DM, '01HZABCD')
+
+    assert.equal(bancada.canal.intents.length, 1)
+    const intent = bancada.canal.intents[0]
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.status', 'reusa a intent de leitura (contrato fechado)')
+    assert.equal(intent.params, undefined, 'agent.status NAO transporta params')
+    assert.equal(Object.hasOwn(intent, 'nonce'), false, 'leitura pura dispensa nonce')
+    const pendente = bancada.pendentes.at(-1)
+    assert.ok(pendente !== undefined)
+    assert.equal(pendente.acao, 'agent.status')
+    assert.equal(pendente.agentId, '01HZABCD', 'o id viaja NO PENDENTE — o filtro corre no worker')
+  })
+
+  it('id fora da gramatica de run (8 chars Crockford): instrucao de uso, sem intent', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    const invalidos = ['', '   ', 'abc', '01hzabcd', '01HZABCI', '01HZABCO', '01HZABC', '01HZABCDE', '01HZ ABC']
+    for (const invalido of invalidos) {
+      await comandos.statusTarefa(DM, invalido)
+      assert.equal(bancada.canal.intents.length, 0, `id "${invalido}" nao pode gerar intent`)
+      assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /Id inválido/u)
+      assert.match(bancada.emissor.ultimaMensagem()?.texto ?? '', /\/status-tarefa <id>/u)
+    }
+  })
+
+  it('/agentes NAO regista agentId (a resposta e o report INTEIRO)', async () => {
+    const bancada = montarBancada()
+    const comandos = criarComandosDeSuperficie(bancada.ctx)
+    await comandos.agentes(DM)
+
+    const pendente = bancada.pendentes.at(-1)
+    assert.ok(pendente !== undefined)
+    assert.equal(pendente.acao, 'agent.status')
+    assert.equal(pendente.agentId, undefined, 'sem id nao ha filtro — vai a lista toda')
   })
 })

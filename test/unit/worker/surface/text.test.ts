@@ -16,16 +16,26 @@ import {
   cortarTexto,
   formatarDuracao,
   formatarHora,
+  formatarQuantidade,
+  formatarTempoDeMs,
   haQuantoTempo,
   linhaDeRun,
+  MAX_BASE_CHARS,
   MAX_PROMPT_CHARS,
   MAX_TEXTO_MENSAGEM,
+  resumoDeMetricas,
+  ROTULOS_DE_KIND_DE_RUN,
   ROTULOS_DE_STATUS_DE_AGENTE,
   sanearUmaLinha,
+  TETO_DE_RUNS_DO_RELATORIO,
+  tempoDeTrabalhoMs,
+  TEXTO_DE_AJUDA,
   textoDeEstado,
   textoDeEstadoCurto,
   textoDeFimDeRuns,
   textoDeRelatorioDeAgentes,
+  textoDeTarefa,
+  totalDeTokens,
 } from '../../../../worker/surface/text.ts'
 
 /* ========================================================================== */
@@ -169,14 +179,14 @@ describe('Onda 5: linhaDeRun — id, skill, status, ha-quanto e resumo', () => {
     startedAt: 1_000,
   }
 
-  it('sem summary: uma linha so', () => {
-    assert.equal(linhaDeRun(run, 121_000), '• 01HZABCD — eco — concluído há 2 min')
+  it('sem summary: uma linha so (a metrica vira «—» — nunca se estima)', () => {
+    assert.equal(linhaDeRun(run, 121_000), '• 01HZABCD — eco — concluído há 2 min · 📊 —')
   })
 
   it('com summary: a linha do resumo do modelo em baixo', () => {
     assert.equal(
       linhaDeRun({ ...run, summary: 'disse oi' }, 121_000),
-      '• 01HZABCD — eco — concluído há 2 min\n   💬 disse oi',
+      '• 01HZABCD — eco — concluído há 2 min · 📊 —\n   💬 disse oi',
     )
   })
 
@@ -211,8 +221,8 @@ describe('Onda 5: textoDeRelatorioDeAgentes — a resposta de /agentes', () => {
     assert.equal(
       texto,
       '🤖 Agentes:\n' +
-        '• 01HZAAAA — eco — rodando há 1 min\n' +
-        '• 01HZBBBB — dataviz — concluído há 3 min\n' +
+        '• 01HZAAAA — eco — rodando há 1 min · 📊 —\n' +
+        '• 01HZBBBB — dataviz — concluído há 3 min · 📊 —\n' +
         '   💬 gráfico pronto',
     )
   })
@@ -233,7 +243,7 @@ describe('Onda 5: textoDeFimDeRuns — a notificacao proativa', () => {
       [{ id: '01HZAAAA', skill: 'eco', status: 'failed', startedAt: 1_000 }],
       121_000,
     )
-    assert.equal(texto, '🤖 Atualização de agentes:\n• 01HZAAAA — eco — falhou há 2 min')
+    assert.equal(texto, '🤖 Atualização de agentes:\n• 01HZAAAA — eco — falhou há 2 min · 📊 —')
   })
 })
 
@@ -303,11 +313,11 @@ describe('Onda 5: linhaDeRun — bordas do resumo e do nascimento', () => {
   }
 
   it('summary VAZIO e tratado como ausente: so a linha base', () => {
-    assert.equal(linhaDeRun({ ...run, summary: '' }, 121_000), '• 01HZABCD — eco — concluído há 2 min')
+    assert.equal(linhaDeRun({ ...run, summary: '' }, 121_000), '• 01HZABCD — eco — concluído há 2 min · 📊 —')
   })
 
   it('run acabado de nascer (startedAt == agora): «agora mesmo», nunca «há agora»', () => {
-    assert.equal(linhaDeRun({ ...run, status: 'running' }, 1_000), '• 01HZABCD — eco — rodando agora mesmo')
+    assert.equal(linhaDeRun({ ...run, status: 'running' }, 1_000), '• 01HZABCD — eco — rodando agora mesmo · 📊 —')
   })
 })
 
@@ -324,9 +334,9 @@ describe('Onda 5: textoDeFimDeRuns — a notificacao proativa com VARIOS runs', 
     assert.equal(
       texto,
       '🤖 Atualização de agentes:\n' +
-        '• 01HZAAAA — eco — concluído há 2 min\n' +
+        '• 01HZAAAA — eco — concluído há 2 min · 📊 —\n' +
         '   💬 oi\n' +
-        '• 01HZBBBB — dataviz — falhou há 1 min',
+        '• 01HZBBBB — dataviz — falhou há 1 min · 📊 —',
     )
   })
 })
@@ -382,5 +392,193 @@ describe('textoDeEstadoCurto — boa-vindas ao dono, 1-3 linhas PT-BR (§5)', ()
     )
     assert.ok(!texto.includes(digest), 'o digest nao pode aparecer')
     assert.ok(!textoDeEstadoCurto({ state: 'STARTING', seq: 1 }, 1_000).includes('https://'), 'URL so em READY')
+  })
+})
+
+/* ========================================================================== */
+/* Onda 3 (EMENDA ONDA-2-CONTRATO-CAPACIDADES) — metricas dos runs, o         */
+/* detalhe de /status-tarefa e a ajuda                                         */
+/* ========================================================================== */
+
+describe('Onda 3: ROTULOS_DE_KIND_DE_RUN — o vocabulario FECHADO do kind', () => {
+  it('cobrem os TRES literais do contrato, e nada mais', () => {
+    assert.deepEqual(Object.keys(ROTULOS_DE_KIND_DE_RUN).toSorted(), ['agent', 'chat', 'worktree'])
+    assert.equal(ROTULOS_DE_KIND_DE_RUN.agent, 'agente')
+    assert.equal(ROTULOS_DE_KIND_DE_RUN.chat, 'chat')
+    assert.equal(ROTULOS_DE_KIND_DE_RUN.worktree, 'worktree')
+  })
+})
+
+describe('Onda 3: formatarQuantidade / formatarTempoDeMs — deterministicos', () => {
+  it('milhares com ponto (PT-BR), sem depender de locale', () => {
+    assert.equal(formatarQuantidade(0), '0')
+    assert.equal(formatarQuantidade(999), '999')
+    assert.equal(formatarQuantidade(1_234), '1.234')
+    assert.equal(formatarQuantidade(1_234_567), '1.234.567')
+    assert.equal(formatarQuantidade(1_234.6), '1.235', 'arredonda antes de agrupar')
+    assert.equal(formatarQuantidade(-5), '0', 'metrica negativa nao e do harness — vira zero')
+  })
+
+  it('ms -> «ms» / «s» / «min s», nas bordas exactas', () => {
+    assert.equal(formatarTempoDeMs(0), '0 ms')
+    assert.equal(formatarTempoDeMs(320), '320 ms')
+    assert.equal(formatarTempoDeMs(999), '999 ms')
+    assert.equal(formatarTempoDeMs(1_000), '1 s')
+    assert.equal(formatarTempoDeMs(4_300), '4 s')
+    assert.equal(formatarTempoDeMs(59_999), '60 s')
+    assert.equal(formatarTempoDeMs(60_000), '1 min')
+    assert.equal(formatarTempoDeMs(65_000), '1 min 5 s')
+    assert.equal(formatarTempoDeMs(120_000), '2 min')
+    assert.equal(formatarTempoDeMs(125_000), '2 min 5 s')
+  })
+})
+
+describe('Onda 3: totalDeTokens / tempoDeTrabalhoMs — so somam o que existe', () => {
+  it('sem metricas (ou sem nenhum contador): undefined — a ausencia NAO e zero', () => {
+    assert.equal(totalDeTokens(undefined), undefined)
+    assert.equal(totalDeTokens({}), undefined)
+    assert.equal(totalDeTokens({ turns: 3 }), undefined, 'turnos nao sao tokens')
+    assert.equal(tempoDeTrabalhoMs(undefined), undefined)
+    assert.equal(tempoDeTrabalhoMs({ ttftMs: 500 }), undefined, 'ttft nao e tempo de trabalho')
+  })
+
+  it('somam os QUATRO contadores disjuntos — `decodeTokens` nunca entra (e subconjunto do output)', () => {
+    assert.equal(totalDeTokens({ inputTokens: 1, outputTokens: 2, cacheReadTokens: 4, cacheWriteTokens: 8, decodeTokens: 1_000 }), 15)
+    assert.equal(totalDeTokens({ outputTokens: 234 }), 234, 'so o presente soma')
+  })
+
+  it('tempo = llmMs + toolMs presentes (parcial soma parcial, nunca preenche)', () => {
+    assert.equal(tempoDeTrabalhoMs({ llmMs: 3_000, toolMs: 1_000 }), 4_000)
+    assert.equal(tempoDeTrabalhoMs({ llmMs: 3_000 }), 3_000)
+    assert.equal(tempoDeTrabalhoMs({ toolMs: 1_000 }), 1_000)
+  })
+})
+
+describe('Onda 3: resumoDeMetricas — «tokens total / tempo», ausente = «—»', () => {
+  it('sem metricas: «—» (NUNCA estimar/inventar)', () => {
+    assert.equal(resumoDeMetricas(undefined), '—')
+    assert.equal(resumoDeMetricas({}), '—')
+  })
+
+  it('com metricas: os dois componentes, so os que existem', () => {
+    assert.equal(resumoDeMetricas({ inputTokens: 6_100, outputTokens: 234 }), '6.334 tokens')
+    assert.equal(resumoDeMetricas({ llmMs: 4_300 }), '4 s')
+    assert.equal(
+      resumoDeMetricas({
+        inputTokens: 1_000,
+        outputTokens: 234,
+        cacheReadTokens: 5_000,
+        cacheWriteTokens: 100,
+        llmMs: 3_200,
+        toolMs: 1_100,
+      }),
+      '6.334 tokens / 4 s',
+    )
+  })
+})
+
+describe('Onda 3: linhaDeRun enriquecida — kind/worktree quando presentes', () => {
+  const run = { id: '01HZABCD', skill: 'eco', status: 'done' as const, startedAt: 1_000 }
+
+  it('kind/worktree AUSENTES nao ganham rotulo; a metrica vira «—»', () => {
+    const linha = linhaDeRun(run, 121_000)
+    assert.equal(linha, '• 01HZABCD — eco — concluído há 2 min · 📊 —')
+    assert.ok(!linha.includes('agente'), 'o rotulo so aparece quando o run traz o kind')
+  })
+
+  it('kind/worktree PRESENTES entram na linha, com a metrica resumida', () => {
+    assert.equal(
+      linhaDeRun(
+        {
+          ...run,
+          kind: 'chat',
+          worktree: 'feature-x',
+          metrics: { inputTokens: 6_100, outputTokens: 234, llmMs: 4_300 },
+        },
+        121_000,
+      ),
+      '• 01HZABCD — eco — concluído há 2 min · chat · wt: feature-x · 📊 6.334 tokens / 4 s',
+    )
+    assert.match(linhaDeRun({ ...run, kind: 'worktree' }, 121_000), /· worktree ·/u)
+    assert.match(linhaDeRun({ ...run, kind: 'agent' }, 121_000), /· agente ·/u)
+  })
+})
+
+describe('Onda 3: textoDeTarefa — o detalhe pedido por /status-tarefa', () => {
+  const agora = 121_000
+  const run = {
+    id: '01HZABCD',
+    skill: 'eco',
+    status: 'done' as const,
+    startedAt: 1_000,
+    kind: 'chat' as const,
+    worktree: 'feature-x',
+    summary: 'feito',
+    metrics: {
+      inputTokens: 1_000,
+      outputTokens: 234,
+      cacheReadTokens: 5_000,
+      cacheWriteTokens: 100,
+      decodeTokens: 200,
+      turns: 3,
+      steps: 7,
+      llmMs: 3_200,
+      toolMs: 1_100,
+      ttftMs: 320,
+      ttftSteps: 2,
+      decodeMs: 2_400,
+    },
+  }
+
+  it('encontrado: titulo + linha do run + o detalhe COMPLETO das metricas', () => {
+    assert.equal(
+      textoDeTarefa([run], '01HZABCD', agora),
+      '🧩 Tarefa 01HZABCD:\n' +
+        '• 01HZABCD — eco — concluído há 2 min · chat · wt: feature-x · 📊 6.334 tokens / 4 s\n' +
+        '   💬 feito\n' +
+        '   📊 Tokens: entrada 1.000 · saída 234 · cache lido 5.000 · cache escrito 100 · decodificados 200\n' +
+        '   ⏱ Tempo: modelo 3 s · ferramentas 1 s · primeiro token 320 ms · decodificação 2 s\n' +
+        '   🔁 Turnos 3 · passos 7 · passos com 1º token 2',
+    )
+  })
+
+  it('sem metricas: cada campo vira «—» — nada se estima', () => {
+    const texto = textoDeTarefa([{ id: '01HZABCD', skill: 'eco', status: 'running', startedAt: 1_000 }], '01HZABCD', agora)
+    assert.match(texto, /🧩 Tarefa 01HZABCD:/u)
+    assert.match(texto, /📊 Tokens: entrada — · saída — · cache lido — · cache escrito — · decodificados —/u)
+    assert.match(texto, /⏱ Tempo: modelo — · ferramentas — · primeiro token — · decodificação —/u)
+    assert.match(texto, /🔁 Turnos — · passos — · passos com 1º token —/u)
+  })
+
+  it('sem correspondencia: «Tarefa <id> nao encontrada (veja /agentes)»', () => {
+    assert.equal(textoDeTarefa([run], '01HZMISS', agora), 'Tarefa 01HZMISS não encontrada (veja /agentes)')
+    assert.equal(textoDeTarefa([], '01HZABCD', agora), 'Tarefa 01HZABCD não encontrada (veja /agentes)')
+  })
+
+  it('o filtro respeita o teto de 64 runs do report (TETO_DE_RUNS_DO_RELATORIO)', () => {
+    assert.equal(TETO_DE_RUNS_DO_RELATORIO, 64)
+    const runs = Array.from({ length: 65 }, (_, i) => ({
+      id: `01HZ${String(i).padStart(4, '0')}`,
+      skill: 'eco',
+      status: 'running' as const,
+      startedAt: 1_000,
+    }))
+    // O 64o (indice 63) esta DENTRO do teto; o 65o (indice 64) ja nao.
+    assert.match(textoDeTarefa(runs, runs[63]!.id, agora), /🧩 Tarefa/u)
+    assert.match(textoDeTarefa(runs, runs[64]!.id, agora), /não encontrada/u)
+  })
+})
+
+describe('Onda 3: MAX_BASE_CHARS e TEXTO_DE_AJUDA', () => {
+  it('MAX_BASE_CHARS vale 256 (a higiene de transporte do `base` de worktree.create)', () => {
+    assert.equal(MAX_BASE_CHARS, 256)
+  })
+
+  it('a ajuda mantem o texto curto do §2 e ADICIONA os comandos de tarefa', () => {
+    assert.match(TEXTO_DE_AJUDA, /ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram\./u)
+    assert.match(TEXTO_DE_AJUDA, /Usa \/menu para o cartão de controlo e \/status/u)
+    for (const comando of ['/novo-chat ', '/novo-chat-wt ', '/worktree ', '/status-tarefa ', '/agentes']) {
+      assert.ok(TEXTO_DE_AJUDA.includes(comando), `falta ${comando} na ajuda`)
+    }
   })
 })

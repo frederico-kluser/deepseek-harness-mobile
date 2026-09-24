@@ -14,6 +14,7 @@
 import { randomBytes } from 'node:crypto'
 
 import type {
+  SurfaceAction,
   SurfaceCommandContext,
   SurfaceCommandLog,
   SurfaceEditOutcome,
@@ -180,6 +181,14 @@ export interface BancadaDeComandos {
   readonly canal: CanalFalso
   readonly host: HostFalso
   readonly ctx: SurfaceCommandContext
+  /** Os pendentes REGISTADOS pelos comandos (o `agentId` do /status-tarefa). */
+  readonly pendentes: Array<{
+    requestId: string
+    chatKey: string
+    acao: SurfaceAction
+    messageTarget: string | undefined
+    agentId: string | undefined
+  }>
 }
 
 export interface OpcoesDaBancada {
@@ -196,6 +205,7 @@ export function montarBancada(opcoes: OpcoesDaBancada = {}): BancadaDeComandos {
   const emissor = new EmissorFalso()
   const canal = new CanalFalso()
   const host = criarHostFalso()
+  const pendentes: BancadaDeComandos['pendentes'] = []
 
   const ctx: SurfaceCommandContext = {
     log: log.logger,
@@ -214,8 +224,10 @@ export function montarBancada(opcoes: OpcoesDaBancada = {}): BancadaDeComandos {
     },
     responder: emissor.responder.bind(emissor),
     pendente: {
-      registar: () => undefined,
-      retirar: () => undefined,
+      registar: (requestId, chatKey, acao, messageTarget, agentId) => {
+        pendentes.push({ requestId, chatKey, acao, messageTarget, agentId })
+      },
+      retirar: (requestId) => pendentes.find((p) => p.requestId === requestId),
     },
     projecao: { ler: () => ({ state: undefined, seq: 0 }) },
     // Antes do pareamento nao ha dono; os comandos que precisam do `dono`
@@ -230,6 +242,7 @@ export function montarBancada(opcoes: OpcoesDaBancada = {}): BancadaDeComandos {
     canal,
     host,
     ctx,
+    pendentes,
   }
 
   return bancada

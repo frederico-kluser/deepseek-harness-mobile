@@ -33,6 +33,7 @@ import {
   type SurfaceAdmissao,
   type SurfaceAuth,
   type SurfaceComandos,
+  type SurfaceComandosFactory,
   type SurfaceDono,
   type SurfacePareamentoResultado,
 } from '../../../../worker/surface/core.ts'
@@ -453,16 +454,42 @@ export interface DespachoObservado {
     answerTarget: string
     messageTarget: string | undefined
   }>
+  readonly confirmarChatNovo: Array<{
+    identidade: SurfaceIdentity
+    token: string
+    answerTarget: string
+    messageTarget: string | undefined
+  }>
+  readonly confirmarWorktree: Array<{
+    identidade: SurfaceIdentity
+    token: string
+    answerTarget: string
+    messageTarget: string | undefined
+  }>
 }
 
 /** Duplo do {@link SurfaceComandos}: regista e executa a logica minima. */
 export class FakeComandos implements SurfaceComandos {
-  readonly estado: DespachoObservado = { chamadas: [], confirmarDesligar: [], confirmarDispatch: [] }
+  readonly estado: DespachoObservado = {
+    chamadas: [],
+    confirmarDesligar: [],
+    confirmarDispatch: [],
+    confirmarChatNovo: [],
+    confirmarWorktree: [],
+  }
   /**
    * O despacho em espera do /agente (Onda 5), CHAVEADO pelo token OPACO do
    * botao (o nonce do host) — o mesmo desenho do modulo real de comandos.
    */
   private despachos = new Map<string, { skill: string; prompt: string }>()
+  /**
+   * As criacoes em espera (Onda 3), CHAVEADAS pelo token opaco do botao — o
+   * mesmo desenho dos despachos do /agente.
+   */
+  private criacoes = new Map<
+    string,
+    { tipo: 'chat.new' | 'worktree.create'; params: { prompt?: string; worktree?: string; nome?: string; base?: string } }
+  >()
   readonly contextos: SurfaceCommandContext[] = []
   private ctx: SurfaceCommandContext | undefined
 
@@ -681,7 +708,156 @@ export class FakeComandos implements SurfaceComandos {
     }
   }
 
+  async novoChat(identidade: SurfaceIdentity, argumentos: string): Promise<void> {
+    this.estado.chamadas.push({ nome: 'novoChat', identidade })
+    const prompt = argumentos.trim()
+    if (prompt.length === 0) {
+      await this.ctx?.enviar(identidade.chatKey, 'Uso: /novo-chat <o que o chat deve fazer>')
+      return
+    }
+    await this.iniciarCriacao(identidade, 'chat.new', { prompt })
+  }
+
+  async novoChatWt(identidade: SurfaceIdentity, argumentos: string): Promise<void> {
+    this.estado.chamadas.push({ nome: 'novoChatWt', identidade })
+    const espaco = indiceDeEspacoAsciiDoDuplo(argumentos)
+    const worktree = espaco === -1 ? argumentos : argumentos.slice(0, espaco)
+    const prompt = espaco === -1 ? '' : argumentos.slice(espaco + 1).trim()
+    if (worktree.length === 0 || prompt.length === 0 || !/^[a-z0-9-]{1,40}$/u.test(worktree)) {
+      await this.ctx?.enviar(
+        identidade.chatKey,
+        'Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>',
+      )
+      return
+    }
+    await this.iniciarCriacao(identidade, 'chat.new', { prompt, worktree })
+  }
+
+  async criarWorktree(identidade: SurfaceIdentity, argumentos: string): Promise<void> {
+    this.estado.chamadas.push({ nome: 'criarWorktree', identidade })
+    const espaco = indiceDeEspacoAsciiDoDuplo(argumentos)
+    const nome = espaco === -1 ? argumentos : argumentos.slice(0, espaco)
+    const base = espaco === -1 ? '' : argumentos.slice(espaco + 1).trim()
+    if (nome.length === 0 || !/^[a-z0-9-]{1,40}$/u.test(nome)) {
+      await this.ctx?.enviar(identidade.chatKey, 'Uso: /worktree <nome> [base]')
+      return
+    }
+    await this.iniciarCriacao(
+      identidade,
+      'worktree.create',
+      base.length === 0 ? { nome } : { nome, base },
+    )
+  }
+
+  async statusTarefa(identidade: SurfaceIdentity, argumentos: string): Promise<void> {
+    this.estado.chamadas.push({ nome: 'statusTarefa', identidade })
+    const agentId = argumentos.trim()
+    if (!/^[0-9A-HJKMNP-TV-Z]{8}$/u.test(agentId)) {
+      await this.ctx?.enviar(
+        identidade.chatKey,
+        'Id inválido. Uso: /status-tarefa <id> — os ids aparecem em /agentes.',
+      )
+      return
+    }
+    // Leitura pura: `agent.status` SEM params — o id fica no PENDENTE e o
+    // filtro corre no nucleo (o espelho do modulo real de comandos).
+    const intent: IntencaoNeutra = {
+      intent: 'agent.status',
+      requestId: gerarTokenOpaque(),
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+    }
+    const aceite = this.ctx?.ipc.send(intent) ?? false
+    if (aceite) {
+      this.ctx?.pendente.registar(intent.requestId, identidade.chatKey, 'agent.status', undefined, agentId)
+    }
+  }
+
+  async confirmarChatNovo(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void> {
+    this.estado.confirmarChatNovo.push({ identidade, token, answerTarget, messageTarget })
+    await this.confirmarCriacao('chat.new', identidade, token, answerTarget, messageTarget)
+  }
+
+  async confirmarWorktree(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void> {
+    this.estado.confirmarWorktree.push({ identidade, token, answerTarget, messageTarget })
+    await this.confirmarCriacao('worktree.create', identidade, token, answerTarget, messageTarget)
+  }
+
+  /** A 1a etapa comum de chat.new/worktree.create (o espelho do modulo real). */
+  private async iniciarCriacao(
+    identidade: SurfaceIdentity,
+    tipo: 'chat.new' | 'worktree.create',
+    params: { prompt?: string; worktree?: string; nome?: string; base?: string },
+  ): Promise<void> {
+    const nonce = await this.ctx?.emitirNonce(tipo)
+    if (nonce === undefined) {
+      await this.ctx?.enviar(
+        identidade.chatKey,
+        'Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.',
+      )
+      return
+    }
+    this.criacoes.set(nonce, { tipo, params })
+    const corpo: SurfaceSendOptions = {
+      actionRows: [
+        [
+          { label: '✅ Sim, criar', action: tipo, token: nonce, kind: 'confirm' },
+          { label: '✕ Não', action: 'cancel', token: gerarTokenOpaque(), kind: 'confirm' },
+        ],
+      ],
+    }
+    await this.ctx?.enviar(identidade.chatKey, `Confirmação de ${tipo}`, corpo)
+  }
+
+  /** O clique na confirmacao — resposta UNIFORME aos tokens mortos (TG-027). */
+  private async confirmarCriacao(
+    tipo: 'chat.new' | 'worktree.create',
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void> {
+    const registado = this.criacoes.get(token)
+    if (registado === undefined || registado.tipo !== tipo) {
+      await this.ctx?.responder(answerTarget, { text: 'Confirmação expirada ou inválida.' })
+      return
+    }
+    this.criacoes.delete(token)
+    await this.ctx?.responder(answerTarget)
+    const intent: IntencaoNeutra = {
+      intent: tipo,
+      requestId: gerarTokenOpaque(),
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+      nonce: token,
+      params: registado.params,
+    }
+    const aceite = this.ctx?.ipc.send(intent) ?? false
+    if (aceite) {
+      this.ctx?.pendente.registar(intent.requestId, identidade.chatKey, tipo, messageTarget)
+    }
+  }
+
   private emergenciaDisparada = false
+}
+
+/** O primeiro espaco ASCII do duplo (o parse completo e do modulo real). */
+function indiceDeEspacoAsciiDoDuplo(valor: string): number {
+  for (let i = 0; i < valor.length; i += 1) {
+    const c = valor.charCodeAt(i)
+    if (c === 0x20 || (c >= 0x09 && c <= 0x0d)) return i
+  }
+  return -1
 }
 
 /* ========================================================================== */
@@ -711,6 +887,12 @@ export interface OpcoesDaBancada {
   readonly parar?: () => Promise<void>
   /** O dono pre-pareado (equivalente a `pairing.owner` do boot). */
   readonly donoInicial?: SurfaceDono | undefined
+  /**
+   * Substitui o {@link FakeComandos} pela factory REAL (`criarComandosDe
+   * Superficie`) — o caminho de producao, sem o duplo de comandos. Quem o
+   * passa nao observa `bancada.comandos` (o duplo fica sem contexto).
+   */
+  readonly fabricaDeComandos?: SurfaceComandosFactory
 }
 
 /** Os limites por omissao (os do Telegram, em forma neutra). */
@@ -754,7 +936,7 @@ export function montarBancada(opcoes: OpcoesDaBancada = {}): Bancada {
         paradas += 1
       }),
     auth,
-    comandos: (ctx) => comandos.fabrica(ctx),
+    comandos: opcoes.fabricaDeComandos ?? ((ctx) => comandos.fabrica(ctx)),
   })
 
   return {

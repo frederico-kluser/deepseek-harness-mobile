@@ -36,6 +36,7 @@
  * o `SurfaceIpcBridge` e a forma estavel do contrato.
  */
 
+import type { IpcAgentIntentParams } from '../../src/contracts/ipc.ts'
 import type {
   ActionRow,
   ActionRowLayout,
@@ -45,7 +46,7 @@ import type {
   SurfacePublishedCommand,
   SurfaceSendOptions,
 } from './contract.ts'
-import { cortarTexto, MAX_PROMPT_CHARS, sanearUmaLinha } from './text.ts'
+import { cortarTexto, MAX_BASE_CHARS, MAX_PROMPT_CHARS, sanearUmaLinha } from './text.ts'
 import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
 
 /* ========================================================================== */
@@ -438,11 +439,17 @@ export interface ComandosAgentes {
   ): Promise<void>
 }
 
-/** Separa o primeiro token (a skill) do resto da linha (o prompt). */
-function partirSkillEPrompt(argumentos: string): { skill: string; prompt: string } {
+/** Separa o primeiro token (um nome) do resto da linha (o texto). */
+function partirPrimeiroEResto(argumentos: string): { primeiro: string; resto: string } {
   const espaco = indiceDeEspacoAsciiLocal(argumentos)
-  if (espaco === -1) return { skill: argumentos, prompt: '' }
-  return { skill: argumentos.slice(0, espaco), prompt: argumentos.slice(espaco + 1).trim() }
+  if (espaco === -1) return { primeiro: argumentos, resto: '' }
+  return { primeiro: argumentos.slice(0, espaco), resto: argumentos.slice(espaco + 1).trim() }
+}
+
+/** A skill e o prompt do /agente — o primeiro token e o resto da linha. */
+function partirSkillEPrompt(argumentos: string): { skill: string; prompt: string } {
+  const { primeiro, resto } = partirPrimeiroEResto(argumentos)
+  return { skill: primeiro, prompt: resto }
 }
 
 /** Varrimento manual, como o do nucleo — sem regex sobre texto da internet. */
@@ -590,6 +597,258 @@ export function criarAgentes(ctx: SurfaceCommandContext): ComandosAgentes {
 }
 
 /* ========================================================================== */
+/* 6c. OS COMANDOS DE TAREFAS — /novo-chat, /novo-chat-wt, /worktree,          */
+/*     /status-tarefa (Onda 3 — EMENDA ONDA-2-CONTRATO-CAPACIDADES)           */
+/* ========================================================================== */
+
+/**
+ * A gramatica FECHADA do worktree (contrato congelado): `[a-z0-9-]{1,40}` —
+ * a mesma do `worktree` de `chat.new` e do `nome` de `worktree.create`.
+ * Validada ANTES de qualquer pedido ao host (fail-closed na forma).
+ */
+const GRAMMAR_DE_WORKTREE = /^[a-z0-9-]{1,40}$/u
+
+/** `/novo-chat` sem prompt nunca lista nada — a submissao e que corre. */
+const USO_NOVO_CHAT = 'Uso: /novo-chat <o que o chat deve fazer>'
+const USO_NOVO_CHAT_WT = 'Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>'
+const USO_WORKTREE = 'Uso: /worktree <nome> [base]'
+const SEM_PROMPT_NOVO_CHAT = `Falta o prompt. ${USO_NOVO_CHAT}`
+const SEM_PROMPT_NOVO_CHAT_WT = `Falta o prompt. ${USO_NOVO_CHAT_WT}`
+const WORKTREE_INVALIDO = `Worktree inválido (a-z, 0-9 e hífen, até 40). ${USO_NOVO_CHAT_WT}`
+const NOME_DE_WORKTREE_INVALIDO = `Nome inválido (a-z, 0-9 e hífen, até 40). ${USO_WORKTREE}`
+const ID_TAREFA_INVALIDO = 'Id inválido. Uso: /status-tarefa <id> — os ids aparecem em /agentes.'
+/**
+ * RESPOSTA UNIFORME de uma confirmacao morta (expirada, forjada ou alheia):
+ * os tres caminhos respondem EXATAMENTE o mesmo (sem oraculo — o clique nao
+ * descobre por que morreu). O `/worktree` usa a irmã com o seu comando.
+ */
+const CONFIRMACAO_NOVO_CHAT_EXPIRADA = 'Confirmação expirada ou inválida. Mande /novo-chat de novo.'
+const CONFIRMACAO_WORKTREE_EXPIRADA = 'Confirmação expirada ou inválida. Mande /worktree de novo.'
+
+/** Teto defensivo do mapa de criacoes em espera (um dono; 8 e folga de sobra). */
+const MAX_CRIACOES_PENDENTES = 8
+
+/** As intents de criacao que esta seccao confirma em 2 etapas. */
+type AcaoDeCriacao = 'chat.new' | 'worktree.create'
+
+/** O pedido guardado na 1a etapa, para o clique confirmar. */
+interface CriacaoEmEspera {
+  readonly tipo: AcaoDeCriacao
+  /** Os params JA sanados/cortados — exactamente o que o HOST vai receber. */
+  readonly params: IpcAgentIntentParams
+  readonly userKey: string
+  readonly chatKey: string
+  readonly expiresAt: number
+}
+
+export interface ComandosTarefas {
+  /** `/novo-chat <prompt>` — sessao nova com o prompt submetido (2 etapas). */
+  novoChat(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** `/novo-chat-wt <worktree> <prompt>` — o mesmo, com cwd dentro do worktree. */
+  novoChatWt(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** `/worktree <nome> [base]` — cria um worktree (2 etapas). */
+  criarWorktree(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /**
+   * `/status-tarefa <id>` — LEITURA PURA: reusa `agent.status` SEM params
+   * (contrato!) e o `<id>` filtra-se no WORKER sobre o `agent.report`.
+   */
+  statusTarefa(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** O clique no botao de confirmacao do chat novo. Responde SEMPRE (TG-027). */
+  confirmarChatNovo(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
+  /** O clique no botao de confirmacao do worktree. Responde SEMPRE (TG-027). */
+  confirmarWorktree(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
+}
+
+export function criarTarefas(ctx: SurfaceCommandContext): ComandosTarefas {
+  /**
+   * O pedido em espera CHAVEADO pelo token OPACO do botao (o nonce do host).
+   * NAO e validacao do nonce (S5): e a correlacao entre o clique e o pedido da
+   * 1a etapa — o token so viaja e volta, e o HOST valida o valor. O `tipo`
+   * impede que um clique de uma confirmacao consuma o pedido da outra.
+   */
+  const criacoes = new Map<string, CriacaoEmEspera>()
+
+  function registarCriacao(identidade: SurfaceIdentity, token: string, tipo: AcaoDeCriacao, params: IpcAgentIntentParams): void {
+    if (criacoes.size >= MAX_CRIACOES_PENDENTES) {
+      const maisAntigo = criacoes.keys().next().value
+      if (maisAntigo !== undefined) criacoes.delete(maisAntigo)
+    }
+    criacoes.set(token, {
+      tipo,
+      params,
+      userKey: identidade.userKey,
+      chatKey: identidade.chatKey,
+      expiresAt: ctx.time.now() + TTL_CONFIRMACAO_DESPACHO_MS,
+    })
+  }
+
+  /**
+   * A 1a etapa comum de `chat.new`/`worktree.create`: pede o nonce ao HOST
+   * (S5, a acao de controlo e `reset` — a ponte do /rotacionar), guarda o
+   * pedido e renderiza a confirmacao com o nonce OPACO no botao + o
+   * cancelamento `[✕ Não]` (§4 Regra 4). Sem nonce falha FECHADO (CTL-023).
+   */
+  async function iniciarCriacao(
+    identidade: SurfaceIdentity,
+    tipo: AcaoDeCriacao,
+    params: IpcAgentIntentParams,
+    texto: string,
+  ): Promise<void> {
+    const nonce = await ctx.emitirNonce(tipo)
+    if (nonce === undefined) {
+      // Fail-closed (CTL-023): sem nonce nao ha confirmacao possivel.
+      await ctx.enviar(identidade.chatKey, SEM_NONCE)
+      return
+    }
+    registarCriacao(identidade, nonce, tipo, params)
+    const acao: ActionRow = {
+      label: '✅ Sim, criar',
+      action: tipo,
+      token: nonce,
+      kind: 'confirm',
+    }
+    await mostrarConfirmacao(ctx, identidade.chatKey, undefined, texto, [[acao, linhaDeCancelar()]])
+  }
+
+  /**
+   * O clique na confirmacao de UMA criacao. Responde SEMPRE (TG-027); o token
+   * morto (forjado/expirado/alheio) recebe a RESPOSTA UNIFORME e nada mais.
+   */
+  async function confirmarCriacao(
+    tipo: AcaoDeCriacao,
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void> {
+    const registado = criacoes.get(token)
+    const agora = ctx.time.now()
+    const valido =
+      registado !== undefined &&
+      registado.tipo === tipo &&
+      agora < registado.expiresAt &&
+      registado.userKey === identidade.userKey &&
+      registado.chatKey === identidade.chatKey
+    if (!valido) {
+      // Forjado (TG-025), expirado (TG-023) ou de outro emissor (TG-024):
+      // RESPOSTA UNIFORME — indistinguiveis para quem clica — e zero efeitos.
+      criacoes.delete(token)
+      await ctx.responder(answerTarget, {
+        text: tipo === 'chat.new' ? CONFIRMACAO_NOVO_CHAT_EXPIRADA : CONFIRMACAO_WORKTREE_EXPIRADA,
+      })
+      return
+    }
+    // Uso unico: consumido antes de qualquer efeito.
+    criacoes.delete(token)
+    await ctx.responder(answerTarget)
+    const requestId = gerarRequestId(ctx.time.now())
+    // O fluxo AUMENTA exposicao: o nonce (o token do botao) viaja OPACO (S5)
+    // e o HOST consome-o com a acao 'reset' (a mesma ponte do /rotacionar).
+    emitirIntent(ctx, identidade, {
+      intent: tipo,
+      requestId,
+      nonce: token,
+      params: registado.params,
+      messageTarget,
+    })
+  }
+
+  return {
+    async novoChat(identidade, argumentos): Promise<void> {
+      const prompt = argumentos.trim()
+      if (prompt.length === 0) {
+        await ctx.enviar(identidade.chatKey, SEM_PROMPT_NOVO_CHAT)
+        return
+      }
+      // O prompt viaja no `params` (teto do codec = 4096): sanear para UMA
+      // linha e cortar AQUI (TG-048) — o que se confirma e o que corre.
+      const promptFinal = cortarTexto(sanearUmaLinha(prompt), MAX_PROMPT_CHARS)
+      await iniciarCriacao(
+        identidade,
+        'chat.new',
+        { prompt: promptFinal },
+        `💬 Iniciar um chat novo com este prompt?\nEle executa código na tua máquina:\n"${promptFinal}"`,
+      )
+    },
+
+    async novoChatWt(identidade, argumentos): Promise<void> {
+      const { primeiro: worktree, resto: prompt } = partirPrimeiroEResto(argumentos)
+      if (worktree.length === 0) {
+        await ctx.enviar(identidade.chatKey, USO_NOVO_CHAT_WT)
+        return
+      }
+      if (!GRAMMAR_DE_WORKTREE.test(worktree)) {
+        await ctx.enviar(identidade.chatKey, WORKTREE_INVALIDO)
+        return
+      }
+      if (prompt.length === 0) {
+        await ctx.enviar(identidade.chatKey, SEM_PROMPT_NOVO_CHAT_WT)
+        return
+      }
+      const promptFinal = cortarTexto(sanearUmaLinha(prompt), MAX_PROMPT_CHARS)
+      await iniciarCriacao(
+        identidade,
+        'chat.new',
+        { prompt: promptFinal, worktree },
+        `💬 Iniciar um chat novo no worktree "${worktree}" com este prompt?\nEle executa código na tua máquina:\n"${promptFinal}"`,
+      )
+    },
+
+    async criarWorktree(identidade, argumentos): Promise<void> {
+      const { primeiro: nome, resto: base } = partirPrimeiroEResto(argumentos)
+      if (nome.length === 0) {
+        await ctx.enviar(identidade.chatKey, USO_WORKTREE)
+        return
+      }
+      if (!GRAMMAR_DE_WORKTREE.test(nome)) {
+        await ctx.enviar(identidade.chatKey, NOME_DE_WORKTREE_INVALIDO)
+        return
+      }
+      // A base e higiene de transporte (texto limpo, ate 256): o valor real e
+      // decidido pelo host — aqui so se saneia e corta o que viaja.
+      const baseFinal = base.length === 0 ? undefined : cortarTexto(sanearUmaLinha(base), MAX_BASE_CHARS)
+      await iniciarCriacao(
+        identidade,
+        'worktree.create',
+        { nome, ...(baseFinal === undefined ? {} : { base: baseFinal }) },
+        `📁 Criar o worktree "${nome}"${baseFinal === undefined ? '' : ` a partir de "${baseFinal}"`}?\nEle cria uma pasta nova na tua máquina.`,
+      )
+    },
+
+    async statusTarefa(identidade, argumentos): Promise<void> {
+      const agentId = argumentos.trim()
+      if (!GRAMMAR_DE_ID_DE_RUN.test(agentId)) {
+        await ctx.enviar(identidade.chatKey, ID_TAREFA_INVALIDO)
+        return
+      }
+      // LEITURA PURA: `agent.status` SEM params (a regra do codec e fechada) e
+      // SEM nonce — o id viaja NO PENDENTE e o filtro corre no WORKER sobre o
+      // `agent.report` (o ack continua silencioso, como o /agentes).
+      const requestId = gerarRequestId(ctx.time.now())
+      emitirIntent(ctx, identidade, { intent: 'agent.status', requestId, agentId })
+    },
+
+    async confirmarChatNovo(identidade, token, answerTarget, messageTarget): Promise<void> {
+      await confirmarCriacao('chat.new', identidade, token, answerTarget, messageTarget)
+    },
+
+    async confirmarWorktree(identidade, token, answerTarget, messageTarget): Promise<void> {
+      await confirmarCriacao('worktree.create', identidade, token, answerTarget, messageTarget)
+    },
+  }
+}
+
+/* ========================================================================== */
 /* 7. O OBJETO QUE AGRUPA OS COMANDOS (para o nucleo montar o roteador)       */
 /* ========================================================================== */
 
@@ -598,6 +857,7 @@ export interface ComandosDaSuperficie {
   readonly access: ComandosAccess
   readonly status: ComandosStatus
   readonly agentes: ComandosAgentes
+  readonly tarefas: ComandosTarefas
 }
 
 export function criarComandosDaSuperficie(ctx: SurfaceCommandContext): ComandosDaSuperficie {
@@ -606,6 +866,7 @@ export function criarComandosDaSuperficie(ctx: SurfaceCommandContext): ComandosD
     access: criarAccess(ctx),
     status: criarStatus(ctx),
     agentes: criarAgentes(ctx),
+    tarefas: criarTarefas(ctx),
   }
 }
 
@@ -645,6 +906,22 @@ export interface SurfaceComandosPlano {
     answerTarget: string,
     messageTarget: string | undefined,
   ): Promise<void>
+  novoChat(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  novoChatWt(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  criarWorktree(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  statusTarefa(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  confirmarChatNovo(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
+  confirmarWorktree(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
 }
 
 export function criarComandosDeSuperficie(ctx: SurfaceCommandContext): SurfaceComandosPlano {
@@ -652,6 +929,7 @@ export function criarComandosDeSuperficie(ctx: SurfaceCommandContext): SurfaceCo
   const access = criarAccess(ctx)
   const status = criarStatus(ctx)
   const agentes = criarAgentes(ctx)
+  const tarefas = criarTarefas(ctx)
   return {
     ligar: (identidade, alvoDeEdicao) => onoff.ligar(identidade, alvoDeEdicao),
     desligar: (identidade, alvoDeEdicao) => onoff.desligar(identidade, alvoDeEdicao),
@@ -666,5 +944,13 @@ export function criarComandosDeSuperficie(ctx: SurfaceCommandContext): SurfaceCo
     pararAgente: (identidade, argumentos) => agentes.pararAgente(identidade, argumentos),
     confirmarDispatch: (identidade, token, answerTarget, messageTarget) =>
       agentes.confirmarDispatch(identidade, token, answerTarget, messageTarget),
+    novoChat: (identidade, argumentos) => tarefas.novoChat(identidade, argumentos),
+    novoChatWt: (identidade, argumentos) => tarefas.novoChatWt(identidade, argumentos),
+    criarWorktree: (identidade, argumentos) => tarefas.criarWorktree(identidade, argumentos),
+    statusTarefa: (identidade, argumentos) => tarefas.statusTarefa(identidade, argumentos),
+    confirmarChatNovo: (identidade, token, answerTarget, messageTarget) =>
+      tarefas.confirmarChatNovo(identidade, token, answerTarget, messageTarget),
+    confirmarWorktree: (identidade, token, answerTarget, messageTarget) =>
+      tarefas.confirmarWorktree(identidade, token, answerTarget, messageTarget),
   }
 }

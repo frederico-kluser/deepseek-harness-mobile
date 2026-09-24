@@ -1825,3 +1825,230 @@ describe('CONVERSA INTELIGENTE: skills pedem valores', () => {
     assert.equal(bancada.ipc.pareamentos.length, 0, 'o valor tardio nao valida mesmo apos malformados')
   })
 })
+
+/* ========================================================================== */
+/* Onda 3 (EMENDA ONDA-2-CONTRATO-CAPACIDADES) — /novo-chat, /novo-chat-wt,   */
+/* /worktree e /status-tarefa no NUCLEO (o despacho e o duplo; os textos      */
+/* EXACTOS das confirmacoes sao do commands.test.ts)                          */
+/* ========================================================================== */
+
+describe('Onda 3: o nucleo roteia os comandos de tarefa', () => {
+  it('/novo-chat chega aos comandos e o clique confirma com nonce + params; o ack edita a confirmacao', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/novo-chat diz oi'))
+    assert.equal(bancada.comandos.estado.chamadas.at(-1)?.nome, 'novoChat')
+    assert.equal(bancada.ipc.intents.length, 0, 'a 1a etapa nao envia intent (2 etapas)')
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'chat.new')
+
+    await bancada.tratar(accaoDoDono('chat.new', botao.token, confirmacao.id))
+
+    assert.equal(bancada.comandos.estado.confirmarChatNovo.length, 1, 'o clique delega em confirmarChatNovo')
+    assert.equal(bancada.sender.respostas.length, 1, 'TG-027: o clique e respondido')
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'chat.new')
+    assert.equal(intent.nonce, botao.token, 'o nonce viaja OPACO (S5)')
+    assert.deepEqual(intent.params, { prompt: 'diz oi' })
+
+    // O ack accepted edita a MENSAGEM DA CONFIRMACAO com o texto FINAL.
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STOPPED' })
+    await tick()
+    const edicao = bancada.sender.edicoes.at(-1)
+    assert.ok(edicao !== undefined)
+    assert.equal(edicao.messageId, confirmacao.id)
+    assert.equal(edicao.texto, 'Chat novo iniciado.')
+  })
+
+  it('ack noop do chat.new: «Já estava assim.» (cobertura do tipo, defesa)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/novo-chat diz oi'))
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    await bancada.tratar(accaoDoDono('chat.new', botao.token, confirmacao.id))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'noop', state: 'STOPPED' })
+    await tick()
+
+    assert.equal(bancada.sender.edicoes.at(-1)?.texto, 'Já estava assim.')
+  })
+
+  it('/worktree confirma em 2 etapas; o ack accepted edita «Worktree criado.»', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/worktree feature-x'))
+    assert.equal(bancada.comandos.estado.chamadas.at(-1)?.nome, 'criarWorktree')
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    assert.equal(botao.action, 'worktree.create')
+
+    await bancada.tratar(accaoDoDono('worktree.create', botao.token, confirmacao.id))
+    assert.equal(bancada.comandos.estado.confirmarWorktree.length, 1)
+
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'worktree.create')
+    assert.deepEqual(intent.params, { nome: 'feature-x' })
+
+    bancada.nucleo.onAck({ v: 2, type: 'ack', requestId: intent.requestId, result: 'accepted', state: 'STOPPED' })
+    await tick()
+    assert.equal(bancada.sender.edicoes.at(-1)?.texto, 'Worktree criado.')
+  })
+
+  it('/novo-chat-wt passa o worktree no params; /status-tarefa e leitura pura', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/novo-chat-wt feature-x diz oi'))
+    assert.equal(bancada.comandos.estado.chamadas.at(-1)?.nome, 'novoChatWt')
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    await bancada.tratar(accaoDoDono('chat.new', botao.token, confirmacao.id))
+    assert.deepEqual(bancada.ipc.intents.at(-1)?.params, { prompt: 'diz oi', worktree: 'feature-x' })
+
+    await bancada.tratar(comandoDoDono('/status-tarefa 01HZABCD'))
+    assert.equal(bancada.comandos.estado.chamadas.at(-1)?.nome, 'statusTarefa')
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+    assert.equal(intent.intent, 'agent.status', 'reusa a intent de leitura (contrato)')
+    assert.equal(intent.params, undefined, 'agent.status SEM params')
+    assert.equal(Object.hasOwn(intent, 'nonce'), false, 'leitura pura: sem nonce')
+  })
+
+  it('um clique chat.new/worktree.create com token morto e SEMPRE respondido (TG-027)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const antes = bancada.ipc.intents.length
+
+    await bancada.tratar(accaoDoDono('chat.new', 'FORJA-1', 'msg-1'))
+    await bancada.tratar(accaoDoDono('worktree.create', 'FORJA-2', 'msg-2'))
+
+    assert.equal(bancada.sender.respostas.length, 2, 'os dois cliques morreram respondidos')
+    assert.equal(bancada.ipc.intents.length, antes, 'zero intents')
+  })
+
+  it('/ajuda menciona os comandos de tarefa (o texto curto do §2 continua)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/ajuda'))
+
+    const texto = bancada.sender.mensagens.at(-1)?.texto ?? ''
+    assert.match(texto, /ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram/u)
+    for (const comando of ['/novo-chat', '/novo-chat-wt', '/worktree', '/status-tarefa', '/agentes']) {
+      assert.ok(texto.includes(comando), `falta ${comando} na ajuda`)
+    }
+  })
+})
+
+describe('Onda 3: /status-tarefa — o filtro do id corre NO WORKER sobre o agent.report', () => {
+  it('run encontrado: a resposta e o DETALHE do run pedido (mensagem propria)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    const agora = bancada.time.now()
+
+    await bancada.tratar(comandoDoDono('/status-tarefa 01HZABCD'))
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [
+        { id: '01HZABCD', skill: 'eco', status: 'running', startedAt: agora - 60_000, kind: 'chat', worktree: 'feature-x', metrics: { inputTokens: 1_000, outputTokens: 234, llmMs: 4_300 } },
+        { id: '01HZQQQQ', skill: 'outra', status: 'done', startedAt: agora - 120_000 },
+      ],
+    })
+    await tick()
+
+    const msg = bancada.sender.mensagens.at(-1)
+    assert.ok(msg !== undefined)
+    assert.match(msg.texto, /🧩 Tarefa 01HZABCD:/u)
+    assert.match(msg.texto, /wt: feature-x/u, 'o detalhe inclui o worktree')
+    assert.match(msg.texto, /📊 Tokens: entrada 1\.000 · saída 234 · cache lido —/u)
+    assert.ok(!msg.texto.includes('01HZQQQQ'), 'so o run pedido; a lista e do /agentes')
+    assert.equal(bancada.sender.edicoes.length, 0, 'mensagem propria — nunca o painel')
+  })
+
+  it('id sem correspondencia: «Tarefa <id> nao encontrada (veja /agentes)»', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/status-tarefa 01HZQQQQ'))
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZABCD', skill: 'eco', status: 'running', startedAt: 1_000 }],
+    })
+    await tick()
+
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'Tarefa 01HZQQQQ não encontrada (veja /agentes)')
+  })
+
+  it('/agentes e /status-tarefa pendentes ao MESMO report: cada um recebe a SUA resposta', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+
+    await bancada.tratar(comandoDoDono('/agentes'))
+    await bancada.tratar(comandoDoDono('/status-tarefa 01HZABCD'))
+    const antes = bancada.sender.mensagens.length
+    bancada.nucleo.onAgentReport({
+      v: 2,
+      type: 'agent.report',
+      runs: [{ id: '01HZABCD', skill: 'eco', status: 'done', startedAt: 1_000, summary: 'feito' }],
+    })
+    await tick()
+
+    const novos = bancada.sender.mensagens.slice(antes).map((m) => m.texto)
+    assert.equal(novos.length, 2, 'uma resposta por pedido')
+    assert.ok(novos.some((t) => t.includes('🤖 Agentes:')), 'o /agentes leva a lista')
+    assert.ok(novos.some((t) => t.includes('🧩 Tarefa 01HZABCD:')), 'o /status-tarefa leva o detalhe')
+  })
+})
+
+describe('Onda 3 fix recusa visivel: a recusa de chat.new chega ao dono SEMPRE', () => {
+  it('com o cartao VISIVEL, o error de chat.new e mensagem propria (nao so re-render)', async () => {
+    const bancada = montarBancada()
+    await paired(bancada)
+    await bancada.tratar(comandoDoDono('/menu'))
+    const cartao = bancada.sender.mensagens.at(-1)
+    assert.ok(cartao !== undefined)
+
+    await bancada.tratar(comandoDoDono('/novo-chat diz oi'))
+    const confirmacao = bancada.sender.mensagens.at(-1)
+    assert.ok(confirmacao !== undefined)
+    const botao = confirmacao.opcoes?.actionRows?.[0]?.[0]
+    assert.ok(botao !== undefined)
+    await bancada.tratar(accaoDoDono('chat.new', botao.token, confirmacao.id))
+    const intent = bancada.ipc.intents.at(-1)
+    assert.ok(intent !== undefined)
+
+    const mensagensAntesDoErro = bancada.sender.mensagens.length
+    bancada.nucleo.onError({
+      v: 2,
+      type: 'error',
+      requestId: intent.requestId,
+      code: 'INTERNAL',
+      message: 'O harness não está disponível agora.',
+    })
+    await tick(6)
+
+    assert.equal(bancada.sender.mensagens.length, mensagensAntesDoErro + 1, 'a recusa sai como mensagem propria')
+    assert.equal(bancada.sender.mensagens.at(-1)?.texto, 'O harness não está disponível agora.')
+    const reRenders = bancada.sender.edicoes.filter((e) => e.messageId === cartao.id)
+    assert.equal(reRenders.length, 0, 'o cartao nao engole a recusa')
+  })
+})

@@ -100,9 +100,11 @@ import {
   cortarTexto,
   estreitarEstado,
   formatarDuracao,
+  TEXTO_DE_AJUDA,
   textoDeEstadoCurto,
   textoDeFimDeRuns,
   textoDeRelatorioDeAgentes,
+  textoDeTarefa,
 } from './text.ts'
 import { criarOutbox } from './outbox.ts'
 import { gerarRequestId, gerarTokenOpaque } from './tokens.ts'
@@ -375,6 +377,31 @@ export interface SurfaceComandos {
     answerTarget: string,
     messageTarget: string | undefined,
   ): Promise<void>
+  /** `/novo-chat <prompt>` — `argumentos` e o resto da linha apos o nome. */
+  novoChat(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** `/novo-chat-wt <worktree> <prompt>` — worktree + prompt, na mesma linha. */
+  novoChatWt(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** `/worktree <nome> [base]` — cria um worktree (confirmacao em 2 etapas). */
+  criarWorktree(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /**
+   * `/status-tarefa <id>` — leitura PURA: reusa `agent.status` SEM params e o
+   * id filtra-se no WORKER sobre o `agent.report`.
+   */
+  statusTarefa(identidade: SurfaceIdentity, argumentos: string): Promise<void>
+  /** O clique no botao de confirmacao do chat novo (Onda 3). */
+  confirmarChatNovo(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
+  /** O clique no botao de confirmacao do worktree (Onda 3). */
+  confirmarWorktree(
+    identidade: SurfaceIdentity,
+    token: string,
+    answerTarget: string,
+    messageTarget: string | undefined,
+  ): Promise<void>
 }
 
 /**
@@ -480,6 +507,16 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
       // O ack de /agente confirmado: o run nasceu. O `noop` nao acontece no
       // host (o dispatch cria SEMPRE um run novo quando aceite) — cobre o tipo.
       return result === 'noop' ? 'Já estava assim.' : 'Agente disparado. O resultado chega aqui quando terminar.'
+    case 'chat.new':
+      // EMENDA ONDA-3-SUPERFICIE-TAREFAS: a confirmacao do /novo-chat(/-wt) —
+      // a sessao nasceu e o prompt foi submetido; a resposta do chat chega
+      // pelo `agent.report`/notify. O `noop` nao acontece no host — cobre o
+      // tipo, fora do grupo generico.
+      return result === 'noop' ? 'Já estava assim.' : 'Chat novo iniciado.'
+    case 'worktree.create':
+      // A confirmacao do /worktree: o worktree nasceu. `noop` (ja existia)
+      // cobre o tipo com o texto generico de reposta parada.
+      return result === 'noop' ? 'Já estava assim.' : 'Worktree criado.'
     case 'agent.status':
     case 'agent.cancel':
     case 'tunnel.status':
@@ -489,9 +526,6 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
     case 'ajuda':
     case 'inicio':
     case 'cancel':
-    // STUB do contrato (onda2) — onda 3 substitui.
-    case 'chat.new':
-    case 'worktree.create':
       // Nav e leituras nao confirmam accao destrutiva; generico. O `cancel` e
       // navegacao local que nunca gera ack (nao envia intent); cobre o tipo.
       // EMENDA ONDA-5-AGENTS-SUPERFICIE: `agent.status` e `agent.cancel` NAO
@@ -502,17 +536,28 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
 }
 
 /**
- * As accoes de AGENTE (Onda 5). EMENDA ONDA-5-FIX-RECUSA-VISIVEL: a recusa de
- * politica do HOST a um intent de agente (skill nao autorizada / teto maxRuns /
- * harness indisponivel) chega como `error` com uma `message` ACCIONAVEL — e uma
- * RESPOSTA do intent, nao estado do tunel, e tem de chegar ao dono SEMPRE como
- * mensagem propria. `mostrarEstado` NAO serve: com o cartao de controlo a vista
- * ele re-renderiza o cartao e DESCARTE o texto — a recusa ficava invisivel ao
- * dono (rev adversarial da Onda 5, HIGH). O pendente guarda a accao (`acao`),
- * a correlacao mais simples e segura com o requestId do erro.
+ * As accoes de AGENTE (Onda 5) e de TAREFA (Onda 3). EMENDA
+ * ONDA-5-FIX-RECUSA-VISIVEL: a recusa de politica do HOST a um intent de agente
+ * (skill nao autorizada / teto maxRuns / harness indisponivel) chega como
+ * `error` com uma `message` ACCIONAVEL — e uma RESPOSTA do intent, nao estado
+ * do tunel, e tem de chegar ao dono SEMPRE como mensagem propria.
+ * `mostrarEstado` NAO serve: com o cartao de controlo a vista ele re-renderiza
+ * o cartao e DESCARTE o texto — a recusa ficava invisivel ao dono (rev
+ * adversarial da Onda 5, HIGH). O pendente guarda a accao (`acao`), a
+ * correlacao mais simples e segura com o requestId do erro.
+ *
+ * EMENDA ONDA-3-SUPERFICIE-TAREFAS: `chat.new`/`worktree.create` sao intents
+ * de agente do mesmo genero (o run nasce e responde) — o MESMO carve-out cobre
+ * as recusas delas.
  */
 function ehAcaoDeAgente(acao: SurfaceAction): boolean {
-  return acao === 'agent.dispatch' || acao === 'agent.status' || acao === 'agent.cancel'
+  return (
+    acao === 'agent.dispatch' ||
+    acao === 'agent.status' ||
+    acao === 'agent.cancel' ||
+    acao === 'chat.new' ||
+    acao === 'worktree.create'
+  )
 }
 
 export function criarNucleo(deps: NucleoDeps): Nucleo {
@@ -912,6 +957,26 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         // Onda 5: o comando parar-agente <id> — o id (8 chars) e validado nos comandos.
         await comandos.pararAgente(identidade, argumentosDe(texto))
         return
+      case 'novo-chat':
+        // Onda 3: /novo-chat <prompt> — a forma (prompt sanado + teto 4096) e
+        // validada nos comandos; confirmacao em 2 etapas (intent `chat.new`).
+        await comandos.novoChat(identidade, argumentosDe(texto))
+        return
+      case 'novo-chat-wt':
+        // Onda 3: /novo-chat-wt <worktree> <prompt> — o mesmo fluxo com
+        // params.worktree preenchido (gramatica [a-z0-9-]{1,40}).
+        await comandos.novoChatWt(identidade, argumentosDe(texto))
+        return
+      case 'worktree':
+        // Onda 3: /worktree <nome> [base] — gramatica do nome validada ANTES
+        // do host; confirmacao em 2 etapas (intent `worktree.create`).
+        await comandos.criarWorktree(identidade, argumentosDe(texto))
+        return
+      case 'status-tarefa':
+        // Onda 3: /status-tarefa <id> — leitura PURA (agent.status SEM params;
+        // o id filtra-se no WORKER sobre o agent.report).
+        await comandos.statusTarefa(identidade, argumentosDe(texto))
+        return
       case 'start':
       case 'parear':
         // `start`/`parear` sao consumidos pelo receptor (correctness: nao deviam
@@ -923,12 +988,9 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         return
       case 'ajuda':
         // CONTRATO §2: ajuda curta (owner-only; a um estranho, silencio — aqui
-        // quem chega ja passou pela allowlist).
-        await enviarPara(
-          identidade.chatKey,
-          'ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.\n' +
-            'Usa /menu para o cartão de controlo e /status para ver o túnel.',
-        )
+        // quem chega ja passou pela allowlist). O texto (que inclui os
+        // comandos de tarefa da Onda 3) vive em `text.ts` — dono unico.
+        await enviarPara(identidade.chatKey, TEXTO_DE_AJUDA)
         return
       case undefined:
       default:
@@ -969,11 +1031,7 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       if (event.action === 'menu' || event.action === 'inicio') {
         await exibirCartao(chat, time.now())
       } else {
-        await enviarPara(
-          chat,
-          'ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.\n' +
-            'Usa /menu para o cartão de controlo e /status para ver o túnel.',
-        )
+        await enviarPara(chat, TEXTO_DE_AJUDA)
       }
       return
     }
@@ -1139,13 +1197,19 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
         )
         await comandos.emergencia(event.identity)
         return
-      // STUB do contrato (onda2) — onda 3 substitui.
       case 'chat.new':
+        // EMENDA ONDA-3-SUPERFICIE-TAREFAS: o clique no botao de CONFIRMACAO do
+        // /novo-chat e do /novo-chat-wt (a mensagem destacada — como o
+        // dispatch, precisa do prompt digitado). O token (o nonce do host)
+        // corre OPACO (S5); os params {prompt, worktree?} sao os guardados na
+        // 1a etapa. Resposta ao clique SEMPRE (TG-027) — dentro do handler.
+        await comandos.confirmarChatNovo(event.identity, event.token, event.answerTarget, event.messageTarget)
+        return
       case 'worktree.create':
-        // Nenhum botao produz estas accoes ainda: resposta de protocolo que
-        // fecha o girador (TG-027) e NENHUM intent — fail-closed, como o
-        // `agent.cancel` acima.
-        await deps.sender.answer(event.answerTarget)
+        // EMENDA ONDA-3-SUPERFICIE-TAREFAS: o clique no botao de CONFIRMACAO do
+        // /worktree — mesmo fluxo do `chat.new`: nonce opaco no botao, params
+        // {nome, base?} guardados na 1a etapa, resposta SEMPRE (TG-027).
+        await comandos.confirmarWorktree(event.identity, event.token, event.answerTarget, event.messageTarget)
         return
     }
   }
@@ -1574,14 +1638,16 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
   }
 
   /**
-   * O chat do PRIMEIRO `agent.status` pendente (quando /agentes foi pedido):
-   * a resposta do report e para quem pediu a lista. `undefined` = difusao.
+   * Os pedidos `agent.status` pendentes — o `/agentes` (a lista) e o
+   * `/status-tarefa <id>` (UM run; o id viaja no `agentId` do pendente). A
+   * resposta do report e para quem pediu; sem pendentes, o report e difusao.
    */
-  function chatComStatusPendente(): string | undefined {
+  function statusPendentes(): SurfacePendingIntent[] {
+    const pedidos: SurfacePendingIntent[] = []
     for (const p of pendentes.values()) {
-      if (p.acao === 'agent.status') return p.chatKey
+      if (p.acao === 'agent.status') pedidos.push(p)
     }
-    return undefined
+    return pedidos
   }
 
   function onAgentReport(msg: IpcAgentReportMessage): void {
@@ -1589,12 +1655,22 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
       const agora = time.now()
       const terminados = runsTerminadosDesde(ultimoRelatorioDeAgentes, msg.runs)
       ultimoRelatorioDeAgentes = msg.runs
-      const chat = chatComStatusPendente() ?? contexto.dono()
+      const pedidos = statusPendentes()
+      const chat = pedidos[0]?.chatKey ?? contexto.dono()
       if (chat === undefined) return
-      if (chatComStatusPendente() !== undefined) {
-        // Resposta a /agentes: a lista COMPLETA, como mensagem propria — nunca
-        // edita o painel de estado (a lista nao e estado do tunel).
-        emSegundoPlano(chat, () => enviarPara(chat, textoDeRelatorioDeAgentes(msg.runs, agora)))
+      if (pedidos.length > 0) {
+        // Respostas aos pedidos: /agentes leva a lista COMPLETA; /status-tarefa
+        // leva o DETALHE de UM run, filtrado AQUI no worker sobre o
+        // `agent.report` (teto de 64 runs — o id nunca viaja no intent).
+        // Mensagens PROPRIAS — nunca editam o painel de estado (a lista e o
+        // detalhe nao sao estado do tunel).
+        for (const pedido of pedidos) {
+          const texto =
+            pedido.agentId === undefined
+              ? textoDeRelatorioDeAgentes(msg.runs, agora)
+              : textoDeTarefa(msg.runs, pedido.agentId, agora)
+          emSegundoPlano(pedido.chatKey, () => enviarPara(pedido.chatKey, texto))
+        }
         return
       }
       // Difusao proativa: um (ou mais) run terminou. Avisa o dono com as linhas

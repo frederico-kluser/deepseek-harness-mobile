@@ -24,7 +24,12 @@
  * chega aqui por construcao — nao ha campo para ele em {@link SurfaceProjectionState}.
  */
 
-import type { AgentRunReport, AgentRunStatus } from '../../src/contracts/ipc.ts'
+import type {
+  AgentRunKind,
+  AgentRunMetrics,
+  AgentRunReport,
+  AgentRunStatus,
+} from '../../src/contracts/ipc.ts'
 import type { SurfaceProjectionState, SurfaceTunnelState } from './contract.ts'
 
 /* ========================================================================== */
@@ -197,6 +202,13 @@ export const ROTULOS_DE_STATUS_DE_AGENTE: Readonly<Record<AgentRunStatus, string
 export const MAX_PROMPT_CHARS = MAX_TEXTO_MENSAGEM
 
 /**
+ * Teto do `base` de `worktree.create` (/worktree <nome> [base]) — HIGIENE DE
+ * TRANSPORTE (contrato congelado): texto limpo, ate 256 caracteres. O valor e
+ * decidido pelo host; aqui so se corta o que viaja (TG-048 no espirito).
+ */
+export const MAX_BASE_CHARS = 256
+
+/**
  * Sanear para UMA linha: carateres de controlo viram espaco. O `prompt` viaja
  * no `params` do intent e o codec do canal RECUSA controlos no campo
  * (`isCleanText` — um `\n` de uma mensagem com quebras partiria a forma); aqui
@@ -223,14 +235,23 @@ export function haQuantoTempo(ms: number): string {
 }
 
 /**
- * UMA linha de UM run no relatorio: id, skill, status PT-BR, ha quanto tempo e
- * o resumo do modelo (1 linha, quando o run terminou e ha texto). NUNCA expoe
- * segredo (S3): o que aqui entra sao dados do dono e texto do modelo.
+ * UMA linha de UM run no relatorio: id, skill, status PT-BR, ha quanto tempo,
+ * o `kind`/`worktree` quando PRESENTES e a metrica RESUMIDA (tokens total e
+ * tempo; `—` quando o host nao mediu — NUNCA se estima nem se inventa). Quando
+ * o run terminou e ha texto, o resumo do modelo aparece na linha de baixo.
+ * NUNCA expoe segredo (S3): o que aqui entra sao dados do dono e texto do modelo.
  */
 export function linhaDeRun(run: AgentRunReport, agora: number): string {
   const base = `• ${run.id} — ${run.skill} — ${ROTULOS_DE_STATUS_DE_AGENTE[run.status]} ${haQuantoTempo(agora - run.startedAt)}`
-  if (run.summary === undefined || run.summary.length === 0) return base
-  return `${base}\n   💬 ${run.summary}`
+  // A metrica resumida e um ESPACO FIXO da linha (ausencia = «—»); kind e
+  // worktree so entram quando o run os traz (contrato aditivo).
+  const extras: string[] = []
+  if (run.kind !== undefined) extras.push(ROTULOS_DE_KIND_DE_RUN[run.kind])
+  if (run.worktree !== undefined) extras.push(`wt: ${run.worktree}`)
+  extras.push(`📊 ${resumoDeMetricas(run.metrics)}`)
+  const linha = `${base} · ${extras.join(' · ')}`
+  if (run.summary === undefined || run.summary.length === 0) return linha
+  return `${linha}\n   💬 ${run.summary}`
 }
 
 /**
@@ -251,3 +272,150 @@ export function textoDeRelatorioDeAgentes(runs: readonly AgentRunReport[], agora
 export function textoDeFimDeRuns(runs: readonly AgentRunReport[], agora: number): string {
   return `🤖 Atualização de agentes:\n${runs.map((run) => linhaDeRun(run, agora)).join('\n')}`
 }
+
+/* ========================================================================== */
+/* 6. AS METRICAS DOS RUNS E O DETALHE DE /status-tarefa (Onda 3)             */
+/* ========================================================================== */
+
+/**
+ * Rotulos PT-BR do `kind` de UM run — vocabulario FECHADO (o payload usa o
+ * enum `AgentRunKind` de `src/contracts/ipc.ts`; acrescentar um kind e mudanca
+ * de contrato). A AUSENCIA do campo vale `'agent'` (compatibilidade), mas a
+ * linha so MOSTRA o rotulo quando o run traz o campo (contrato aditivo).
+ */
+export const ROTULOS_DE_KIND_DE_RUN: Readonly<Record<AgentRunKind, string>> = Object.freeze({
+  agent: 'agente',
+  chat: 'chat',
+  worktree: 'worktree',
+})
+
+/**
+ * O teto de runs do `agent.report` (EMENDA ONDA-4-FIX-REPORT-CAPS: no maximo
+ * 64 runs por mensagem). O filtro do `/status-tarefa <id>` corre NO WORKER
+ * sobre o report COMPLETO ate este teto — um id alem dele nao designa run que
+ * o report transporte.
+ */
+export const TETO_DE_RUNS_DO_RELATORIO = 64
+
+/** `1234567` -> «1.234.567» — milhares com ponto (PT-BR), deterministico. */
+export function formatarQuantidade(n: number): string {
+  const digitos = String(Math.max(0, Math.round(n)))
+  let saida = ''
+  for (let i = 0; i < digitos.length; i += 1) {
+    if (i > 0 && (digitos.length - i) % 3 === 0) saida += '.'
+    saida += digitos[i]
+  }
+  return saida
+}
+
+/**
+ * `ms` -> «320 ms», «4 s», «1 min 5 s» — a escala das METRICAS de um run
+ * (mais fina que {@link formatarDuracao}, que e de UI). Deterministico.
+ */
+export function formatarTempoDeMs(ms: number): string {
+  if (ms <= 0) return '0 ms'
+  if (ms < 1_000) return `${String(Math.round(ms))} ms`
+  if (ms < 60_000) return `${String(Math.round(ms / 1_000))} s`
+  const minutos = Math.floor(ms / 60_000)
+  const segundos = Math.round((ms - minutos * 60_000) / 1_000)
+  return segundos === 0 ? `${String(minutos)} min` : `${String(minutos)} min ${String(segundos)} s`
+}
+
+/**
+ * O TOTAL de tokens de um run: a soma dos QUATRO contadores DISJUNTOS
+ * (`inputTokens` + `outputTokens` + `cacheReadTokens` + `cacheWriteTokens` —
+ * `decodeTokens` e um SUBCONJUNTO do output e somaria em dobro). `undefined`
+ * quando o host nao mediu NENHUM: nada se estima (a ausencia nao e zero).
+ */
+export function totalDeTokens(metrics: AgentRunMetrics | undefined): number | undefined {
+  if (metrics === undefined) return undefined
+  const contadores = [
+    metrics.inputTokens,
+    metrics.outputTokens,
+    metrics.cacheReadTokens,
+    metrics.cacheWriteTokens,
+  ]
+  const presentes = contadores.filter((valor): valor is number => valor !== undefined)
+  if (presentes.length === 0) return undefined
+  return presentes.reduce((soma, valor) => soma + valor, 0)
+}
+
+/**
+ * O TEMPO de trabalho de um run (modelo + ferramentas). `undefined` quando o
+ * host nao mediu nenhum dos dois — so se soma o que existe, nunca se preenche.
+ */
+export function tempoDeTrabalhoMs(metrics: AgentRunMetrics | undefined): number | undefined {
+  if (metrics === undefined) return undefined
+  const presentes = [metrics.llmMs, metrics.toolMs].filter((valor): valor is number => valor !== undefined)
+  if (presentes.length === 0) return undefined
+  return presentes.reduce((soma, valor) => soma + valor, 0)
+}
+
+/**
+ * A METRICA RESUMIDA da linha de um run: «tokens total / tempo» (ex. «6.334
+ * tokens / 4 s»). Ausente = «—» (NUNCA estimar/inventar): sem metricas, ou sem
+ * nenhum dos dois componentes, o dono ve o traco e nao um numero fabricado.
+ */
+export function resumoDeMetricas(metrics: AgentRunMetrics | undefined): string {
+  const partes: string[] = []
+  const tokens = totalDeTokens(metrics)
+  if (tokens !== undefined) partes.push(`${formatarQuantidade(tokens)} tokens`)
+  const tempo = tempoDeTrabalhoMs(metrics)
+  if (tempo !== undefined) partes.push(formatarTempoDeMs(tempo))
+  return partes.length === 0 ? '—' : partes.join(' / ')
+}
+
+/** Um campo de metrica, ou «—» quando o host o nao mediu. */
+function campoDeMetrica(valor: number | undefined, formatar: (n: number) => string): string {
+  return valor === undefined ? '—' : formatar(valor)
+}
+
+/**
+ * O DETALHE das metricas de UM run (a resposta de /status-tarefa): os doze
+ * campos do {@link AgentRunMetrics} do contrato, em tres linhas. Campo ausente
+ * = «—» — o vocabulario da ausencia e FECHADO e nada se estima (S3: sao
+ * numeros do harness, nunca segredo).
+ */
+function detalheDeMetricas(metrics: AgentRunMetrics | undefined): string {
+  const q = (valor: number | undefined): string => campoDeMetrica(valor, formatarQuantidade)
+  const t = (valor: number | undefined): string => campoDeMetrica(valor, formatarTempoDeMs)
+  return [
+    `   📊 Tokens: entrada ${q(metrics?.inputTokens)} · saída ${q(metrics?.outputTokens)} · cache lido ${q(metrics?.cacheReadTokens)} · cache escrito ${q(metrics?.cacheWriteTokens)} · decodificados ${q(metrics?.decodeTokens)}`,
+    `   ⏱ Tempo: modelo ${t(metrics?.llmMs)} · ferramentas ${t(metrics?.toolMs)} · primeiro token ${t(metrics?.ttftMs)} · decodificação ${t(metrics?.decodeMs)}`,
+    `   🔁 Turnos ${q(metrics?.turns)} · passos ${q(metrics?.steps)} · passos com 1º token ${q(metrics?.ttftSteps)}`,
+  ].join('\n')
+}
+
+/**
+ * O DETALHE de UM run pedido por `/status-tarefa <id>`: a linha enriquecida do
+ * run + as metricas completas. O id e filtrado AQUI, NO WORKER, sobre o
+ * `agent.report` (o `/status-tarefa` reusa `agent.status` SEM params — o
+ * contrato fecha o codec), com o teto de 64 runs do report. Sem correspondencia
+ *: a resposta uniforme «Tarefa <id> nao encontrada (veja /agentes)».
+ */
+export function textoDeTarefa(runs: readonly AgentRunReport[], id: string, agora: number): string {
+  const run = runs.slice(0, TETO_DE_RUNS_DO_RELATORIO).find((cada) => cada.id === id)
+  if (run === undefined) return `Tarefa ${id} não encontrada (veja /agentes)`
+  return [`🧩 Tarefa ${run.id}:`, linhaDeRun(run, agora), detalheDeMetricas(run.metrics)].join('\n')
+}
+
+/* ========================================================================== */
+/* 7. A AJUDA CURTA (os comandos novos entram aqui — o menu publicado NAO)     */
+/* ========================================================================== */
+
+/**
+ * O texto de `/ajuda` (e do botao `ℹ️ Ajuda`): a ajuda curta do §2 MAIS os
+ * comandos de tarefa da Onda 3. `/start` continua de fora da lista publicada
+ * (PAIR-006) e os COMANDOS_PUBLICADOS ficam intactos (TG-080) — e so o TEXTO
+ * de ajuda que cresce.
+ */
+export const TEXTO_DE_AJUDA: string =
+  'ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.\n' +
+  'Usa /menu para o cartão de controlo e /status para ver o túnel.\n' +
+  '\n' +
+  'Tarefas:\n' +
+  '/novo-chat <o que fazer> — abre um chat novo\n' +
+  '/novo-chat-wt <worktree> <o que fazer> — chat novo num worktree\n' +
+  '/worktree <nome> [base] — cria um worktree\n' +
+  '/status-tarefa <id> — vê uma tarefa (os ids saem em /agentes)\n' +
+  '/agentes — lista tarefas e agentes'
