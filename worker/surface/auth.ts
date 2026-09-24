@@ -770,6 +770,13 @@ export const AUMENTA_EXPOSICAO: Readonly<Record<SurfaceAction, boolean>> = Objec
   'agent.dispatch': true,
   'agent.status': false,
   'agent.cancel': false,
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: `chat.new` (sessao que CORRE um chat) e
+  // `worktree.create` (worktree em disco) criam e expõem recursos novos no host
+  // -> AUMENTAM exposicao -> exigem nonce 'reset' (o precedente de
+  // agent.dispatch). Par obrigatorio de `INCREASES_EXPOSURE`
+  // (`worker/providers/telegram/parse.ts`).
+  'chat.new': true,
+  'worktree.create': true,
   // NAVEGACAO LOCAL (Onda 3/5): nunca aumenta exposicao; o nucleo resolve em local.
   menu: false,
   ajuda: false,

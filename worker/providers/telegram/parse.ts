@@ -81,6 +81,13 @@ export const INCREASES_EXPOSURE: Readonly<Record<SurfaceAction, boolean>> = Obje
   'agent.dispatch': true,
   'agent.status': false,
   'agent.cancel': false,
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: `chat.new` cria uma sessao e SUBMETE o
+  // prompt (o chat corre de verdade) e `worktree.create` cria um worktree em
+  // disco — AMBOS criam e expõem recursos novos no host (AUMENTAM exposicao ->
+  // exigem nonce 'reset', como agent.dispatch). O espelho fica FECHADO/par: o
+  // Record nao compila se `IpcIntentName` ganhar um membro sem decisao aqui.
+  'chat.new': true,
+  'worktree.create': true,
   // NAVEGACAO LOCAL (Onda 3/5): o worker resolve-a; nunca chega ao host.
   menu: false,
   ajuda: false,
@@ -385,9 +392,8 @@ export function criarParse(): {
     // edited_message / channel_post / edited_channel_post / inline_query /
     // my_chat_member / chat_member / unknown -> fora das superficies accionaveis.
     // TG-089: DESCARTADO E CONTADO — inclusive o `unknown`: um update que chega
-    // ao fio sem superficie accionavel e um descarte como outro qualquer (o
-    // espelho do discord conta igual o "dispatch-outro"; o protocolo puro e que
-    // nao conta, e nao ha equivalente no stream de updates do Telegram).
+    // ao fio sem superficie accionavel e um descarte como outro qualquer (todo
+    // descarte conta, `dispatch-outro` incluido; o protocolo puro nao conta).
     descartados += 1
     return undefined
   }

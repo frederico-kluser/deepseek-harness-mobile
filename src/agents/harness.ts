@@ -164,3 +164,224 @@ export function renderHarnessSkill(skill: HarnessSkillDefinition): string {
     '</skill_content>',
   ].join('\n')
 }
+
+/* ========================================================================== */
+/* EMENDA ONDA-2-CONTRATO-CAPACIDADES — os espelhos das CAPACIDADES NOVAS      */
+/* ========================================================================== */
+/**
+ * Sessoes, submissao de chat e metricas — o corte MINIMO estrutural para
+ * `chat.new` (uma sessao que CORRE um chat), `worktree.create` e o
+ * `AgentRunReport.metrics` de `src/contracts/ipc.ts`.
+ *
+ * Fonte: o checkout do harness em `/home/ondokai/Projects/deepseek-harness`
+ * (SOMENTE LEITURA), consultado e VERIFICADO neste commit — cada tipo abaixo
+ * cita o seu file:line. Regra deste ficheiro: NUNCA inventar a API do harness;
+ * o que o checkout nao confirmou fica registado como LACUNA (ver
+ * {@link HarnessSessionSubmitFace}) em vez de ser inventado. ZERO imports de
+ * `@deepseek-ai/*` — so tipos estruturais.
+ */
+
+/* --- 1. CRIACAO DE SESSAO (`ctx.sessions.create`) ------------------------- */
+
+/**
+ * A metadata de criacao de uma sessao (`CreateSessionOptions.meta`, espelho de
+ * `packages/core/session/src/types.ts:150-157`; o `SessionHeader` que ela dobra
+ * e `packages/core/session/src/types.ts:93`). O `cwd` tem de ser um caminho
+ * ABSOLUTO — o store LANCA com `meta.cwd` relativo (`create` em
+ * `packages/core/session/src/index.ts:958-968`, o `@throws` verificado) — e e
+ * por isso que `chat.new`/`worktree.create` o compõem a partir do worktree.
+ */
+export interface HarnessSessionCreateMeta {
+  /** Diretorio absoluto de trabalho da sessao (obrigatorio na pratica; ver acima). */
+  readonly cwd?: string | undefined
+  /** Sessao de onde esta nasceu (linhagem de fork/seed). */
+  readonly parentSession?: string | undefined
+  /** Epoch ms de criacao (o store preenche quando ausente). */
+  readonly createdAt?: number | undefined
+  /** `true` quando a sessao nasce com um prefixo herdado (fork). */
+  readonly isSeeded?: boolean | undefined
+  /** Classificacao de filho de subagente (so `'subagent'` no harness). */
+  readonly origin?: 'subagent' | undefined
+  /** Profundidade de delegacao (ausente = nivel topo). */
+  readonly delegationDepth?: number | undefined
+  /** Id do preset de agente com que a sessao foi composta. */
+  readonly agentPreset?: string | undefined
+}
+
+/**
+ * As opcoes de `create` (`CreateSessionOptions` de
+ * `packages/core/session/src/types.ts:137`). Corte consumido: `meta`. O
+ * original tambem tem `seed`/`inheritedEventCount` (:139/:145) — replay/fork —
+ * que NAO sao consumidos por estas capacidades.
+ */
+export interface HarnessCreateSessionOptions {
+  readonly meta?: HarnessSessionCreateMeta | undefined
+}
+
+/**
+ * A sessao criada (`Session` do core — `packages/core/session/src/index.ts`),
+ * no corte consumido: o `id` basta para a costura das ondas 3-4.
+ */
+export interface HarnessSession {
+  readonly id: string
+}
+
+/**
+ * O servico `ctx.sessions` (`SessionStore`, registado com `super(ctx,
+ * 'sessions')` em `packages/core/session/src/index.ts:936`; classe em :908).
+ * `create(id?, options?)` e `packages/core/session/src/index.ts:969` — "the
+ * live session, already entered and announced"; omitindo `id`, o store cunha
+ * `session-<n>`. LANCA com id duplicado, metadata invalida ou `meta.cwd`
+ * relativo.
+ */
+export interface HarnessSessionsService {
+  create(id?: string, options?: HarnessCreateSessionOptions): HarnessSession
+}
+
+/* --- 2. O CAMINHO DE SUBMISSAO (o chat CORRE de verdade) ------------------ */
+
+/**
+ * O resultado de um Remote call (`RemoteResult` de
+ * `packages/typert/protocol/src/types.ts:75-77`). NOTA DE CORTE (como em
+ * {@link HarnessPromptContentPart}): o contrato real tipa `error` como
+ * `RemoteFailure` (`packages/typert/protocol/src/types.ts:64-77`, erro em :77)
+ * — aqui alarga-se a `unknown`, direcao FAIL-SAFE que obriga a narrowing antes
+ * de tocar no erro. NAO congelar "RemoteResult.error e unknown" como facto do
+ * harness: o facto e `error: RemoteFailure`.
+ */
+export type HarnessRemoteResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: unknown }
+
+/**
+ * Uma parte do conteudo de um prompt (`PromptContentPart` de
+ * `packages/api/session-controller/src/types.ts:75-83`), no corte consumido:
+ * texto e o essencial; `image`/`file` espelham a forma (os tipos de media e o
+ * receipt sao branded no harness — aqui viajam string).
+ */
+export type HarnessPromptContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | {
+    readonly type: 'image'
+    readonly mediaType: string
+    readonly data: string
+    readonly name?: string | undefined
+  }
+  | { readonly type: 'file'; readonly receiptId: string }
+
+/**
+ * O input de `beginSubmission` (`BeginSubmissionInput` de
+ * `packages/api/session-controller/src/client/contract/session.ts:32`), no
+ * corte consumido: `mode` + `text` (o original tambem tem `attachments` e
+ * `onRetire` — nao consumidos).
+ */
+export interface HarnessBeginSubmissionInput {
+  /** `'queue'` acrescenta um turno; `'steer'` intercepta o que corre. */
+  readonly mode: 'queue' | 'steer'
+  /** O texto do prompt, exactamente como `prompt()` o vai enviar. */
+  readonly text: string
+}
+
+/**
+ * O handle de uma submissao (`SubmissionHandle` de
+ * `packages/api/session-controller/src/client/contract/session.ts:44`):
+ * `requestId` (:46) e a identidade do RPC do prompt (`SessionRequestId`,
+ * branded — `packages/api/session-controller/src/types.ts:376`) e `abandon()`
+ * (:48) e a saida pre-prompt quando o chamador nao chega a chamar `prompt()`.
+ */
+export interface HarnessSubmissionHandle {
+  readonly requestId: string
+  abandon(): void
+}
+
+/**
+ * O caminho de SUBMISSAO de uma sessao — "beginSubmission equivalente", o que
+ * faz o chat CORRER de verdade (espelho de `ISession` de
+ * `packages/api/session-controller/src/client/contract/session.ts:63-92`;
+ * `beginSubmission` em :77 e `prompt` em :86-92, com retorno
+ * `Promise<RemoteResult<{ accepted: true }>>`).
+ *
+ * >>> LACUNA REGISTADA (NAO INVENTADA). <<< O `ctx.sessions.create()` devolve o
+ * `Session` do CORE (`packages/core/session/src/index.ts:969`), que NAO expoe
+ * `beginSubmission` — o espelho acima e o `ISession` do session-controller
+ * (contrato de cliente). COMO o host compoe/obtem uma face de submissao em
+ * processo (a partir de uma sessao criada ou de um agente vivo) e uma costura
+ * das ondas 3-4, com o `user-rpc`/inbox do agente no fim do caminho
+ * (`SessionPromptRequest`, `packages/api/session-controller/src/types.ts:313`);
+ * nada disso foi decidido nem inventado aqui.
+ */
+export interface HarnessSessionSubmitFace {
+  /** Regista o eco local ANTES do prompt; devolve a identidade que `prompt` leva. */
+  beginSubmission(input: HarnessBeginSubmissionInput): HarnessSubmissionHandle
+  /**
+   * Envia o prompt para a sessao: `'queue'` acrescenta um turno, `'steer'`
+   * intercepta o que corre. `requestId` e o do `beginSubmission` — um prompt
+   * identificado que falha reforma o eco.
+   */
+  prompt(
+    content: readonly HarnessPromptContentPart[],
+    mode: 'queue' | 'steer',
+    signal?: AbortSignal,
+    requestId?: string,
+  ): Promise<HarnessRemoteResult<{ readonly accepted: true }>>
+}
+
+/* --- 3. AS METRICAS (session-stats + os eventos de usage) ----------------- */
+
+/**
+ * As metricas de sessao inteira (`SessionStatsProjection` de
+ * `packages/session/session-stats/src/types.ts:22-39`): contagens e tempos de
+ * parede dobrados do log duradouro completo — `turns`:24 (turnos com pelo
+ * menos um `step/end`), `steps`:26 (steps fechados), `llmMs`:28 (`step/start`
+ * -> `assistant/message`), `toolMs`:30 (`tool/call` -> `tool/result` por
+ * callId), `ttftMs`:32 (step -> primeiro delta nao-vazio, sobre `ttftSteps`),
+ * `ttftSteps`:34, `decodeMs`:36 (primeiro token -> `assistant/message`, sobre
+ * os steps que tambem reportam output tokens), `decodeTokens`:38. Cada campo e
+ * `0` ate ao primeiro evento que contribui. Sao ESTES os nomes que alimentam
+ * `AgentRunReport.metrics` (`src/contracts/ipc.ts`).
+ */
+export interface HarnessSessionStatsProjection {
+  turns: number
+  steps: number
+  llmMs: number
+  toolMs: number
+  ttftMs: number
+  ttftSteps: number
+  decodeMs: number
+  decodeTokens: number
+}
+
+/**
+ * A contabilizacao de tokens de UMA chamada ao modelo (`TokenUsage` de
+ * `packages/llm/llm/src/types.ts:162-176`: `inputTokens`:163, `outputTokens`:164,
+ * `totalTokens?`:172, `cacheReadTokens?`:173, `cacheWriteTokens?`:174,
+ * `reasoningTokens?`:175).
+ *
+ * CONTADORES DISJUNTOS (o JSDoc verificado em `packages/llm/llm/src/types.ts:156-161`):
+ * `inputTokens` e o input NAO-cacheado; o cache viaja separado em
+ * `cacheReadTokens`/`cacheWriteTokens` — NAO existe `cachedTokens` no harness
+ * (o nome do pedido inicial foi corrigido para os nomes REAIS).
+ */
+export interface HarnessTokenUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens?: number | undefined
+  cacheReadTokens?: number | undefined
+  cacheWriteTokens?: number | undefined
+  reasoningTokens?: number | undefined
+}
+
+/**
+ * O EVENTO de sessao que carrega o usage — o `assistant/message` de
+ * `packages/core/session/src/types.ts:321-328` (`usage?: TokenUsage` em :327).
+ * O JSDoc verificado (:313-315) e explicito: "Carries the step's `usage` ...
+ * (there is no separate usage record)" — o usage NUNCA vem num resultado de
+ * subagente (o `SubagentResult` de `packages/subagent/subagent/src/types.ts`
+ * nao o tem), vive AQUI. Corte consumido: `turn`/`step`/`usage`; o resto do
+ * evento (`message`, `stream`, `interrupted`) nao e consumido.
+ */
+export interface HarnessSessionUsageEvent {
+  readonly turn: number
+  readonly step: number
+  readonly usage?: HarnessTokenUsage | undefined
+}

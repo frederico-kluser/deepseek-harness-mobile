@@ -38,6 +38,11 @@ const VOCABULARIO_IPC: readonly IpcIntentName[] = [
   'agent.dispatch',
   'agent.status',
   'agent.cancel',
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: chats e worktrees (a renderizacao dos
+  // comandos /novo-chat, /novo-chat-wt, /worktree e /status-tarefa e das ondas
+  // 3-4; aqui so o vocabulo entra na SurfaceAction).
+  'chat.new',
+  'worktree.create',
 ]
 
 const IDENTIDADE = { userKey: 'dono', chatKey: 'grupo' } as const
@@ -52,17 +57,19 @@ const linhaTyped = (linha: ActionRow): ActionRow => linha
 /* ========================================================================== */
 
 describe('SurfaceAction -- o vocabulario fechado do contrato IPC', () => {
-  it('os NOVE intents do contrato IPC formam a SurfaceAction', () => {
+  it('os ONZE intents do contrato IPC formam a SurfaceAction', () => {
     assert.deepEqual(VOCABULARIO_IPC.toSorted(), [
       'agent.cancel',
       'agent.dispatch',
       'agent.status',
+      'chat.new',
       'emergency',
       'secret.rotate',
       'session.issue',
       'tunnel.down',
       'tunnel.status',
       'tunnel.up',
+      'worktree.create',
     ])
   })
 

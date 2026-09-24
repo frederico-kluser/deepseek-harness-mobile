@@ -49,6 +49,8 @@ import type { Readable, Writable } from 'node:stream'
 
 import {
   IPC_PROTOCOL_VERSION,
+  type AgentRunKind,
+  type AgentRunMetrics,
   type AgentRunReport,
   type AgentRunStatus,
   type ControlAction,
@@ -108,6 +110,12 @@ const MAX_ID_CHARS = 64
  */
 const MAX_NONCE_CHARS = 128
 const MAX_URL_CHARS = 2048
+/**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: teto da ref `base` de `worktree.create`
+ * (uma ref do git cabe com folga; e higiene de transporte, nao gramatica).
+ * Mesmo valor do codec do host (o gate de paridade prende a duplicacao).
+ */
+const MAX_WORKTREE_BASE_CHARS = 256
 
 /**
  * Marca que o processo foi arrancado PELO HOST, com o canal armado.
@@ -160,6 +168,9 @@ const INTENTS: readonly IpcIntentName[] = [
   'agent.dispatch',
   'agent.status',
   'agent.cancel',
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: chats e worktrees (ver o contrato).
+  'chat.new',
+  'worktree.create',
 ]
 
 /**
@@ -277,6 +288,25 @@ function isSkillName(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
 }
 
+/**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: a gramatica FECHADA do nome de worktree
+ * (contrato congelado dos comandos /worktree e /novo-chat-wt):
+ * `[a-z0-9-]{1,40}`. Vale para `params.worktree` (chat.new), `params.nome`
+ * (worktree.create) e o campo `worktree` de `AgentRunReport`. Mesmo predicado
+ * do codec do host (o gate de paridade prende a duplicacao).
+ */
+function isWorktreeName(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9-]{1,40}$/.test(value)
+}
+
+/**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: uma metrica de run — numero finito e NAO
+ * negativo (contadores e tempos do harness; um negativo e lixo, nao medicao).
+ */
+function isMetric(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
 /* ========================================================================== */
 /* Validacao / reconstrucao                                                   */
 /* ========================================================================== */
@@ -376,10 +406,12 @@ function buildIntent(bag: Record<string, unknown>): IpcParseResult {
 }
 
 /**
- * EMENDA ONDA-4-AGENTS-HOST: valida e RECONSTROI o payload `params` das
- * intencoes de agente — o MESMO contrato do codec do host (o gate de paridade
- * prende a duplicacao). PRESENTE SSE A INTENT O EXIGE: `agent.dispatch` exige
- * `{ skill, prompt }`, `agent.cancel` exige `{ agentId }`, e qualquer outra
+ * EMENDA ONDA-4-AGENTS-HOST (alargada pela EMENDA ONDA-2-CONTRATO-CAPACIDADES):
+ * valida e RECONSTROI o payload `params` — o MESMO contrato do codec do host (o
+ * gate de paridade prende a duplicacao). PRESENTE SSE A INTENT O EXIGE:
+ * `agent.dispatch` exige `{ skill, prompt }`, `agent.cancel` exige
+ * `{ agentId }`, `chat.new` exige `{ prompt, worktree? }` (EMENDA ONDA-2),
+ * `worktree.create` exige `{ nome, base? }` (EMENDA ONDA-2), e qualquer outra
  * intent (incluindo `agent.status`) NAO transporta params — o que vier e
  * descartado pela reconstrucao.
  */
@@ -387,7 +419,11 @@ function paramsAgentes(
   intent: IpcIntentName,
   params: unknown,
 ): IpcAgentIntentParams | undefined | null {
-  const exige = intent === 'agent.dispatch' || intent === 'agent.cancel'
+  const exige =
+    intent === 'agent.dispatch' ||
+    intent === 'agent.cancel' ||
+    intent === 'chat.new' ||
+    intent === 'worktree.create'
   if (params === undefined) return exige ? null : undefined
   if (typeof params !== 'object' || params === null || Array.isArray(params)) return null
   const bag = params as Record<string, unknown>
@@ -403,6 +439,26 @@ function paramsAgentes(
     const agentId = bag['agentId']
     if (!isCleanText(agentId, MAX_ID_CHARS)) return null
     return { agentId }
+  }
+  if (intent === 'chat.new') {
+    // `{ prompt, worktree? }` — o prompt e o que o chat VAI CORRER (teto do
+    // Telegram); o worktree e opcional e tem a gramatica fechada do contrato.
+    const prompt = bag['prompt']
+    if (!isCleanText(prompt, MAX_MESSAGE_CHARS)) return null
+    const worktree = bag['worktree']
+    if (worktree === undefined) return { prompt }
+    if (!isWorktreeName(worktree)) return null
+    return { prompt, worktree }
+  }
+  if (intent === 'worktree.create') {
+    // `{ nome, base? }` — o nome tem a gramatica fechada [a-z0-9-]{1,40}; a ref
+    // `base` e opcional e so passa higiene de transporte (texto limpo, 256).
+    const nome = bag['nome']
+    if (!isWorktreeName(nome)) return null
+    const base = bag['base']
+    if (base === undefined) return { nome }
+    if (!isCleanText(base, MAX_WORKTREE_BASE_CHARS)) return null
+    return { nome, base }
   }
   return undefined
 }
@@ -597,22 +653,73 @@ const MAX_RUN_SUMMARY_CHARS = 512
 
 const RUN_STATUSES: readonly AgentRunStatus[] = ['running', 'done', 'failed', 'cancelled']
 
+/** EMENDA ONDA-2-CONTRATO-CAPACIDADES: o vocabulario FECHADO de {@link AgentRunKind}. */
+const RUN_KINDS: readonly AgentRunKind[] = ['agent', 'chat', 'worktree']
+
+/**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: as chaves do bloco `metrics`, na ORDEM
+ * EXATA da reconstrucao — os DOIS codecs usam esta ordem (o gate de paridade
+ * compara as linhas byte a byte).
+ */
+const CHAVES_DE_METRICAS: readonly (keyof AgentRunMetrics)[] = [
+  'inputTokens',
+  'outputTokens',
+  'cacheReadTokens',
+  'cacheWriteTokens',
+  'turns',
+  'steps',
+  'llmMs',
+  'toolMs',
+  'ttftMs',
+  'ttftSteps',
+  'decodeMs',
+  'decodeTokens',
+]
+
+/**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: valida e RECONSTROI o bloco `metrics` de
+ * UM run. So os campos do contrato sao reconstruidos (um campo a mais na linha
+ * nao chega ao consumidor); cada campo presente tem de ser uma metrica valida
+ * ({@link isMetric}). Devolve `null` quando a forma e invalida.
+ */
+function buildAgentMetrics(value: unknown): AgentRunMetrics | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const bag = value as Record<string, unknown>
+  const out: { -readonly [K in keyof AgentRunMetrics]?: number } = {}
+  for (const campo of CHAVES_DE_METRICAS) {
+    const v = bag[campo]
+    if (v === undefined) continue
+    if (!isMetric(v)) return null
+    out[campo] = v
+  }
+  return out
+}
+
 /**
  * Valida e RECONSTROI uma linha `AgentRunReport`. NUNCA lanca (S4).
  */
 function buildAgentRun(bag: Record<string, unknown>): AgentRunReport | null {
-  const { id, skill, status, startedAt, summary } = bag
+  const { id, skill, status, startedAt, summary, kind, worktree, metrics } = bag
   if (!isCleanText(id, MAX_ID_CHARS)) return null
   if (!isSkillName(skill)) return null
   if (!isMember(RUN_STATUSES, status)) return null
   if (!isFiniteNumber(startedAt)) return null
   if (summary !== undefined && !isDisplayText(summary, MAX_RUN_SUMMARY_CHARS)) return null
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: `kind`/`worktree`/`metrics` sao
+  // ADITIVOS e OPCIONAIS — o host antigo nao os envia e o run continua valido.
+  if (kind !== undefined && !isMember(RUN_KINDS, kind)) return null
+  if (worktree !== undefined && !isWorktreeName(worktree)) return null
+  const metricas = metrics === undefined ? undefined : buildAgentMetrics(metrics)
+  if (metricas === null) return null
 
   return {
     id,
     skill,
     status,
     startedAt,
+    ...(kind === undefined ? {} : { kind }),
+    ...(worktree === undefined ? {} : { worktree }),
+    ...(metricas === undefined ? {} : { metrics: metricas }),
     ...(summary === undefined ? {} : { summary }),
   }
 }

@@ -16,6 +16,7 @@ import { PassThrough, Writable } from 'node:stream'
 import { describe, it } from 'node:test'
 
 import type {
+  AgentRunReport,
   IpcErrorCode,
   IpcIntentMessage,
   IpcIntentName,
@@ -87,6 +88,9 @@ const INTENCOES: readonly IpcIntentName[] = [
   'agent.dispatch',
   'agent.status',
   'agent.cancel',
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: chats e worktrees.
+  'chat.new',
+  'worktree.create',
 ]
 
 const INTENCAO: IpcIntentMessage = {
@@ -210,14 +214,21 @@ describe('S1: uma mensagem por linha, UTF-8, terminada em \\n', () => {
       // EMENDA ONDA-4-AGENTS-HOST: cada intent round-tripa com o corpo que o
       // contrato lhe permite — `agent.dispatch` exige params { skill, prompt },
       // `agent.cancel` exige params { agentId }, `agent.status` nao tem params.
+      // EMENDA ONDA-2-CONTRATO-CAPACIDADES: `chat.new` exige params
+      // `{ prompt, worktree? }` e `worktree.create` `{ nome, base? }` — AMBAS
+      // aumentam exposicao (viajam com nonce).
       const message: IpcIntentMessage =
         intent === 'agent.dispatch'
           ? { ...INTENCAO, intent, nonce: 'n-opaco', params: { skill: 'deep-orchestrator-agent-skill', prompt: 'faz isto' } }
           : intent === 'agent.cancel'
             ? { ...INTENCAO, intent, params: { agentId: 'ABCD1234' } }
-            : intent === 'agent.status'
-              ? { ...INTENCAO, intent }
-              : { ...INTENCAO, intent, nonce: 'n-opaco' }
+            : intent === 'chat.new'
+              ? { ...INTENCAO, intent, nonce: 'n-opaco', params: { prompt: 'explica o repo', worktree: 'onda3-render' } }
+              : intent === 'worktree.create'
+                ? { ...INTENCAO, intent, nonce: 'n-opaco', params: { nome: 'onda3-render', base: 'origin/main' } }
+                : intent === 'agent.status'
+                  ? { ...INTENCAO, intent }
+                  : { ...INTENCAO, intent, nonce: 'n-opaco' }
       const verdict = parseIpcLine(serializeIpcMessage(message, 'to-host').trimEnd(), 'to-host')
       assert.deepEqual(verdict.ok ? verdict.message : undefined, message)
     }
@@ -1236,6 +1247,179 @@ describe('agent.report (host -> worker)', () => {
   it('NUNCA e legal no sentido errado (to-host): rejeitado por S4', () => {
     const mensagem = { v: 2, type: 'agent.report', runs: [] } as const
     assert.throws(() => serializeIpcMessage(mensagem, 'to-host'), IpcChannelError)
+  })
+})
+
+/* ========================================================================== */
+/* EMENDA ONDA-2-CONTRATO-CAPACIDADES: params de chat.new/worktree.create e   */
+/* os campos ADITIVOS de agent.report (kind/worktree/metrics)                  */
+/* ========================================================================== */
+
+describe('EMENDA ONDA-2: os params de chat.new/worktree.create (presente sse a intent exige)', () => {
+  const linha = (intent: string, params: unknown): string =>
+    `{"v":2,"type":"intent","intent":"${intent}","requestId":"r","from":"1","chat":"1","params":${JSON.stringify(params)}}`
+  const linhaSemParams = (intent: string): string =>
+    `{"v":2,"type":"intent","intent":"${intent}","requestId":"r","from":"1","chat":"1"}`
+
+  it('chat.new SEM params (ou sem prompt) e forma-invalida — fail-closed', () => {
+    for (const l of [
+      linhaSemParams('chat.new'),
+      linha('chat.new', {}),
+      linha('chat.new', { worktree: 'onda3-render' }),
+      linha('chat.new', { prompt: 42 }),
+      linha('chat.new', { prompt: '' }),
+    ]) {
+      assert.deepEqual(parseIpcLine(l, 'to-host'), { ok: false, reason: 'forma-invalida' }, l)
+    }
+  })
+
+  it('chat.new aceita `worktree?` na gramatica FECHADA [a-z0-9-]{1,40}; fora, forma-invalida', () => {
+    for (const worktree of ['a', 'onda3-render', 'x'.repeat(40), '0', 'wt-01']) {
+      const verdict = parseIpcLine(linha('chat.new', { prompt: 'p', worktree }), 'to-host')
+      assert.equal(verdict.ok, true, worktree)
+      assert.deepEqual(
+        verdict.ok && verdict.message.type === 'intent' ? verdict.message.params : undefined,
+        { prompt: 'p', worktree },
+      )
+    }
+    for (const worktree of ['', 'A', 'x'.repeat(41), 'com espaço', 'com_underscore', 'ç', 'a.b', 'a/b']) {
+      assert.deepEqual(
+        parseIpcLine(linha('chat.new', { prompt: 'p', worktree }), 'to-host'),
+        { ok: false, reason: 'forma-invalida' },
+        worktree,
+      )
+    }
+  })
+
+  it('o prompt de chat.new tem o teto de transporte (4096), como o do dispatch', () => {
+    assert.deepEqual(
+      parseIpcLine(linha('chat.new', { prompt: 'p'.repeat(4097) }), 'to-host'),
+      { ok: false, reason: 'forma-invalida' },
+    )
+    assert.equal(parseIpcLine(linha('chat.new', { prompt: 'p'.repeat(4096) }), 'to-host').ok, true)
+  })
+
+  it('worktree.create EXIGE { nome } na gramatica; `base?` e texto limpo com teto 256', () => {
+    for (const params of [{ nome: 'wt-01' }, { nome: 'wt-01', base: 'origin/main' }, { nome: 'wt-01', base: 'x'.repeat(256) }]) {
+      const verdict = parseIpcLine(linha('worktree.create', params), 'to-host')
+      assert.equal(verdict.ok, true, JSON.stringify(params))
+      assert.deepEqual(
+        verdict.ok && verdict.message.type === 'intent' ? verdict.message.params : undefined,
+        params,
+      )
+    }
+    for (const params of [
+      {},
+      { base: 'origin/main' },
+      { nome: 'Maiuscula' },
+      { nome: 'x'.repeat(41) },
+      { nome: 'wt-01', base: '' },
+      { nome: 'wt-01', base: 'x'.repeat(257) },
+      { nome: 'wt-01', base: 'a\u0007b' },
+    ]) {
+      assert.deepEqual(
+        parseIpcLine(linha('worktree.create', params), 'to-host'),
+        { ok: false, reason: 'forma-invalida' },
+        JSON.stringify(params),
+      )
+    }
+  })
+
+  it('a reconstrucao dos params NAO transporta campos inventados', () => {
+    const chat = parseIpcLine(
+      linha('chat.new', { prompt: 'p', worktree: 'wt-01', nome: 'inventado', skill: 'x', extra: true }),
+      'to-host',
+    )
+    assert.deepEqual(chat.ok && chat.message.type === 'intent' ? chat.message.params : undefined, {
+      prompt: 'p',
+      worktree: 'wt-01',
+    })
+    const wt = parseIpcLine(linha('worktree.create', { nome: 'wt-01', prompt: 'inventado', extra: true }), 'to-host')
+    assert.deepEqual(wt.ok && wt.message.type === 'intent' ? wt.message.params : undefined, { nome: 'wt-01' })
+  })
+
+  it('os params novos nao viajam nas intents de TUNEL (a regra por intent nao mudou)', () => {
+    const verdict = parseIpcLine(linha('tunnel.up', { prompt: 'p', nome: 'wt-01' }), 'to-host')
+    assert.equal(verdict.ok, true)
+    assert.equal(verdict.ok && Object.hasOwn(verdict.message, 'params'), false)
+  })
+})
+
+describe('EMENDA ONDA-2: agent.report com kind/worktree/metrics (ADITIVOS — host antigo continua valido)', () => {
+  const linha = (run: unknown): string => `{"v":2,"type":"agent.report","runs":[${JSON.stringify(run)}]}`
+  const RUN_BASE: AgentRunReport = { id: 'ABCD1234', skill: 's', status: 'done', startedAt: 1 }
+
+  it('sem kind/worktree/metrics o run continua EXATAMENTE como antes (compat)', () => {
+    assert.deepEqual(parseIpcLine(linha(RUN_BASE), 'to-worker'), { ok: true, message: { v: 2, type: 'agent.report', runs: [RUN_BASE] } })
+  })
+
+  it('round-tripa com os tres campos aditivos presentes', () => {
+    const run: AgentRunReport = {
+      ...RUN_BASE,
+      kind: 'chat',
+      worktree: 'onda3-render',
+      metrics: { inputTokens: 1, outputTokens: 2, turns: 3, steps: 4, llmMs: 5, toolMs: 6, ttftMs: 7, ttftSteps: 8, decodeMs: 9, decodeTokens: 10, cacheReadTokens: 11, cacheWriteTokens: 12 },
+      summary: 'resumo',
+    }
+    const verdict = parseIpcLine(serializeIpcMessage({ v: 2, type: 'agent.report', runs: [run] }, 'to-worker').trimEnd(), 'to-worker')
+    assert.deepEqual(verdict.ok ? verdict.message : undefined, { v: 2, type: 'agent.report', runs: [run] })
+  })
+
+  it('kind FECHADO em agent|chat|worktree e worktree na gramatica; fora = forma-invalida', () => {
+    for (const run of [
+      { ...RUN_BASE, kind: 'x' },
+      { ...RUN_BASE, kind: 'task' },
+      { ...RUN_BASE, worktree: 'Maiuscula' },
+      { ...RUN_BASE, worktree: 'x'.repeat(41) },
+    ]) {
+      assert.deepEqual(parseIpcLine(linha(run), 'to-worker'), { ok: false, reason: 'forma-invalida' }, JSON.stringify(run))
+    }
+    for (const kind of ['agent', 'chat', 'worktree']) {
+      assert.equal(parseIpcLine(linha({ ...RUN_BASE, kind }), 'to-worker').ok, true, kind)
+    }
+  })
+
+  it('metrics: so numeros finitos e NAO negativos; nao-objeto ou campo invalido = forma-invalida', () => {
+    for (const metrics of [
+      'nao-e-objeto',
+      [],
+      { inputTokens: -1 },
+      { inputTokens: '10' },
+      { inputTokens: null },
+      { turns: true },
+      { llmMs: -0.5 },
+    ]) {
+      assert.deepEqual(
+        parseIpcLine(linha({ ...RUN_BASE, metrics }), 'to-worker'),
+        { ok: false, reason: 'forma-invalida' },
+        JSON.stringify(metrics),
+      )
+    }
+  })
+
+  it('o campo de metrica INVENTADO e descartado pela reconstrucao (so os do contrato chegam ao consumidor)', () => {
+    const verdict = parseIpcLine(linha({ ...RUN_BASE, metrics: { inputTokens: 1, extra: 99, skill: 'x' } }), 'to-worker')
+    assert.equal(verdict.ok, true)
+    assert.deepEqual(
+      verdict.ok && verdict.message.type === 'agent.report' ? verdict.message.runs[0]?.metrics : undefined,
+      { inputTokens: 1 },
+    )
+    const vazio = parseIpcLine(linha({ ...RUN_BASE, metrics: {} }), 'to-worker')
+    assert.deepEqual(
+      vazio.ok && vazio.message.type === 'agent.report' ? vazio.message.runs[0]?.metrics : undefined,
+      {},
+    )
+  })
+
+  it('o teto de 64 runs NAO muda com os campos novos: 65 continuam a nao caber', () => {
+    const run = { ...RUN_BASE, kind: 'chat', worktree: 'wt-01', metrics: { turns: 1 } }
+    const runs = Array.from({ length: 64 }, (_, i) => ({ ...run, id: `ID${String(i).padStart(6, '0')}` }))
+    assert.equal(parseIpcLine(JSON.stringify({ v: 2, type: 'agent.report', runs }), 'to-worker').ok, true)
+    runs.push({ ...run, id: 'EXTRA00' })
+    assert.deepEqual(
+      parseIpcLine(JSON.stringify({ v: 2, type: 'agent.report', runs }), 'to-worker'),
+      { ok: false, reason: 'forma-invalida' },
+    )
   })
 })
 

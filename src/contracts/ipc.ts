@@ -316,6 +316,33 @@ export type IpcIntentName =
   | 'agent.dispatch'
   | 'agent.status'
   | 'agent.cancel'
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES (contrato das 3 capacidades novas —
+  // SEM comportamento aqui; a renderizacao dos comandos e das ondas 3-4):
+  //   - `chat.new`        — /novo-chat <prompt> e /novo-chat-wt <worktree>
+  //                         <prompt>. Cria UMA sessao (cwd dentro do worktree
+  //                         quando indicado) e SUBMETE o prompt — o chat corre
+  //                         de verdade (o caminho de submissao esta espelhado
+  //                         em `src/agents/harness.ts`). Params EXIGIDOS:
+  //                         `{ prompt, worktree? }`. AUMENTA exposicao ->
+  //                         EXIGE nonce (2 etapas).
+  //   - `worktree.create` — /worktree <nome> [base]. Cria um worktree com o
+  //                         nome na gramatica FECHADA [a-z0-9-]{1,40}, a partir
+  //                         da ref `base` quando indicada. Params EXIGIDOS:
+  //                         `{ nome, base? }`. AUMENTA exposicao -> EXIGE nonce
+  //                         (2 etapas).
+  // AMBAS pedem o nonce com a acao de controlo `'reset'` — o PRECEDENTE de
+  // `agent.dispatch`/`secret.rotate` (a ponte intent->acao e
+  // `worker/providers/registry.ts` `ACAO_PARA_NONCE`). O universo de nonce
+  // continua UNICO: `ControlAction` (`src/contracts/control.ts`, PREP 5) NAO
+  // cresceu e o `ConfirmService` ja e generico por acao — proibido um segundo
+  // servico de nonce (aviso em `src/index.ts`).
+  //
+  // `/status-tarefa <id>` e LEITURA PURA e NAO e intent nova: reusa
+  // `agent.status` SEM params (a regra do codec e fechada — `agent.status` nao
+  // transporta params) e o `<id>` filtra-se no WORKER sobre o `agent.report`
+  // completo (teto 64 runs). DECISAO registada no handoff da onda 2.
+  | 'chat.new'
+  | 'worktree.create'
 
 /**
  * Intencao vinda do worker.
@@ -350,7 +377,11 @@ export interface IpcIntentMessage extends IpcEnvelope {
    *
    *   - `agent.dispatch` EXIGE `{ skill, prompt }`;
    *   - `agent.cancel`   EXIGE `{ agentId }`;
-   *   - `agent.status`   NAO transporta params (leitura pura);
+   *   - `chat.new`       EXIGE `{ prompt, worktree? }` (EMENDA ONDA-2);
+   *   - `worktree.create` EXIGE `{ nome, base? }` (EMENDA ONDA-2);
+   *   - `agent.status`   NAO transporta params (leitura pura — e por isso que
+   *                      `/status-tarefa <id>` reusa `agent.status` e filtra o
+   *                      `<id>` no worker);
    *   - qualquer outra intent NAO transporta params.
    *
    * O codec RECONSTROI o objeto com so os campos da intent — um campo a mais
@@ -361,8 +392,8 @@ export interface IpcIntentMessage extends IpcEnvelope {
 }
 
 /**
- * EMENDA ONDA-4-AGENTS-HOST: a forma do payload de agente (ver o campo
- * `params` de {@link IpcIntentMessage}). Todos os campos sao opcionais POR
+ * EMENDA ONDA-4-AGENTS-HOST: a forma do payload das intencoes COM params (ver o
+ * campo `params` de {@link IpcIntentMessage}). Todos os campos sao opcionais POR
  * FORMA e obrigatorios POR INTENT — quem impoe a presenca e o codec, intent a
  * intent, nunca este tipo.
  */
@@ -373,6 +404,23 @@ export interface IpcAgentIntentParams {
   readonly prompt?: string | undefined
   /** O id CURTO do run a cancelar — o mesmo que `agent.report` lista. */
   readonly agentId?: string | undefined
+  /**
+   * EMENDA ONDA-2-CONTRATO-CAPACIDADES: o worktree da sessao de `chat.new`
+   * (a sessao nasce com cwd dentro dele). Gramatica FECHADA [a-z0-9-]{1,40} —
+   * a mesma do contrato congelado dos comandos /worktree e /novo-chat-wt.
+   */
+  readonly worktree?: string | undefined
+  /**
+   * EMENDA ONDA-2-CONTRATO-CAPACIDADES: o nome do worktree a criar
+   * (`worktree.create`). Gramatica FECHADA [a-z0-9-]{1,40}.
+   */
+  readonly nome?: string | undefined
+  /**
+   * EMENDA ONDA-2-CONTRATO-CAPACIDADES: a ref de PARTIDA do worktree
+   * (`worktree.create`, opcional — /worktree <nome> [base]). Higiene de
+   * transporte apenas (texto limpo, teto 256): o valor e decidido pelo host.
+   */
+  readonly base?: string | undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +563,75 @@ export interface IpcPairingSuccessMessage extends IpcEnvelope {
 export type AgentRunStatus = 'running' | 'done' | 'failed' | 'cancelled'
 
 /**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: a NATUREZA de uma linha de `agent.report`.
+ * Vocabulario FECHADO; o campo `kind` do run e OPCIONAL e a ausencia vale
+ * `'agent'` (compatibilidade: o host antigo nao o envia e o run continua a ser
+ * o dispatch de sempre).
+ *
+ *   - `agent`    — `agent.dispatch` (uma skill disparada);
+ *   - `chat`     — `chat.new` (uma sessao criada com o prompt submetido — as
+ *                  /status-tarefa e /agentes destas capacidades listam-nas);
+ *   - `worktree` — `worktree.create` (a criacao de um worktree como tarefa).
+ */
+export type AgentRunKind = 'agent' | 'chat' | 'worktree'
+
+/**
+ * EMENDA ONDA-2-CONTRATO-CAPACIDADES: metricas ADITIVAS de UM run — TODOS os
+ * campos OPCIONAIS. Aditivo por construcao: o host antigo nao envia nenhum e o
+ * report continua valido (o codec reconstroi so o que conhece); o teto de 64
+ * runs por mensagem NAO muda.
+ *
+ * Os NOMES espelham o HARNESS (checkout `/home/ondokai/Projects/deepseek-harness`,
+ * verificados — NUNCA inventados):
+ *
+ *   - `inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens` —
+ *     `TokenUsage` (`packages/llm/llm/src/types.ts:162-176`; inputTokens em :163,
+ *     outputTokens em :164, totalTokens?:172, cacheReadTokens?:173,
+ *     cacheWriteTokens?:174, reasoningTokens?:175). CONTADORES DISJUNTOS:
+ *     `inputTokens` e o input NAO-cacheado; o cache viaja em
+ *     `cacheReadTokens`/`cacheWriteTokens` (o `cachedTokens` do pedido inicial
+ *     nao existe no harness — ESTES sao os nomes reais). O usage viaja nos
+ *     eventos de sessao `assistant/message` (`usage?: TokenUsage`,
+ *     `packages/core/session/src/types.ts:321-328` — "there is no separate
+ *     usage record"); NUNCA vem no resultado de um subagente.
+ *   - `turns`/`steps`/`llmMs`/`toolMs`/`ttftMs`/`ttftSteps`/`decodeMs`/
+ *     `decodeTokens` — `SessionStatsProjection`
+ *     (`packages/session/session-stats/src/types.ts:22-39`; turns:24, steps:26,
+ *     llmMs:28, toolMs:30, ttftMs:32, ttftSteps:34, decodeMs:36, decodeTokens:38).
+ *
+ * `totalTokens`/`reasoningTokens` ficaram FORA do corte (minimo consumido);
+ * acrescenta-los e aditivo se as ondas 3-4 os precisarem. A forma espelhada em
+ * `src/agents/harness.ts` e a fonte dos valores (o registry do host preenche
+ * estes campos a partir dela).
+ */
+export interface AgentRunMetrics {
+  /** Tokens de entrada nao-cacheados (espelho `TokenUsage.inputTokens`). */
+  readonly inputTokens?: number | undefined
+  /** Tokens de saida (espelho `TokenUsage.outputTokens`). */
+  readonly outputTokens?: number | undefined
+  /** Tokens de cache lidos (espelho `TokenUsage.cacheReadTokens`). */
+  readonly cacheReadTokens?: number | undefined
+  /** Tokens de cache escritos (espelho `TokenUsage.cacheWriteTokens`). */
+  readonly cacheWriteTokens?: number | undefined
+  /** Turnos com pelo menos um step fechado (espelho `SessionStatsProjection.turns`). */
+  readonly turns?: number | undefined
+  /** Steps fechados (espelho `SessionStatsProjection.steps`). */
+  readonly steps?: number | undefined
+  /** Tempo de modelo somado, em ms (espelho `SessionStatsProjection.llmMs`). */
+  readonly llmMs?: number | undefined
+  /** Tempo de ferramentas somado, em ms (espelho `SessionStatsProjection.toolMs`). */
+  readonly toolMs?: number | undefined
+  /** Latencia de primeiro token somada, em ms (espelho `SessionStatsProjection.ttftMs`). */
+  readonly ttftMs?: number | undefined
+  /** Steps com primeiro token registado (espelho `SessionStatsProjection.ttftSteps`). */
+  readonly ttftSteps?: number | undefined
+  /** Tempo de decodificacao somado, em ms (espelho `SessionStatsProjection.decodeMs`). */
+  readonly decodeMs?: number | undefined
+  /** Tokens de saida dos steps com decode cronometrado (espelho `SessionStatsProjection.decodeTokens`). */
+  readonly decodeTokens?: number | undefined
+}
+
+/**
  * EMENDA ONDA-4-AGENTS-HOST: UMA linha da lista de runs.
  *
  * `summary` e o RESUMO CURTO da resposta do agente (1 linha). E texto do
@@ -530,6 +647,24 @@ export interface AgentRunReport {
   readonly status: AgentRunStatus
   /** Epoch ms do inicio do run. */
   readonly startedAt: number
+  /**
+   * EMENDA ONDA-2-CONTRATO-CAPACIDADES: a natureza do run (FECHADO em
+   * {@link AgentRunKind}). Ausente = `agent` — o worker antigo nao o envia e a
+   * semantica nao muda.
+   */
+  readonly kind?: AgentRunKind | undefined
+  /**
+   * EMENDA ONDA-2-CONTRATO-CAPACIDADES: o worktree a que o run esta ligado
+   * (`chat.new` com `worktree`, ou o `nome` de um `worktree.create`). Gramatica
+   * FECHADA [a-z0-9-]{1,40}. Ausente = run fora de worktree.
+   */
+  readonly worktree?: string | undefined
+  /**
+   * EMENDA ONDA-2-CONTRATO-CAPACIDADES: as metricas resumidas do run (espelhos
+   * do harness — ver {@link AgentRunMetrics}). Ausente = o host nao mediu (o
+   * worker antigo ignora-as em silencio pela reconstrucao do codec).
+   */
+  readonly metrics?: AgentRunMetrics | undefined
   /** Resumo curto do resultado, presente sse o run terminou e ha texto. */
   readonly summary?: string | undefined
 }

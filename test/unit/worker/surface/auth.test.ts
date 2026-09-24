@@ -896,6 +896,10 @@ describe('criarGuardDeIdentidade — decisao por evento, descartado CONTADO', ()
       'agent.dispatch': true,
       'agent.status': false,
       'agent.cancel': false,
+      // EMENDA ONDA-2-CONTRATO-CAPACIDADES: chat.new (sessao que CORRE um chat)
+      // e worktree.create (worktree em disco) criam recursos no host -> nonce.
+      'chat.new': true,
+      'worktree.create': true,
       menu: false,
       ajuda: false,
       inicio: false,
@@ -905,6 +909,8 @@ describe('criarGuardDeIdentidade — decisao por evento, descartado CONTADO', ()
     assert.equal(AUMENTA_EXPOSICAO['agent.dispatch'], true, 'dispatch executa codigo no host')
     assert.equal(AUMENTA_EXPOSICAO['agent.status'], false, 'status e leitura pura')
     assert.equal(AUMENTA_EXPOSICAO['agent.cancel'], false, 'cancelar reduz e dispensa nonce')
+    assert.equal(AUMENTA_EXPOSICAO['chat.new'], true, 'novo chat cria sessao e submete prompt -> exige nonce')
+    assert.equal(AUMENTA_EXPOSICAO['worktree.create'], true, 'worktree novo e recurso novo no host -> exige nonce')
     assert.equal(AUMENTA_EXPOSICAO.menu, false, 'navegacao local nunca aumenta exposicao')
     assert.equal(AUMENTA_EXPOSICAO.ajuda, false, 'navegacao local nunca aumenta exposicao')
     assert.equal(AUMENTA_EXPOSICAO.inicio, false, 'navegacao local nunca aumenta exposicao')

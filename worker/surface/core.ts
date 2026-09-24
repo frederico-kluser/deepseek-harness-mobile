@@ -489,6 +489,9 @@ function textoDeResultadoDoAck(acao: SurfaceAction, result: 'accepted' | 'noop')
     case 'ajuda':
     case 'inicio':
     case 'cancel':
+    // STUB do contrato (onda2) — onda 3 substitui.
+    case 'chat.new':
+    case 'worktree.create':
       // Nav e leituras nao confirmam accao destrutiva; generico. O `cancel` e
       // navegacao local que nunca gera ack (nao envia intent); cobre o tipo.
       // EMENDA ONDA-5-AGENTS-SUPERFICIE: `agent.status` e `agent.cancel` NAO
@@ -1135,6 +1138,14 @@ export function criarNucleo(deps: NucleoDeps): Nucleo {
           vindaDoCartao ? { text: 'A derrubar tudo…' } : undefined,
         )
         await comandos.emergencia(event.identity)
+        return
+      // STUB do contrato (onda2) — onda 3 substitui.
+      case 'chat.new':
+      case 'worktree.create':
+        // Nenhum botao produz estas accoes ainda: resposta de protocolo que
+        // fecha o girador (TG-027) e NENHUM intent — fail-closed, como o
+        // `agent.cancel` acima.
+        await deps.sender.answer(event.answerTarget)
         return
     }
   }

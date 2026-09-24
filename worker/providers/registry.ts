@@ -250,6 +250,15 @@ const ACAO_PARA_NONCE: Readonly<Partial<Record<SurfaceAction, ControlAction>>> =
   // do /rotacionar (o vocabulario de ControlAction e fechado no PREP 5 e o
   // host consome 'reset' em `src/control/surface-ipc.ts`).
   'agent.dispatch': 'reset',
+  // EMENDA ONDA-2-CONTRATO-CAPACIDADES: `chat.new`/`worktree.create` criam e
+  // expõem recursos novos no host (uma sessao que CORRE um chat; um worktree em
+  // disco) -> AUMENTAM exposicao e pedem o nonce com a acao 'reset' — o MESMO
+  // precedente de `agent.dispatch`/`secret.rotate`. O universo de nonce fica
+  // UNICO: `ControlAction` (PREP 5) NAO cresceu e o `ConfirmService` ja e
+  // generico por acao (um segundo servico de nonce e proibido — aviso em
+  // `src/index.ts`).
+  'chat.new': 'reset',
+  'worktree.create': 'reset',
 }
 
 export interface PonteDeNonce {

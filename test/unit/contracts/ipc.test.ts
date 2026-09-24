@@ -180,3 +180,125 @@ describe('EMENDA ONDA-4-AGENTS-HOST: as intents de agente e o agent.report nos D
     assert.deepEqual(parseHost(linhaHost.trimEnd(), 'to-worker'), parseWorker(linhaWorker.trimEnd(), 'to-worker'))
   })
 })
+
+describe('EMENDA ONDA-2-CONTRATO-CAPACIDADES: chat.new/worktree.create e o report com metricas nos DOIS codecs', () => {
+  it('chat.new { prompt, worktree? } round-tripa fiel nos dois codecs, byte a byte', () => {
+    // O nonce AQUI e o resultado do fluxo de 2 etapas (a intent AUMENTA
+    // exposicao -> `nonce.request` com acao 'reset' -> `nonce.issued` -> o
+    // clique devolve o token no `nonce` do intent). O canal transporta-o opaco.
+    const intent = {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'intent',
+      intent: 'chat.new',
+      requestId: '01J0000000000000000000000A',
+      from: '123456789',
+      chat: '-1001234567890',
+      nonce: 'nonce-opaco',
+      params: { prompt: 'explica o repo', worktree: 'onda3-render' },
+    } as const
+
+    const linhaHost = serializeHost(intent, 'to-host')
+    const linhaWorker = serializeWorker(intent, 'to-host')
+    assert.equal(linhaWorker, linhaHost, 'os dois codecs serializam a mesma linha')
+    const viaHost = parseHost(linhaHost.trimEnd(), 'to-host')
+    assert.deepEqual(viaHost, parseWorker(linhaWorker.trimEnd(), 'to-host'))
+    assert.deepEqual(viaHost.ok ? viaHost.message : undefined, intent)
+  })
+
+  it('chat.new sem worktree e worktree.create { nome, base? } round-tripam fiel nos dois codecs', () => {
+    for (const params of [
+      { prompt: 'so o prompt' },
+      { prompt: 'com worktree', worktree: 'wt-01' },
+    ]) {
+      const chat = {
+        v: IPC_PROTOCOL_VERSION,
+        type: 'intent',
+        intent: 'chat.new',
+        requestId: '01J0000000000000000000000A',
+        from: '1',
+        chat: '1',
+        nonce: 'nonce-opaco',
+        params,
+      } as const
+      assert.equal(serializeWorker(chat, 'to-host'), serializeHost(chat, 'to-host'))
+    }
+
+    const wt = {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'intent',
+      intent: 'worktree.create',
+      requestId: '01J0000000000000000000000B',
+      from: '1',
+      chat: '1',
+      nonce: 'nonce-opaco',
+      params: { nome: 'onda3-render', base: 'origin/main' },
+    } as const
+    const linhaHost = serializeHost(wt, 'to-host')
+    const linhaWorker = serializeWorker(wt, 'to-host')
+    assert.equal(linhaWorker, linhaHost, 'os dois codecs serializam a mesma linha')
+    const viaHost = parseHost(linhaHost.trimEnd(), 'to-host')
+    assert.deepEqual(viaHost, parseWorker(linhaWorker.trimEnd(), 'to-host'))
+    assert.deepEqual(viaHost.ok ? viaHost.message : undefined, wt)
+  })
+
+  it('agent.report com kind/worktree/metrics round-tripa fiel, e a reconstrucao CANONIZA a ordem das metricas', () => {
+    const relatorio = {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'agent.report',
+      runs: [
+        {
+          id: 'ABCD1234',
+          skill: 'deep-orchestrator-agent-skill',
+          status: 'done',
+          startedAt: 1_700_000_000_000,
+          kind: 'chat',
+          worktree: 'onda3-render',
+          metrics: {
+            inputTokens: 10,
+            outputTokens: 20,
+            cacheReadTokens: 30,
+            cacheWriteTokens: 4,
+            turns: 5,
+            steps: 6,
+            llmMs: 70,
+            toolMs: 80,
+            ttftMs: 90,
+            ttftSteps: 1,
+            decodeMs: 100,
+            decodeTokens: 20,
+          },
+          summary: 'resumo',
+        },
+      ],
+    } as const
+
+    const linhaHost = serializeHost(relatorio, 'to-worker')
+    const linhaWorker = serializeWorker(relatorio, 'to-worker')
+    assert.equal(linhaWorker, linhaHost, 'os dois codecs serializam a mesma linha')
+    const viaHost = parseHost(linhaHost.trimEnd(), 'to-worker')
+    assert.deepEqual(viaHost, parseWorker(linhaWorker.trimEnd(), 'to-worker'))
+    assert.deepEqual(viaHost.ok ? viaHost.message : undefined, relatorio)
+
+    // Ordem CANONICA da reconstrucao das metricas: linhas com as chaves
+    // BARALHADAS + uma desconhecida sao reconstruidas na ordem do contrato
+    // (CHAVES_DE_METRICAS), sem o campo inventado — e os DOIS codecs produzem
+    // exactamente a mesma linha canonica.
+    const baralhado = {
+      v: IPC_PROTOCOL_VERSION,
+      type: 'agent.report',
+      runs: [
+        {
+          id: 'ABCD1234',
+          skill: 's',
+          status: 'running',
+          startedAt: 1,
+          metrics: { decodeTokens: 2, inputTokens: 1, extra: 99 },
+        },
+      ],
+    } as const
+    const canonicoEsperado =
+      '{"v":2,"type":"agent.report","runs":[{"id":"ABCD1234","skill":"s","status":"running","startedAt":1,"metrics":{"inputTokens":1,"decodeTokens":2}}]}\n'
+    assert.equal(serializeHost(baralhado, 'to-worker'), canonicoEsperado)
+    assert.equal(serializeWorker(baralhado, 'to-worker'), canonicoEsperado)
+  })
+})

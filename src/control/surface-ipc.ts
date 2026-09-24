@@ -416,6 +416,10 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
         const cancelado = deps.agentes.cancelar(agentId, `telegram:${intent.from}`)
         return ack(intent, cancelado ? 'accepted' : 'noop', estadoAtual())
       }
+      // STUB do contrato (onda2) — onda 3 substitui.
+      case 'chat.new':
+      case 'worktree.create':
+        return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
       case 'secret.rotate': {
         // Item 5 (costura): /rotacionar regenera o segredo e invalida as
         // sessoes vivas (SECRET-008 — o SecretStore revoga ANTES de publicar).

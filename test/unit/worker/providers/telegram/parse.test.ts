@@ -15,12 +15,14 @@ import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
 import type { SurfaceEvent } from '../../../../../worker/surface/contract.ts'
+import { AUMENTA_EXPOSICAO } from '../../../../../worker/surface/auth.ts'
 import { ProviderError } from '../../../../../worker/providers/telegram/interno.ts'
 import {
   buildCallbackData,
   CALLBACK_DATA_MAX_BYTES,
   CALLBACK_SCHEMA,
   criarParse,
+  INCREASES_EXPOSURE,
   parseCallbackData,
   utf8Bytes,
 } from '../../../../../worker/providers/telegram/parse.ts'
@@ -287,11 +289,52 @@ describe('provider/telegram/parse — gramatica g1 e o limite de 64 BYTES', () =
     assert.equal(parseCallbackData('g1:inicio:tok').ok, true)
     // Onda 5 — o cancelamento das telas de confirmacao sao navegacao local tambem.
     assert.equal(parseCallbackData('g1:cancel:tok').ok, true)
+    // EMENDA ONDA-2-CONTRATO-CAPACIDADES — as intents novas tambem sao
+    // accionaveis por botao (a renderizacao e das ondas 3-4).
+    assert.equal(parseCallbackData('g1:chat.new:tok').ok, true)
+    assert.equal(parseCallbackData('g1:worktree.create:tok').ok, true)
+    assert.equal(parseCallbackData('g1:chat.new.extra:tok').ok, false, 'a acao nao pode conter o separador')
   })
 
   it('a unidade e BYTE, nao caractere: acento custa 2', () => {
     assert.equal(utf8Bytes('confirmação'), 13)
     assert.equal(CALLBACK_DATA_MAX_BYTES, 64)
+  })
+})
+
+describe('provider/telegram/parse — o espelho FECHADO/par de exposicao (EMENDA ONDA-2-CONTRATO-CAPACIDADES)', () => {
+  it('`Record<SurfaceAction, boolean>`: TODAS as intents do contrato estao no espelho, e so elas + navegacao', () => {
+    // O Record nao compila se `IpcIntentName`/`SurfaceNavAction` ganhar um
+    // membro sem decisao aqui — este teste prende o CONTEUDO da decisao.
+    const chaves = Object.keys(INCREASES_EXPOSURE).toSorted()
+    assert.deepEqual(chaves, [
+      'agent.cancel',
+      'agent.dispatch',
+      'agent.status',
+      'ajuda',
+      'cancel',
+      'chat.new',
+      'emergency',
+      'inicio',
+      'menu',
+      'secret.rotate',
+      'session.issue',
+      'tunnel.down',
+      'tunnel.status',
+      'tunnel.up',
+      'worktree.create',
+    ])
+  })
+
+  it('chat.new e worktree.create AUMENTAM exposicao (criam sessao/chat e worktree no host -> nonce reset)', () => {
+    assert.equal(INCREASES_EXPOSURE['chat.new'], true)
+    assert.equal(INCREASES_EXPOSURE['worktree.create'], true)
+  })
+
+  it('PAR fechado: INCREASES_EXPOSURE (parse) e AUMENTA_EXPOSICAO (auth) tem EXATAMENTE as mesmas entradas', () => {
+    // Sao dois espelhos do mesmo vocabulario (fronteira D4 impede o import
+    // comum); se alguem decidir num e esquecer o outro, isto fica vermelho.
+    assert.deepEqual(INCREASES_EXPOSURE, AUMENTA_EXPOSICAO)
   })
 })
 

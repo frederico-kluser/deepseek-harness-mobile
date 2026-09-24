@@ -381,12 +381,15 @@ export interface IntencaoNeutra {
   /** Nas acoes que AUMENTAM exposicao. Opaco (S5) — nunca validado aqui. */
   readonly nonce?: string | undefined
   /**
-   * EMENDA ONDA-4-AGENTS-HOST: o payload ADITIVO das intencoes de agente —
-   * `agent.dispatch` carrega `{ skill, prompt }` e `agent.cancel` `{ agentId }`
-   * (a forma e {@link IpcAgentIntentParams} de `src/contracts/ipc.ts`; quem
-   * impoe a presenca e o codec do canal, intent a intent). As restantes
-   * intents NAO transportam params. Nada disto e segredo (S3): skill, prompt e
-   * agentId sao dados do dono, nunca credenciais.
+   * EMENDA ONDA-4-AGENTS-HOST (alargada pela EMENDA ONDA-2-CONTRATO-CAPACIDADES):
+   * o payload ADITIVO das intencoes COM params — `agent.dispatch` carrega
+   * `{ skill, prompt }`, `agent.cancel` `{ agentId }`, `chat.new`
+   * `{ prompt, worktree? }` e `worktree.create` `{ nome, base? }` (a forma e
+   * {@link IpcAgentIntentParams} de `src/contracts/ipc.ts`; quem impoe a
+   * presenca e o codec do canal, intent a intent). As restantes intents NAO
+   * transportam params — por isso `/status-tarefa <id>` reusa `agent.status` e
+   * filtra o `<id>` no worker. Nada disto e segredo (S3): skill, prompt,
+   * agentId, worktree, nome e base sao dados do dono, nunca credenciais.
    */
   readonly params?: IpcAgentIntentParams | undefined
 }
