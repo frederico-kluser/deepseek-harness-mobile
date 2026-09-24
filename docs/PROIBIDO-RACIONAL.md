@@ -22,7 +22,7 @@ Regras: (1) qualquer número citado em material público tem linha correspondent
 evidência arquivada num spike; (3) reutilizar uma frase proibida "entre aspas" também é
 violação — a frase não pode aparecer de forma nenhuma.
 ## Verificação do COMMIT PREP 7 (registo)
-- origin: https://github.com/frederico-kluser/deepseek-harness-mobile.git (adição externa do usuário, documentada na Onda 2) — CONFERIDO.
+- origin: https://github.com/frederico-kluser/dsh-guard-messenger.git (adição externa do usuário, documentada na Onda 2; remoto atualizado após o rename do repositório, 2026-09) — CONFERIDO.
 - B0: build verde contra @deepseek-ai/* REAIS re-verificado — o upstream publicou 0.1.1-rc.1 e a faixa foi revista (N=0.1.1-rc.*, N-1=0.1.0-rc.*; types/ regenerados byte-exact; API aditiva; CONTRACT-001/008 atualizados) — fix w6-fix-upstream-011rc (e95da74).
 - B1 (dsh.bundle): decisão MEDIDA registada no package.json (//dsh): bundle com .patch (o gate aceita {} mas o produto não ativa). CONFERIDO.
 - B6 (SECURITY.md + PVR): SECURITY.md existe (T1.4); Private Vulnerability Reporting = configuração da UI do GitHub (humano), registada como passo pós-onda.

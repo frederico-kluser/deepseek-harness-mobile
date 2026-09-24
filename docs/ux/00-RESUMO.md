@@ -9,23 +9,25 @@
 
 | Reclamação | Decisão de UX (onde está detalhada) |
 |---|---|
-| "Muita informação, não entendo nada" | Mensagens ≤ 5 linhas, 1 ação por mensagem, um menu curto (5 cmds), painel por **estado** com um CTA por vez. Docs `01`/`02`. |
+| "Muita informação, não entendo nada" | Mensagens ≤ 5 linhas, 1 ação por mensagem, um menu curto (3 cmds publicados), painel por **estado** com um CTA por vez. Docs `01`/`02`. |
 | "No bot aperto os botões e nada acontece" | **feedback em todo clique** (answerCallbackQuery na 1ª linha + edição in-place + teclado destruído ao concluir). Docs `01` §4-§5. |
 | "Não sei onde pôr o código" | Fluxo de pareamento em **um passo** no painel: código em caixa espaçada + "Copiar" + UMA instrução + countdown. Docs `02` §Checkpoint 2. |
-| "Muitos botões no menu" | Menu de 7 → **5 comandos**; ações de controle viram **botões do cartão** (os comandos digitados continuam válidos). Docs `01` §2. |
+| "Muitos botões no menu" | Menu de 7 → **3 comandos publicados** (`/menu`, `/parear`, `/ajuda`); ações de controle viram **botões do cartão** (os comandos digitados continuam válidos). Docs `01` §2. |
 | "Textos melhores; mude tudo" | Reescrita PT-BR de todas as respostas do bot + todos os rótulos do painel. Docs `01`/`02`, o guia de estilo em `03`. |
 
 ---
 
 ## Decisões-chave (o essencial)
 
-### 1. Menu final (setMyCommands) — 5 comandos
-`/menu`, `/status`, `/parear`, `/emergencia`, `/ajuda`.
+### 1. Menu final (setMyCommands) — 3 comandos publicados
+`/menu`, `/parear`, `/ajuda`.
 
-`/ligar`, `/desligar`, `/acessar` e `/rotacionar` **saem do menu** e viram
-**botões do cartão de controle** (`/menu`); os comandos **digitados continuam a
-funcionar** (routing intacto — a lista publicada é só o menu). `/start` continua
-**de fora** do menu (PAIR-006). Detalhes em `01` §2.
+`/ligar`, `/desligar`, `/acessar`, `/rotacionar`, `/status` e `/emergencia`
+**saem do menu** e viram **botões do cartão de controle** (`/menu`); os comandos
+**digitados continuam a funcionar** (routing intacto — a lista publicada é só o
+menu, e o texto de `/ajuda` lista os comandos de tarefa da Onda 3:
+`/novo-chat`, `/novo-chat-wt`, `/worktree`, `/status-tarefa`). `/start` continua
+**de fora** do menu (PAIR-006). Detalhes em `01` §2 e §11.
 
 ### 2. `/start` — boas-vindas IGUAL para toda a gente
 Invariante **mantida** (PAIR-006): a mensagem é a mesma para quem é dono e quem

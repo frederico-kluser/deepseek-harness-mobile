@@ -11,8 +11,17 @@ Guia de resolução, ordenado por sintoma. Lê o sintoma, confere a causa e segu
 | Sintoma | Causa provável | O que fazer |
 | --- | --- | --- |
 | O plugin "grita" no load a dizer que o bind está fora da allowlist | O endereço de bind foi alargado (ex.: `--host 0.0.0.0`) ou um patch de camada superior o reabriu | Volta o bind a loopback; audita `$DSH_HOME/cordis.patch.yml` e `--patch` da CLI. O plugin **não** arranca degradado em silêncio em decisões de segurança. |
+| O arranque falha com `config.worker.provider = '…' nao e um provedor conhecido (telegram)` | Configuração herdada de uma versão antiga: `worker.provider` aponta para o provedor removido (o único valor aceite é `'telegram'`) | Remove a linha `worker.provider` ou muda-a para `'telegram'` — ver a nota de migração abaixo. |
 | A Fiber fica PENDING para sempre | Adicionaste `logger` ao `inject` | Não faças. `ctx.logger` está acessível sem injecção; `LoggerService` não é `Service`, entra como propriedade própria do Context e `ctx.get` devolve undefined para ele (ver `src/index.ts:344-364`). |
 | O estado abre corrompido | `state.json` foi reescrito de forma não atómica, ou tem modo maior que 0600 | O `StateStore` é o único writer e recusa carga com erro acionável. Não uses editor no ficheiro do estado vivo; apaga-o e re-roda o setup se quiseres recomeçar. |
+
+> **SECURITY: exige ação do utilizador (migração):** quem tem `worker.provider`
+> apontado para o provedor removido tem de **remover a linha ou mudá-la para
+> `'telegram'`** antes do arranque. Sem essa alteração o plugin não arranca: o
+> boot falha alto com `config.worker.provider = '<valor>' nao e um provedor
+> conhecido (telegram)` — fail-loud por decisão (o registry é fechado e não
+> degrada em silêncio). A mensagem literal, com o nome do provedor removido,
+> está registada no `CHANGELOG.md`. Quem já usa só o Telegram nada muda.
 
 ## 2. Acesso local e barreira do túnel
 

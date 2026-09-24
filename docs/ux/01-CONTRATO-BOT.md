@@ -534,13 +534,16 @@ Com runs:
 
 ```
 🤖 Agentes:
-• <id> — <skill> — <estado> <há quanto>
+• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>
    💬 <summary>
 ```
 
-- **Uma linha por run:** `• <id> — <skill> — <rótulo> <há quanto>`; o
-  `summary` (quando o run terminou e há texto) numa linha própria indentada com
-  `   💬 <summary>`.
+- **Uma linha por run:** `• <id> — <skill> — <rótulo> <há quanto>` e depois os
+  **extras** separados por ` · `: o `kind` (`agente` · `chat` · `worktree` — só
+  quando o run traz o campo), `wt: <worktree>` (só quando presente) e a
+  **métrica resumida** `📊 <tokens total> / <tempo>` (ex. `📊 6.334 tokens / 4 s`;
+  ausente = `📊 —`, nunca número inventado). O `summary` (quando o run terminou e
+  há texto) numa linha própria indentada com `   💬 <summary>`.
 - **Rótulos de estado** (PT-BR; o payload usa o enum `AgentRunStatus`):
   `rodando` · `concluído` · `falhou` · `cancelado`.
 - **Tempos** (`haQuantoTempo`, o mesmo relógio do `formatarDuracao`):
@@ -560,7 +563,7 @@ a `/agentes`:
 
 ```
 🤖 Atualização de agentes:
-• <id> — <skill> — <estado> <há quanto>
+• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>
    💬 <summary>
 ```
 
@@ -588,3 +591,101 @@ no pendente, porque o ack só traz o requestId):
 - **S5** — o nonce viaja opaco no botão; o worker não o lê, valida nem loga.
 - **S3** — nenhum destes textos carrega token, credencial ou caminho absoluto;
   o `summary` é texto do modelo.
+
+---
+
+## 11. Onda 3 — TAREFAS: `/novo-chat`, `/novo-chat-wt`, `/worktree`, `/status-tarefa` (textos EXATOS)
+
+> **Implementação de referência:** `worker/surface/commands.ts`
+> (`criarTarefas`), `worker/surface/text.ts` (`textoDeTarefa`,
+> `TEXTO_DE_AJUDA`), `worker/surface/core.ts` (acks), `src/agents/chats.ts` /
+> `src/agents/worktrees.ts` / `src/agents/metrics.ts` (o efeito real no host) e
+> `src/control/surface-ipc.ts`. A arquitetura das capacidades está em
+> `docs/AGENTS.md` §4b — aqui congela-se só o texto EXATO final (PT-BR).
+>
+> **Neutro ao provedor:** os comandos de tarefa são do núcleo neutro — iguais no
+> Telegram e em qualquer provedor futuro.
+
+### 11.1 `/novo-chat <o que fazer>` e `/novo-chat-wt <worktree> <o que fazer>`
+
+Criam uma **sessão real do DSH** com o prompt submetido (confirmação em 2
+etapas — AUMENTA exposição, nonce do host como `/agente`). O prompt é sanitizado
+para UMA linha e cortado em `MAX_PROMPT_CHARS` (4096): **o que se confirma é o
+que corre**. O campo `worktree` do intent `chat.new` é opcional no contrato
+(`/novo-chat` nasce na raiz de trabalho); no `/novo-chat-wt` o `<worktree>` é
+obrigatório na sintaxe e tem de designar um **worktree já existente** (criado
+com `/worktree`) — o chat nunca cria worktrees.
+
+| Situação | Texto EXATO final |
+|---|---|
+| `/novo-chat` sem prompt | `Falta o prompt. Uso: /novo-chat <o que o chat deve fazer>` |
+| `/novo-chat-wt` sem worktree | `Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| `/novo-chat-wt` com worktree fora de `/^[a-z0-9-]{1,40}$/` | `Worktree inválido (a-z, 0-9 e hífen, até 40). Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| `/novo-chat-wt` sem prompt | `Falta o prompt. Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| Host sem nonce (fail-closed, CTL-023) | `Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.` |
+| Tela de confirmação do `/novo-chat` | `💬 Iniciar um chat novo com este prompt?` + `Ele executa código na tua máquina:` + `"<prompt>"` |
+| Tela de confirmação do `/novo-chat-wt` | `💬 Iniciar um chat novo no worktree "<worktree>" com este prompt?` + `Ele executa código na tua máquina:` + `"<prompt>"` |
+| Botões da confirmação | `✅ Sim, criar` e `✕ Não` (cancelamento local — `Ok, cancelado.` + teclado destruído, §4 Regra 4) |
+| Confirmação morta (expirada/forjada/alheia — resposta UNIFORME, sem oráculo) | `Confirmação expirada ou inválida. Mande /novo-chat de novo.` |
+| Ack de sucesso | `Chat novo iniciado.` (o resto — resposta do chat, fim do turno — chega pelo `agent.report`) |
+
+### 11.2 `/worktree <nome> [base]`
+
+Cria a worktree git real (`git worktree add --branch guard/<nome> …`, default
+`base = HEAD`) — confirmação em 2 etapas. Nome: `/^[a-z0-9-]{1,40}$/`; `base`:
+texto limpo ≤ 256 com higiene de ref do git. **Nunca destrói:** caminho ocupado é
+`noop` ("já estava no estado pedido") — não há overwrite.
+
+| Situação | Texto EXATO final |
+|---|---|
+| Sem nome | `Uso: /worktree <nome> [base]` |
+| Nome fora da gramática | `Nome inválido (a-z, 0-9 e hífen, até 40). Uso: /worktree <nome> [base]` |
+| Tela de confirmação (sem base) | `📁 Criar o worktree "<nome>"?` + `Ele cria uma pasta nova na tua máquina.` |
+| Tela de confirmação (com base) | `📁 Criar o worktree "<nome>" a partir de "<base>"?` + `Ele cria uma pasta nova na tua máquina.` |
+| Botões da confirmação | `✅ Sim, criar` e `✕ Não` |
+| Confirmação morta (UNIFORME) | `Confirmação expirada ou inválida. Mande /worktree de novo.` |
+| Ack de sucesso | `Worktree criado.` |
+| Ack quando já existia (noop) | `Já estava assim.` (nada foi destruído) |
+
+### 11.3 `/status-tarefa <id>` — o detalhe de UM run
+
+Leitura pura (reusa `agent.status` SEM params; o `<id>` filtra-se no worker sobre
+o `agent.report`, teto de 64 runs). Resposta — a linha enriquecida do §10.2 + o
+bloco das **12 métricas reais** (campo não medido = `—`, nunca estimado):
+
+```
+🧩 Tarefa <id>:
+• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>
+   📊 Tokens: entrada X · saída X · cache lido X · cache escrito X · decodificados X
+   ⏱ Tempo: modelo X · ferramentas X · primeiro token X · decodificação X
+   🔁 Turnos X · passos X · passos com 1º token X
+```
+
+| Situação | Texto EXATO final |
+|---|---|
+| Id fora da forma (8 caracteres do alfabeto do ULID) | `Id inválido. Uso: /status-tarefa <id> — os ids aparecem em /agentes.` |
+| Sem correspondência no report | `Tarefa <id> não encontrada (veja /agentes)` |
+
+### 11.4 O `/ajuda` cresceu — os comandos novos entram aqui, não no menu
+
+`COMANDOS_PUBLICADOS` fica **intacto** (TG-080: `/menu`, `/parear`, `/ajuda`) — os
+comandos de tarefa entram só no **texto** de `/ajuda` (e do botão `ℹ️ Ajuda`):
+
+```
+ℹ️ Este bot controla o acesso ao teu Harness pelo Telegram.
+Usa /menu para o cartão de controlo e /status para ver o túnel.
+
+Tarefas:
+/novo-chat <o que fazer> — abre um chat novo
+/novo-chat-wt <worktree> <o que fazer> — chat novo num worktree
+/worktree <nome> [base] — cria um worktree
+/status-tarefa <id> — vê uma tarefa (os ids saem em /agentes)
+/agentes — lista tarefas e agentes
+```
+
+### 11.5 Regras herdadas (valem aqui também)
+
+- **TG-027** — todo clique responde sempre; **TG-024** — o token da confirmação
+  revalida `userKey`+`chatKey`; **TG-089** — estranhos nunca veem estes textos.
+- **S5** — o nonce viaja opaco no botão; **S3** — nenhum destes textos carrega
+  caminho absoluto nem segredo (o worktree é nome curto, nunca o caminho).

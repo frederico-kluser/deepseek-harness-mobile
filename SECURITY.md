@@ -23,17 +23,20 @@ abertas, o sandbox do DSH **não** deve ser tratado como fronteira de segurança
 
 ## 2. Versões suportadas
 
-O pacote **ainda não foi publicado** com código funcional. Esta secção descreve a política que
-passa a valer a partir da primeira versão publicada.
-
 | Versão do plugin | Linha do DSH testada | Suporte de segurança |
 | --- | --- | --- |
-| a versão `minor` mais recente | `0.1.0-rc.7` (faixa verificada `rc.7`–`rc.9`) | Sim |
+| a versão `minor` mais recente | faixa `@deepseek-ai/dsh` `0.1.0-rc.7 .. 0.1.1-rc.1` (política N/N-1) | Sim |
 | versões `minor` anteriores | — | Não. Atualize. |
 
 Sendo um projeto de um mantenedor só, **não** há backport para linhas antigas: a correção sai na
 versão corrente. A versão exata de `@deepseek-ai/*` contra a qual cada release foi testada é
-declarada no `README.md` e em `docs/COMPATIBILITY.md` quando esse ficheiro existir.
+declarada no `README.md` e em `docs/COMPATIBILITY.md` (gerado de `dsh-compat.yml`).
+
+> **A faixa não alarga por conveniência:** `0.1.5-rc.x` foi medido como
+> **incompatível** (`SubprocessHandle.pid` desapareceu desde `0.1.5-rc.1`) e o
+> canário `CONTRACT-008` fica vermelho **por decisão** — o registo da decisão é
+> `docs/plano/06-REPO-E-CI.md` §11.2. Alargar a regex do canário para o
+> esverdear é apagar o canário, não cumprir a promessa.
 
 > Atenção à armadilha do registry: a tag `latest` dos subpacotes `@deepseek-ai/dsh-*` aponta para
 > a publicação **mais antiga**, não para a mais recente. Fixe a versão explicitamente.
@@ -53,7 +56,7 @@ privado e um canal de conversa fechado entre si e o mantenedor:
 4. preencha o formulário (título e descrição são o mínimo) e submeta.
 
 Ligação direta:
-<https://github.com/frederico-kluser/deepseek-harness-mobile/security/advisories/new>
+<https://github.com/frederico-kluser/dsh-guard-messenger/security/advisories/new>
 
 **Se o botão «Report a vulnerability» não aparecer**, o PVR ainda não foi ativado neste
 repositório (é uma opção que o dono liga em *Settings → Advanced Security*, e que exige o

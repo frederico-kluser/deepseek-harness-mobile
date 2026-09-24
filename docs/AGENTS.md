@@ -37,6 +37,8 @@ ONDA-4-AGENTS-HOST):
 | `agent.status` | worker → host | lista os runs. Leitura pura — **não exige nonce** |
 | `agent.cancel` | worker → host | cancela UM run pelo `{ agentId }`. **REDUZ** → dispensa nonce (CTL-024) |
 | `agent.report` | host → worker | a lista de runs: resposta a `agent.status` **e** difusão proativa quando um run termina |
+| `chat.new` | worker → host | cria UMA sessão real do harness e submete o prompt (`/novo-chat`, `/novo-chat-wt`). **AUMENTA exposição** → **exige nonce** (2 etapas) |
+| `worktree.create` | worker → host | cria uma worktree git (`/worktree`). **AUMENTA exposição** → **exige nonce** (2 etapas) |
 
 Nada de segredo viaja nestes campos (S3): skill, prompt e agentId são dados do
 dono, nunca credenciais.
@@ -184,13 +186,17 @@ Com runs:
 
 ```
 🤖 Agentes:
-• <id> — <skill> — <estado> <há quanto>
+• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>
    💬 <summary>
 ```
 
-- Uma linha por run: `• <id> — <skill> — <rótulo> <há quanto>`; o `summary`
-  (1 linha, quando o run terminou e há texto) vai numa linha própria indentada:
-  `   💬 <summary>`.
+- Uma linha por run: `• <id> — <skill> — <rótulo> <há quanto>` e depois os
+  **extras** separados por ` · `: o `kind` do run (`agente` · `chat` ·
+  `worktree` — só quando o run traz o campo), o `wt: <worktree>` (só quando
+  presente) e a **métrica resumida** `📊 <tokens total> / <tempo>` (ex.
+  `📊 6.334 tokens / 4 s`). Métrica ausente = `📊 —` (o host não mediu; nunca se
+  estima). O `summary` (1 linha, quando o run terminou e há texto) vai numa
+  linha própria indentada: `   💬 <summary>`.
 - Rótulos de estado: `rodando` · `concluído` · `falhou` · `cancelado`.
 - Tempos (`haQuantoTempo`): `agora mesmo`, `há menos de 1 min`, `há 2 min`,
   `há 1 h 30 min` (o mesmo relógio do `formatarDuracao`; um run acabado de
@@ -222,6 +228,97 @@ REDUZ exposição → sem nonce (CTL-024), como o `/desligar`. O id viaja no
 | Id fora da forma (não são 8 caracteres do alfabeto do ULID) | `Id inválido. Uso: /parar-agente <id> — os ids aparecem em /agentes.` |
 
 ---
+
+## 4b. Tarefas — chats, worktrees e métricas reais (Onda 3)
+
+> **Implementação de referência:** `src/agents/chats.ts` (o chat real),
+> `src/agents/worktrees.ts` (a worktree git), `src/agents/metrics.ts` (as
+> métricas reais), `src/control/surface-ipc.ts` (o dispatch no host) e
+> `worker/surface/commands.ts` + `worker/surface/text.ts` (a superfície). Os
+> textos EXATOS estão congelados em [`docs/ux/01-CONTRATO-BOT.md`](ux/01-CONTRATO-BOT.md) §11.
+
+### As três capacidades — o que cada uma cria de verdade
+
+| Capacidade | Comandos | O que cria de verdade |
+| --- | --- | --- |
+| **Chat** (`chat.new`) | `/novo-chat <prompt>`, `/novo-chat-wt <worktree> <prompt>` | **Uma sessão real do DSH** (`ctx.sessions.create`, com `meta.cwd` absoluto) com o prompt **submetido** via `ctx.sessionController.prompt` (`mode: 'queue'` — o primeiro turno). Não é um atalho de texto: o chat corre e o resultado chega ao chat do Telegram |
+| **Worktree** (`worktree.create`) | `/worktree <nome> [base]` | **Uma worktree git real**: `git worktree add --branch guard/<nome> <BASE_DIR>/../<repo>-worktrees/<nome> <base>` por subprocesso (`ctx.subprocess`, sem shell). Default `base = HEAD` |
+| **Métricas** (alimenta `/agentes` e `/status-tarefa`) | — | **Números reais do harness**, nunca estimados: a projeção `sessionStats` (turnos/passos/tempos) + o `TokenUsage` dos eventos `assistant/message` (tokens) |
+
+- **Chats = sessões reais do DSH.** O cwd é o worktree indicado (que tem de
+  **já existir** — o chat nunca cria worktrees; a criação é capacidade própria,
+  com nonce) ou, sem worktree, a raiz de trabalho `BASE_DIR`. Lacuna honesta
+  registada: numa composição sem o serviço `sessionController` a sessão nasce
+  na mesma e o run reporta o id para continuar na Web UI
+  (`CHAT_SUBMISSAO_INDISPONIVEL`) — nunca se inventa submissão.
+- **Worktrees = git worktree `guard/<nome>` em `<repo>-worktrees/<nome>`.** O
+  layout é `<BASE_DIR>/../<repo>-worktrees/<nome>` (irmão do checkout, fora da
+  árvore do git). **Nunca destrói:** se o caminho já existe, o resultado é
+  `WORKTREE_ALREADY_EXISTS` e o run responde `noop` ("já estava no estado
+  pedido") — não há `git worktree remove` nem `rm` em lado nenhum.
+- **Métricas = session-stats/usage reais do harness.** Contagens e tempos
+  (`turns`, `steps`, `llmMs`, `toolMs`, `ttftMs`, `ttftSteps`, `decodeMs`,
+  `decodeTokens`) vêm da projeção `sessionStats`
+  (`ctx.sessionProjections.stateOf(session, 'sessionStats')`); os tokens
+  (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`) vêm do
+  `TokenUsage` que viaja nos eventos `assistant/message`. Cada campo só aparece
+  se a fonte real o tiver reportado: **nunca zero fabricado**. A distinção é
+  entre **payload** e **saída visível**: em tarefas de worktree não há nada a
+  medir numa criação de diretório, por isso o campo `metrics` do report fica
+  **omitido** (payload) — mas a saída do bot mantém sempre os espaços fixos: a
+  linha do run traz sempre `📊 …` (`📊 —` quando o host não mediu) e o detalhe de
+  `/status-tarefa` traz sempre os 12 campos (`—` nos ausentes).
+
+### Textos EXATOS (superfície neutra)
+
+No host, `chat.new`/`worktree.create` seguem a mesma disciplina do
+`agent.dispatch` (`src/control/surface-ipc.ts`): identidade re-verificada (S6) →
+idempotência por `requestId` → nonce `'reset'` consumido → revalidação S6 da
+forma (prompt/nome/base) → efeito no `src/agents/**`. Sem nonce nada corre
+(fail-closed).
+
+| Comando / Situação | Texto exato |
+| --- | --- |
+| `/novo-chat` sem prompt | `Falta o prompt. Uso: /novo-chat <o que o chat deve fazer>` |
+| `/novo-chat-wt` sem worktree | `Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| `/novo-chat-wt` com worktree fora de `/^[a-z0-9-]{1,40}$/` | `Worktree inválido (a-z, 0-9 e hífen, até 40). Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| `/novo-chat-wt` sem prompt | `Falta o prompt. Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| Confirmação do `/novo-chat` (botões `✅ Sim, criar` e `✕ Não`) | `💬 Iniciar um chat novo com este prompt?` + `Ele executa código na tua máquina:` + `"<prompt>"` |
+| Confirmação do `/novo-chat-wt` | `💬 Iniciar um chat novo no worktree "<worktree>" com este prompt?` + `Ele executa código na tua máquina:` + `"<prompt>"` |
+| `/worktree` sem nome | `Uso: /worktree <nome> [base]` |
+| `/worktree` com nome inválido | `Nome inválido (a-z, 0-9 e hífen, até 40). Uso: /worktree <nome> [base]` |
+| Confirmação do `/worktree` | `📁 Criar o worktree "<nome>"[ a partir de "<base>"]?` + `Ele cria uma pasta nova na tua máquina.` |
+| Confirmação morta (chat) — expirada/forjada/alheia, resposta UNIFORME | `Confirmação expirada ou inválida. Mande /novo-chat de novo.` |
+| Confirmação morta (worktree) | `Confirmação expirada ou inválida. Mande /worktree de novo.` |
+| Host sem nonce (fail-closed, CTL-023) | `Não foi possível obter a confirmação do host. Tente de novo em alguns segundos.` |
+| Ack do `chat.new` | `Chat novo iniciado.` |
+| Ack do `worktree.create` | `Worktree criado.` |
+| `/status-tarefa` com id fora de 8 caracteres do ULID | `Id inválido. Uso: /status-tarefa <id> — os ids aparecem em /agentes.` |
+| `/status-tarefa` sem correspondência (teto de 64 runs do report) | `Tarefa <id> não encontrada (veja /agentes)` |
+
+O prompt viaja sanitizado para UMA linha e cortado em 4096 (o que se confirma é
+o que corre); a `[base]` é texto limpo até 256 e recebe ainda a higiene de ref
+do git (sem `-` inicial, sem `..`, sem `@{`, …).
+
+### `/status-tarefa <id>` — o detalhe com as 12 métricas
+
+Leitura pura: reusa `agent.status` **sem params** (o contrato fecha o codec) e o
+`<id>` filtra-se no worker sobre o `agent.report` (teto de 64 runs). A resposta:
+
+```
+🧩 Tarefa <id>:
+• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>
+   📊 Tokens: entrada X · saída X · cache lido X · cache escrito X · decodificados X
+   ⏱ Tempo: modelo X · ferramentas X · primeiro token X · decodificação X
+   🔁 Turnos X · passos X · passos com 1º token X
+```
+
+Os 12 campos são os do `AgentRunMetrics` do contrato; campo não medido = `—`
+(vocabulário fechado da ausência — nada se estima).
+
+---
+
+
 
 ## 5. Segurança (porquê cada peça existe)
 
@@ -328,6 +425,13 @@ teto (1..32) com `assertValidConfig`; uma allowlist vazia ou eixo ausente emite 
 
 - `src/agents/registry.ts` — o dispatcher: allowlist, teto, cancelar, disposer
   LIFO, o relatório capado e a difusão proativa. DONO da porta de saída.
+- `src/agents/chats.ts` — o chat real (`chat.new`): `ctx.sessions.create` +
+  `ctx.sessionController.prompt`, o vocabulário fechado `CHAT_*`.
+- `src/agents/worktrees.ts` — a worktree git (`worktree.create`): layout
+  `<BASE_DIR>/../<repo>-worktrees/<nome>`, branch `guard/<nome>`, vocabulário
+  fechado `WORKTREE_*`, "nunca destruir".
+- `src/agents/metrics.ts` — as métricas reais: projeção `sessionStats` +
+  `TokenUsage` dos eventos `assistant/message`; ausente = omitido.
 - `src/agents/harness.ts` — o espelho mínimo da API do harness (`ctx.subagents`,
   `ctx.agents`, `ctx.skills`, `renderHarnessSkill`), pinado por ficheiro do
   upstream.

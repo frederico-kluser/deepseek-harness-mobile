@@ -101,10 +101,18 @@ Ficheiros desta worktree (são a prova):
   a apontar para um ficheiro ausente → client.js 404. (`prepublishOnly` também roda
   `build:all` + `package:check`.)
 - **Tipos do subpath:** `build-client.mjs` também COPIA `client/client.d.ts`
-  (fonte commited) para `lib/client.d.ts` (produto, gitignored) — a mesma viagem
+  (fonte commited) para `lib/client.d.ts` (produto) — a mesma viagem
   que `client.js`. Sem a declaração irmã, o `attw` reprova `./client` com
   `UntypedResolution` ("No types"); o `exports["./client"]` referencia-a no bloco
   `types`.
+
+> **Estado atual (fix da instalação):** os hooks `prepare`/`prepack` foram
+> **removidos de propósito** e `dist/`+`lib/` passaram a ser **commitados no
+> git** (o pnpm 11 bloqueia build de dependências git —
+> `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`; padrão do `dsh-worktree-jump`). As
+> medidas acima sobre `prepack`/gitignore são do momento do spike;
+> `prepublishOnly` continua como hook de release e o `package:check` ganhou o
+> `scripts/check-git-install.mjs`.
 
 Resumo do `apply`:
 ```ts
@@ -224,7 +232,7 @@ trocar por um `TelegramGuardSection.module.css` com os tokens `--dsw-*` acima.
 ## Estado do runtime 3082 ao fim
 
 **Restaurado ao estado original** (isolado, NUNCA mexido no 3080):
-- profile `package.json` de volta a `link:/home/ondokai/Projects/deepseek-harness-mobile`.
+- profile `package.json` de volta a `link:<caminho local do checkout do repositório>`.
 - symlink de `node_modules/dsh-guard-messenger` aponta ao checkout principal.
 - servidor `:3082` reiniciado com o mesmo comando
   `node --import tsx/esm apps/cli/src/bin.ts --profile web --host 127.0.0.1 --port 3082 --no-open`

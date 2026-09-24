@@ -15,9 +15,10 @@
 | Variável de provedor (inalterada) | `DSH_GUARD_PROVIDER` |
 | Nome histórico (anterior) | `dsh-guarded-bot-orchestrator` (só em registos históricos) |
 
-> O **repositório git** (`frederico-kluser/deepseek-harness-mobile`) e a **rede de
-> rotas HTTP** (`/__guard`, `/__guard-ui`) são contratos estáveis e **mantêm os
-> seus nomes** — apenas o pacote/produto muda de identidade.
+> O **repositório git** (`frederico-kluser/dsh-guard-messenger` — renomeado a
+> 2026-09-23 para acompanhar o nome do pacote; o redirect do GitHub cobre o slug
+> antigo) e a **rede de rotas HTTP** (`/__guard`, `/__guard-ui`) são contratos
+> estáveis — as rotas **mantêm os seus nomes**.
 
 ## O que o produto faz
 

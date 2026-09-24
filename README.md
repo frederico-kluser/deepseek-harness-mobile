@@ -1,9 +1,9 @@
 # dsh-guard-messenger
 
-[![CI](https://img.shields.io/github/actions/workflow/status/frederico-kluser/deepseek-harness-mobile/ci.yml)](https://github.com/frederico-kluser/deepseek-harness-mobile/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/frederico-kluser/dsh-guard-messenger/ci.yml)](https://github.com/frederico-kluser/dsh-guard-messenger/actions)
 [![npm version](https://img.shields.io/npm/v/dsh-guard-messenger)](https://www.npmjs.com/package/dsh-guard-messenger)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-guard-messenger)](https://www.npmjs.com/package/dsh-guard-messenger)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/frederico-kluser/deepseek-harness-mobile)](https://securityscorecards.dev/)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/frederico-kluser/dsh-guard-messenger)](https://securityscorecards.dev/)
 
 <div align="center">
 
@@ -21,9 +21,26 @@
 dsh plugin --profile web add dsh-guard-messenger
 ```
 
-> **Instalação por git / tarball:** se instalares a partir do git (`pnpm add <git-url>`),
-> o lifecycle `prepare` (`pnpm run build:all`) gera automaticamente `lib/client.js`
-> e `dist/` — o bundle que o harness monta (`exports["./client"]` → `lib/client.js`).
+### Instalação pelo link do repositório
+
+```sh
+dsh plugin add github:frederico-kluser/dsh-guard-messenger
+```
+
+Funciona **sem `allowBuilds` e sem build no install**: os artefactos compilados
+(`dist/`, `lib/`) vêm commitados no git e os hooks `prepare`/`prepack` foram
+removidos de propósito — o pnpm 11 bloqueia build de dependências git
+(`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`), que era exactamente o que impedia o
+install-by-link.
+
+> **Nota de release:** o comando só funciona depois de este ramo estar **pushado
+> no GitHub**. Enquanto o repositório servir a árvore antiga (a que ainda tinha
+> `prepare`), o `pnpm add github:…` falha com
+> `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`.
+
+> **Instalação por tarball:** os artefactos compilados (`lib/client.js` e
+> `dist/`) vêm **commitados no repositório** (o que faz o install-by-link
+> funcionar sem `allowBuilds`) e `prepublishOnly` continua como hook de release.
 > Sem esses artefactos a ativação do client lançaria `MissingClientBundleError`.
 > Ver [`docs/PANEL-TELEGRAM.md`](docs/PANEL-TELEGRAM.md).
 
@@ -103,6 +120,7 @@ Depois de pareado (`docs/ONBOARDING-TELEGRAM.md`), os comandos de controlo do bo
 | `/rotacionar` | Gera **chave nova**, invalida as sessões **e encerra as conexões ativas** (WebSocket/streams) — revoga o acesso antigo na hora |
 | `/status` · `/emergencia` | estado, kill switch |
 | `/agente` · `/agentes` · `/parar-agente` | dispara, lista e cancela agentes do harness — ver abaixo |
+| `/novo-chat` · `/novo-chat-wt` · `/worktree` · `/status-tarefa` | tarefas: chats e worktrees do harness — ver abaixo |
 
 O link enviado no `/ligar` é
 `https://<url-pública>/?key=<token>`: a **chave no link** autentica o túnel, é
@@ -127,7 +145,7 @@ do pai) que trabalha na própria máquina, e o resultado chega ao chat.
 | Comando | O que faz |
 | --- | --- |
 | `/agente <skill> <o que o agente deve fazer>` | Abre a confirmação em 2 etapas e dispara o agente (o prompt mostrado é o que vai) |
-| `/agentes` | Lista os runs: `• <id> — <skill> — <estado> <há quanto>` (+ resumo do modelo) |
+| `/agentes` | Lista os runs (agentes, chats e worktrees) com métrica resumida: `• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>` (+ resumo do modelo quando terminou) |
 | `/parar-agente <id>` | Cancela um run (os ids aparecem em `/agentes`) |
 
 Porquê tanta cerimónia: **o dispatch executa código na tua máquina**. É a ação
@@ -139,6 +157,41 @@ harness** e **nunca recebe o token do bot** nem credencial nenhuma deste plugin
 memória — um reinício do DSH cancela tudo (`dispose` em LIFO) e a lista recomeça
 vazia. Sem allowlist declarada (`config.agents.skills`), **nenhum agente é
 disparável** — fail-closed por construção.
+
+### Tarefas: chats e worktrees do harness pelo bot
+
+Os comandos de tarefa criam coisas **reais** no harness: `/novo-chat` e
+`/novo-chat-wt` abrem **sessões do DSH** com o prompt submetido (o chat corre de
+verdade), e `/worktree` cria uma **worktree git** isolada — branch
+`guard/<nome>` em `<repo>-worktrees/<nome>`, irmã do checkout — sem nunca
+destruir nada que exista. `/status-tarefa` mostra o detalhe de um run com as
+**métricas reais** do harness (tokens, tempos, turnos); o que o host não mediu
+aparece como `—`, nunca como número inventado.
+
+| Comando | O que faz |
+| --- | --- |
+| `/novo-chat <prompt>` | Abre um chat novo (sessão real do DSH) com o prompt submetido — confirmação em 2 etapas |
+| `/novo-chat-wt <worktree> <prompt>` | O mesmo, com o chat a nascer **dentro de um worktree existente** (cria-o primeiro com `/worktree`) |
+| `/worktree <nome> [base]` | Cria a worktree git `guard/<nome>` em `<repo>-worktrees/<nome>` a partir de `base` (default `HEAD`) — se já existir, nada é destruído |
+| `/status-tarefa <id>` | Detalhe de UM run: linha completa + os **12 campos** de métrica reais — tokens (entrada, saída, cache lido, cache escrito, decodificados), tempos (modelo, ferramentas, primeiro token, decodificação) e contagens (turnos, passos, passos com 1º token) — com `—` nos campos que o host não mediu |
+
+Exemplos reais:
+
+```text
+/worktree fix-guard-regex
+/novo-chat-wt fix-guard-regex corrige o teste que falha em test/security/host-header.test.ts
+/novo-chat resume o estado do repositório e diz o próximo passo
+/agentes
+/status-tarefa 01J8ZC2A
+```
+
+Os ids de 8 caracteres aparecem em `/agentes` (que lista agentes, chats e
+worktrees com a métrica resumida de cada um). Como `/agente`, o `/novo-chat` e o
+`/novo-chat-wt` **executam código** e o `/worktree` **altera a máquina** — todos
+pedem confirmação em 2 etapas: os chats mostram o **prompt exato que vai
+correr**, e o `/worktree` mostra o **nome** (e a base, quando indicada). Textos
+exatos e arquitetura:
+[`docs/AGENTS.md`](docs/AGENTS.md) e [`docs/ux/01-CONTRATO-BOT.md`](docs/ux/01-CONTRATO-BOT.md).
 
 ## Provedores de mensageria
 

@@ -69,14 +69,23 @@
 | Skill fora da allowlist | `A skill "<skill>" nao esta autorizada neste plugin (config agents.skills).` |
 | Teto de runs atingido | `Ja ha agentes a correr ate o limite (config agents.maxRuns). Espera um terminar ou cancela um.` |
 | Confirmação expirada (clique tardio) | `Confirmação expirada ou inválida. Mande /agente de novo.` |
-| `/agentes` com runs | `🤖 Agentes:` + `• <id> — <skill> — <estado> <há quanto>` (+ `   💬 <summary>`) |
+| `/agentes` com runs | `🤖 Agentes:` + `• <id> — <skill> — <estado> <há quanto> · <kind> · wt: <worktree> · 📊 <tokens total> / <tempo>` (+ `   💬 <summary>`) |
 | `/agentes` sem runs (vazio ensina) | `Nenhum agente rodando.` |
 | Difusão proativa de fim de runs | `🤖 Atualização de agentes:` + linhas |
 | `/parar-agente` cancelado | `Agente <id> cancelado.` |
 | `/parar-agente` não encontrado (noop) | `Agente <id> não encontrado.` |
 | `/parar-agente` id inválido | `Id inválido. Uso: /parar-agente <id> — os ids aparecem em /agentes.` |
+| `/novo-chat` sem prompt | `Falta o prompt. Uso: /novo-chat <o que o chat deve fazer>` |
+| `/novo-chat-wt` worktree inválido | `Worktree inválido (a-z, 0-9 e hífen, até 40). Uso: /novo-chat-wt <worktree> <o que o chat deve fazer>` |
+| `/worktree` sem nome / nome inválido | `Uso: /worktree <nome> [base]` · `Nome inválido (a-z, 0-9 e hífen, até 40). Uso: /worktree <nome> [base]` |
+| Confirmação de chat novo (executa código) | `💬 Iniciar um chat novo com este prompt?` + `Ele executa código na tua máquina:` + `"<prompt>"` — botões `✅ Sim, criar` e `✕ Não` |
+| Confirmação de worktree | `📁 Criar o worktree "<nome>"?` + `Ele cria uma pasta nova na tua máquina.` — botões `✅ Sim, criar` e `✕ Não` |
+| Confirmação morta (chat/worktree — uniforme) | `Confirmação expirada ou inválida. Mande /novo-chat de novo.` · `Confirmação expirada ou inválida. Mande /worktree de novo.` |
+| Chat/worktree criados (ack) | `Chat novo iniciado.` · `Worktree criado.` (noop: `Já estava assim.` — nada foi destruído) |
+| `/status-tarefa` com métricas | `🧩 Tarefa <id>:` + linha do run + `📊 Tokens: …` / `⏱ Tempo: …` / `🔁 Turnos …` (campo não medido = `—`) |
+| `/status-tarefa` sem correspondência | `Tarefa <id> não encontrada (veja /agentes)` |
 
-> **A tabela completa com o porquê de cada frase está no §10 de
+> **A tabela completa com o porquê de cada frase está no §10 e no §11 de
 > [`01-CONTRATO-BOT.md`](01-CONTRATO-BOT.md)** — os textos acima são os EXATOS
 > do código (`worker/surface/commands.ts`, `worker/surface/text.ts` e
 > `src/control/surface-ipc.ts`), congelados aqui como banco de referência.

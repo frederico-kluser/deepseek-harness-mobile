@@ -25,7 +25,7 @@ Show HN: Acesse seu agente de código DSH pelo celular sem alargar o bind de loo
 
 ## Link
 
-https://github.com/frederico-kluser/deepseek-harness-mobile
+https://github.com/frederico-kluser/dsh-guard-messenger
 
 ---
 

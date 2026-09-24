@@ -7,8 +7,9 @@
  * um plugin do DSH pode escrever. Se um destes blocos deixar de compilar, o
  * contrato com o host quebrou.
  *
- * LINHA DE VERSAO: `@deepseek-ai/dsh-*@0.1.0-rc.8` (a que o harness
- * `@deepseek-ai/dsh` resolve) e `@deepseek-ai/cordis@4.0.1`. A linha
+ * LINHA DE VERSAO: `@deepseek-ai/dsh-*@0.1.1-rc.1` (os pinos exatos de
+ * `scripts/fetch-dsh-types.mjs`; FAIXA SUPORTADA `0.1.0-rc.7 .. 0.1.1-rc.1`) e
+ * `@deepseek-ai/cordis@4.0.1`. A linha
  * `0.0.1-rc.*`, para onde a tag `latest` dos subpacotes ainda aponta, e uma
  * API abandonada com outros nomes de servico; o de-para entre as duas linhas
  * esta em `docs/spikes/api-dsh.md` seccao 3.

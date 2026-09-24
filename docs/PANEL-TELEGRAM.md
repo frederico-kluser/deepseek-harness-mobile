@@ -91,7 +91,10 @@ Quando pareado. Comandos essenciais, 1 linha cada:
 - `/emergencia` — derrubar tudo de imediato
 
 (os demais — `/ligar /desligar /acessar /rotacionar` — ficam nos **botões do
-cartão `/menu`** do bot, não repetidos aqui; reduz a lista e o ruído.)
+cartão `/menu`** do bot, não repetidos aqui; reduz a lista e o ruído. Os
+comandos de **tarefa** — `/novo-chat`, `/novo-chat-wt`, `/worktree`,
+`/status-tarefa` — e os de **agentes** saem no texto de `/ajuda`; ver
+`docs/AGENTS.md` §4b.)
 
 Dois `<details>`:
 - **Avançado ▸** — `Trocar o token` (volta ao Passo 1 com confirmação),
@@ -113,22 +116,37 @@ sessões e botão `Atualizar`) foi **removido**: o painel não consulta mais
 
 ---
 
-## O menu novo do bot (5 comandos, escopos)
+## O menu do bot (3 comandos publicados) e os comandos de tarefa
 
-A lista publicada (`setMyCommands`) mudou para **5 comandos**, e divide-se em
-dois escopos (v. `docs/ux/01-CONTRATO-BOT.md §2`):
+A lista publicada (`setMyCommands`) é **mínima** — `COMANDOS_PUBLICADOS` tem
+**3 comandos** (TG-080, Onda 1 — nome e botões) e divide-se em dois escopos
+(v. `docs/ux/01-CONTRATO-BOT.md §2`):
 
 | Escopo | Comandos | Descrição |
 |---|---|---|
-| `default` (grupos e privado) | `/start` e `/ajuda` (o `/start` na aparece no menu — boas-vindas inócuas, PAIR-006) | descoberta segura, não vaza estado |
-| **privado** (só DM) | `/menu`, `/status`, `/parear`, `/emergencia` | ações/estado |
+| `default` (grupos e privado) | `/ajuda` | descoberta segura, não vaza estado |
+| **private** (só DM) | `/menu`, `/parear`, `/ajuda` | ações/estado |
 
-O `setMyCommands` é publicado **duas vezes**: `default` (start/ajuda) e
-`all_private_chats` (menu/status/parear/emergencia). Em grupos qualquer comando
-é barrado pelo guard — por isso a descoberta de ações fica restrita ao privado.
+O `setMyCommands` é publicado **duas vezes**: `default` (`ajuda`) e
+`all_private_chats` (menu/parear/ajuda). `/start` continua de fora do menu
+(PAIR-006) e `/status`/`/emergencia` saíram da lista — ficam como botões do
+cartão (`/menu`), embora continuem válidos digitados.
+
+**Os comandos digitados são mais do que os do menu** — o roteador continua
+intacto e o texto de `/ajuda` lista os de tarefa da Onda 3:
+
+| Comando | O que faz |
+|---|---|
+| `/novo-chat <o que fazer>` | abre um chat novo (sessão real do DSH) |
+| `/novo-chat-wt <worktree> <o que fazer>` | chat novo num worktree existente |
+| `/worktree <nome> [base]` | cria uma worktree git (`guard/<nome>`) |
+| `/status-tarefa <id>` | vê uma tarefa com as métricas reais (os ids saem em `/agentes`) |
+| `/agentes` | lista tarefas e agentes, com métrica resumida por run |
+| `/agente` · `/parar-agente` | dispara e cancela agentes do harness |
 
 > Textos EXATOS dos comandos e dos botões do bot (cartão `/menu`, telas de
-> confirmação com botão `✕ Não`, toasts): ver `docs/ux/01-CONTRATO-BOT.md` §4/§5.
+> confirmação com botão `✅ …`/`✕ Não`, toasts): ver `docs/ux/01-CONTRATO-BOT.md`
+> §4/§5 (túnel e agentes) e §11 (tarefas).
 
 ---
 

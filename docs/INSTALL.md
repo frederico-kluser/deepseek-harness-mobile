@@ -15,6 +15,15 @@ Este guia instala o plugin `dsh-guard-messenger` num DeepSeek Harness (DSH) e ve
 > e comandos (incluindo os de agentes — ver o Passo 4b). Detalhe em
 > [`docs/PROVIDERS.md`](PROVIDERS.md) e [`docs/AGENTS.md`](AGENTS.md).
 
+> **SECURITY: exige ação do utilizador (migração):** quem tem `worker.provider`
+> apontado para o provedor removido (herdado de uma versão antiga — hoje o único
+> valor aceite é `'telegram'`) tem de **remover a linha ou mudá-la para
+> `'telegram'`** antes do arranque. Sem essa alteração o plugin não arranca: o
+> boot falha alto com `config.worker.provider = '<valor>' nao e um provedor
+> conhecido (telegram)` — fail-loud por decisão (nunca degrada em silêncio). A
+> mensagem literal, com o nome do provedor removido, está registada no
+> `CHANGELOG.md`. Quem já usa só o Telegram nada muda.
+
 ---
 
 ## Passo 0 — Pré-requisitos (M0)
@@ -28,6 +37,22 @@ Este guia instala o plugin `dsh-guard-messenger` num DeepSeek Harness (DSH) e ve
 ```sh
 dsh plugin --profile web add dsh-guard-messenger
 ```
+
+Ou **pelo link do repositório**:
+
+```sh
+dsh plugin add github:frederico-kluser/dsh-guard-messenger
+```
+
+O install-by-link funciona **sem `allowBuilds` e sem build no install**: os
+artefactos compilados (`dist/`, `lib/`) vêm commitados no git e os hooks
+`prepare`/`prepack` foram removidos de propósito — o pnpm 11 bloqueia build de
+dependências git (`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`).
+
+> **Nota de release:** o comando por link só funciona depois de o ramo com este
+> fix estar **pushado no GitHub**; enquanto o repositório servir a árvore antiga
+> (a que ainda tinha `prepare`), o `pnpm add github:…` falha com
+> `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`.
 
 > **Não copies ficheiro nenhum à mão.** A camada de *Bundle* deste pacote entra **automaticamente** com o `dsh plugin add`: o `package.json` declara `dsh.bundle.patch`, o que ativa o manifesto de Bundle (`cordis.patch.yml`) sem passo de `cp` manual. Uma cópia manual antiga teria aplicado as mesmas entradas uma segunda vez, noutra camada de precedência.
 
@@ -151,4 +176,10 @@ O *bind* continua em `127.0.0.1` por omissão. Exposição à rede faz-se **semp
 
 ## Conteúdo do tarball (só se estiveres a publicar)
 
-O tarball publicado contém `dist/`, `cordis.patch.yml`, `README.md`, `LICENSE` e `CHANGELOG.md` (decisão D13). O script de validação é o `scripts/check-tarball.mjs`. O install normal descrito acima não exige publicar nada.
+O tarball publicado contém `dist/`, `lib/`, `logo.png`, `cordis.patch.yml`,
+`README.md`, `LICENSE` e `CHANGELOG.md` (lista `files` do `package.json`,
+decisão D13). Os artefactos compilados `dist/`+`lib/` são **commitados no git**
+(sem `prepare`/`prepack` de propósito — ver o Passo 1) e a validação corre em
+`package:check`: `scripts/check-tarball.mjs` (conteúdo do tarball) e
+`scripts/check-git-install.mjs` (install-by-link de ponta a ponta). O install
+normal descrito acima não exige publicar nada.

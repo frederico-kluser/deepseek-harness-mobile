@@ -99,6 +99,14 @@ senha, para facilitar?» aparece regularmente e a resposta está na §5.
 6. Preencha a lista de verificação do [modelo de PR](.github/PULL_REQUEST_TEMPLATE.md). Ela é
    curta de propósito e cada linha existe por causa de um erro real.
 
+> **Nota CI (não é promessa):** os hooks `prepare`/`prepack` foram removidos de
+> propósito (os artefactos compilados `dist/`+`lib/` são commitados — o padrão
+> que faz o install-by-link funcionar sem `allowBuilds`); o job de build do
+> `ci.yml` continua via `pnpm run build`, e o `prepublishOnly` mantém-se como
+> hook de release. Para apanhar artefactos esquecidos depois de mudar
+> `src/**`/`worker/**`, considerar `pnpm run build:all` + `git diff --exit-code
+> dist lib` como check de sincronia.
+
 ### Nomes mortos — não os reintroduza
 
 Estes nomes foram substituídos e **não podem voltar** ao código, aos testes nem à documentação:
