@@ -1115,11 +1115,48 @@ interface Bancada {
   limpar(): void
 }
 
+/**
+ * >>> CAUSA RAIZ DO FLAKY DE `PAIR-008` ("com a palavra exata...") <<<
+ *
+ * O caso assere que o `audit.log` NAO contem `111` — o `ownerUserId` semeado em
+ * `comDono`. Ora o registo e `{"ts":<ISO>,...}` (`src/audit/format.ts`,
+ * `toAuditRecord`) e o `ts` sai do relogio de PAREDE, nao de dependencia
+ * injetada nenhuma: `registarAuditoria` (`bin/dsh-guard-setup.ts`) chama
+ * `openAuditLog` sem a opcao `now`, que por omissao e `Date.now`
+ * (`src/audit/log.ts`). O `ts` e o UNICO campo do registo com digitos variaveis
+ * e o ISO traz tres digitos de milissegundo (`...T12:00:00.111Z`): quando
+ * `Date.now()` cai exatamente em `.111` — 1 em cada 1000 execucoes — os
+ * milissegundos colidem com o literal `111` e a assercao cai. Nenhum caso toca
+ * em outro; o que vaza e o RELOGIO, estado partilhado por todos os casos, que
+ * esta bancada nao isolava e que a medicao media sem querer.
+ *
+ * A reparacao e a receita de `test/support/clock.ts`: relogio CONGELADO por
+ * caso, fora do alcance do ambiente, restaurado no `limpar()`. (O ponto de
+ * injecao "de livro" — `openAuditLog({ now: ctx.agora })` dentro de
+ * `registarAuditoria` em `bin/dsh-guard-setup.ts` — nao e alcancavel pelas
+ * `deps` do `principal`, e o `bin/**` nao e deste dono: a costura da bancada e
+ * a fronteira que existe.) O instante escolhido nao tem nenhum run de tres
+ * digitos iguais no ISO (`2026-09-24T12:34:56.789Z`), logo os casos que medem o
+ * log de auditoria (PAIR-008 e o `!auditoria.includes(mostrado)` de TG-065)
+ * ficam deterministicos.
+ *
+ * PROVA A/B, sem esperar o 1/1000: com o `Date.now` do AMBIENTE congelado em
+ * `.111`, o caso PAIR-008 rebentava em `assert.ok(!auditoria.includes('111'))`
+ * (audit: `{"ts":"...T12:00:00.111Z",...}`) antes deste isolamento existir, e
+ * passa com ele — o relogio do ambiente deixa de chegar a medicao.
+ */
+const INSTANTE_FIXO_MS = Date.UTC(2026, 8, 24, 12, 34, 56, 789)
+
 function montarBancada(sonda: SondaTelegram, extra: DependenciasDoSetup = {}): Bancada {
   const temp = makeTempStateDir()
+  // Relogio de parede ISOLADO durante toda a vida da bancada (ver
+  // `INSTANTE_FIXO_MS`); `limpar()` devolve o relogio do ambiente.
+  const relogioDoAmbiente = Date.now
+  Date.now = (): number => INSTANTE_FIXO_MS
   const paths = statePathsAt(temp.path)
   const linhas: string[] = []
   const erros: string[] = []
+  let limpa = false
   return {
     raiz: temp.path,
     linhas,
@@ -1143,7 +1180,12 @@ function montarBancada(sonda: SondaTelegram, extra: DependenciasDoSetup = {}): B
         h.dispose()
       }
     },
-    limpar: (): void => temp.cleanup(),
+    limpar: (): void => {
+      if (limpa) return
+      limpa = true
+      Date.now = relogioDoAmbiente
+      temp.cleanup()
+    },
   }
 }
 

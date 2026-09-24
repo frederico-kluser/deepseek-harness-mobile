@@ -387,6 +387,16 @@
           # fallback documentado.
           token: !!js "process.env.TELEGRAM_BOT_TOKEN ?? ''"
 
+          # O PROVEDOR de mensageria ATIVO (desacoplamento do bot, D1).
+          #
+          # Declarado aqui — e nao so no `Config` — para a config default do
+          # worker ficar sincronizada com o enum fechado. Ausente, o plugin
+          # aplica o default `telegram` (a mesma decisão de `src/proc/env.ts` e
+          # de `src/index.ts`), por isso esta linha é a leitura EXPLÍCITA do que
+          # hoje é o único provedor. Um provedor futuro (ex.: `whatsapp`)
+          # acrescenta o literal aqui e a sua própria linha em `src/proc/env.ts`.
+          provider: telegram
+
           # Janela de terminação graciosa do subprocesso, em milissegundos.
           # `SubprocessSpawnSpec` exige `graceMs`: o `ctx.subprocess.spawn`
           # envia SIGTERM, espera este intervalo e só então parte para SIGKILL.
