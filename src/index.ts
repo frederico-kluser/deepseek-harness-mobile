@@ -75,7 +75,21 @@ import { IPC_PROTOCOL_VERSION, type IpcIntentMessage, type IpcMessageToWorker } 
 import { createConfirmService } from './control/confirm.ts'
 import { createTunnelController, ORIGEM_BOOT, type DifusaoEstado, type TunnelController } from './control/controller.ts'
 import { criarRespondedorDeNonce, criarRespondedorIpc } from './control/surface-ipc.ts'
-import { createAgentRegistry, DEFAULT_PROVIDER_NAME, type AgentRegistry } from './agents/registry.ts'
+import {
+  createAgentRegistry,
+  DEFAULT_PROVIDER_NAME,
+  type AgentRegistry,
+  type TarefasHost,
+} from './agents/registry.ts'
+import { criarServicoDeChats } from './agents/chats.ts'
+import { criarServicoDeWorktrees } from './agents/worktrees.ts'
+import { criarColetorDeMetricas } from './agents/metrics.ts'
+import type {
+  HarnessAgentRegistry,
+  HarnessSessionController,
+  HarnessSessionProjections,
+  HarnessSessionsService,
+} from './agents/harness.ts'
 import { resolveAgents } from './config/schema.ts'
 import type { Context, Disposable } from './dsh/adapter.ts'
 import { PLUGIN_NAME } from './errors.ts'
@@ -1489,7 +1503,45 @@ export function apply(
    * harness e assincrono e corre fire-and-forget — o abort SINCRONO do sinal e
    * o que realmente para o turno.
    */
-  let registryDeAgentes: AgentRegistry | undefined
+  let registryDeAgentes: (AgentRegistry & TarefasHost) | undefined
+
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: os servicos das TAREFAS novas (chat/worktree)
+   * e as leituras lazy dos servicos do HARNESS que elas consomem.
+   *
+   * `sessions`/`sessionController`/`sessionProjections` NAO estao na
+   * augmentation do Context (`src/dsh/adapter.ts` so promove
+   * `subagents`/`agents`/`skills`, e o grep "@deepseek-ai/" tem de continuar a
+   * devolver so esse ficheiro): leem-se por LEITURA ESTRUTURAL, a mesma rede
+   * de seguranca de `resolveWebServerHttpServer` (`src/dsh/adapter.ts`). Ausentes
+   * no momento do uso = fail-closed (as tarefas respondem recusa honesta).
+   */
+  const servicoDoHarness = <T>(nome: string): T | undefined => {
+    try {
+      return (ctx as unknown as Record<string, unknown>)[nome] as T | undefined
+    } catch {
+      return undefined
+    }
+  }
+  const sessoesDoHarness = (): HarnessSessionsService | undefined =>
+    servicoDoHarness<HarnessSessionsService>('sessions')
+  const controladorDeSessao = (): HarnessSessionController | undefined =>
+    servicoDoHarness<HarnessSessionController>('sessionController')
+  const projecoesDoHarness = (): HarnessSessionProjections | undefined =>
+    servicoDoHarness<HarnessSessionProjections>('sessionProjections')
+  /**
+   * `BASE_DIR` ABSOLUTO: a raiz de trabalho do harness — o cwd do agente-raciz
+   * vivo (a MESMA fonte que o dispatch de subagentes usa como workspace do
+   * filho). Sem agente vivo, `undefined` (fail-closed: nao se inventa uma raiz).
+   */
+  const baseDirDoHarness = (): string | undefined => {
+    try {
+      const raiz = (ctx as unknown as { agents?: HarnessAgentRegistry }).agents?.roots()[0]
+      return raiz?.session.header.cwd
+    } catch {
+      return undefined
+    }
+  }
 
   /**
    * A difusao de `agent.report` ao worker: resposta a `agent.status` (via
@@ -1504,6 +1556,27 @@ export function apply(
   }
 
   ctx.effect((): Disposable => {
+    // EMENDA ONDA-3-HOST-TAREFAS: os servicos das capacidades novas, nascidos
+    // NESTE efeito (morrem com o registry no disposer). Todos os seus acessos
+    // ao harness sao LAZY e estruturais (a doutrina acima).
+    const coletorDeMetricas = criarColetorDeMetricas({
+      sessoes: sessoesDoHarness,
+      projecoes: projecoesDoHarness,
+      log,
+    })
+    const servicoDeWorktrees = criarServicoDeWorktrees({
+      subprocess: () => ctx.subprocess,
+      baseDir: baseDirDoHarness,
+      log,
+    })
+    const servicoDeChats = criarServicoDeChats({
+      sessoes: sessoesDoHarness,
+      controlador: controladorDeSessao,
+      worktrees: () => servicoDeWorktrees,
+      baseDir: baseDirDoHarness,
+      log,
+      now: defaultSupervisorDeps.now,
+    })
     const registry = createAgentRegistry({
       // A allowlist e o teto vem da CONFIG (eixo `agents`; ausente = fail-closed).
       skillsPermitidas: agentsConfig.skills,
@@ -1521,6 +1594,10 @@ export function apply(
       log,
       now: defaultSupervisorDeps.now,
       enviarRelatorio: difundirRelatorioDeAgentes,
+      // EMENDA ONDA-3: as tarefas de chat/worktree e as metricas reais.
+      chats: () => servicoDeChats,
+      worktrees: () => servicoDeWorktrees,
+      metricas: () => coletorDeMetricas,
     })
     registryDeAgentes = registry
 
@@ -1622,6 +1699,9 @@ export function apply(
       // EMENDA ONDA-4-AGENTS-HOST: o dispatcher e o relatorio (a Onda 5 liga
       // /agente /agentes /parar-agente a estas intents; o HOST ja despacha).
       agentes: registryDeAgentes,
+      // EMENDA ONDA-3-HOST-TAREFAS: a porta das tarefas novas (/novo-chat,
+      // /novo-chat-wt, /worktree) — o MESMO registry, pela face `TarefasHost`.
+      tarefas: registryDeAgentes,
       relatorioDeAgentes: difundirRelatorioDeAgentes,
     }
     const responder = criarRespondedorIpc(depsRespondedor)

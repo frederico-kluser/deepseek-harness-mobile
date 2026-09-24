@@ -43,7 +43,7 @@
  */
 
 import type { AuditSink } from '../contracts/auth.ts'
-import type { AgentRunStatus, AgentRunReport } from '../contracts/ipc.ts'
+import type { AgentRunKind, AgentRunMetrics, AgentRunStatus, AgentRunReport } from '../contracts/ipc.ts'
 import {
   comporEventoAgenteCancelar,
   comporEventoAgenteDespacho,
@@ -52,6 +52,14 @@ import {
 import { MAX_RUNS_PER_REPORT } from '../ipc/channel.ts'
 import type { GuardLogger } from '../logging/logger.ts'
 import { createUlidFactory } from '../ulid.ts'
+import { ChatError, promptDeChatValido, type ChatService, type PedidoDeChat } from './chats.ts'
+import type { ColetorDeMetricas } from './metrics.ts'
+import {
+  WorktreeError,
+  nomeDeWorktreeValido,
+  type PedidoDeWorktree,
+  type WorktreeService,
+} from './worktrees.ts'
 import type {
   HarnessAgentRegistry,
   HarnessSkillRegistry,
@@ -146,6 +154,74 @@ interface RunInterno {
   readonly abortar: AbortController
   /** O handle publicado (presente a partir do `start()` resolver). */
   run: HarnessSubagentRun | undefined
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: a NATUREZA do run. Ausente = `agent` (o
+   * dispatch de sempre — e o contrato manda EMITIR ausente nesse caso).
+   */
+  kind?: AgentRunKind | undefined
+  /** O worktree ligado ao run (`chat.new` com worktree, ou o nome de um `worktree.create`). */
+  worktree?: string | undefined
+  /**
+   * A SESSAO do harness ligada a este run: a sessao do chat criado, ou — para
+   * runs de subagente — o `id` do handle (`SubagentRun.id` e "the published
+   * child session id", `packages/subagent/subagent/src/types.ts:308-314`). E o
+   * que liga o run as metricas REAIS (`src/agents/metrics.ts`).
+   */
+  sessao?: string | undefined
+}
+
+/* ========================================================================== */
+/* EMENDA ONDA-3-HOST-TAREFAS — as TAREFAS de chat e de worktree               */
+/* ========================================================================== */
+
+/**
+ * O rotulo de `skill` de uma tarefa de chat no `AgentRunReport`.
+ *
+ * PORQUE `'novo-chat'` e nao a intent: o codec do report valida `skill` com a
+ * gramatica kebab-case de skill (`buildAgentRun` -> `isSkillName`, a gramatica
+ * PUBLICA do harness `^[a-z0-9]+(?:-[a-z0-9]+)*$` em `src/ipc/channel.ts`) —
+ * `'chat.new'` tem ponto e rejeitaria a LINHA INTEIRA do report. O rotulo usa
+ * o nome do COMANDO que o dono conhece (`/novo-chat`); a NATUREZA do run viaja
+ * no campo `kind` (contrato congelado).
+ */
+export const ROTULO_TAREFA_CHAT = 'novo-chat'
+
+/** O rotulo de `skill` de uma tarefa de worktree (`/worktree`) — ver {@link ROTULO_TAREFA_CHAT}. */
+export const ROTULO_TAREFA_WORKTREE = 'worktree'
+
+/** O pedido de uma tarefa de worktree (o `worktree.create` + a origem do audit). */
+export interface PedidoDeTarefaWorktree extends PedidoDeWorktree {
+  /** A origem pre-formatada (`telegram:<id>`) — o que o audit grava. */
+  readonly origem: string
+}
+
+/** Motivo de RECUSA SINCRONA de uma tarefa (a resposta do IPC usa-a). */
+export type MotivoDeRecusaDeTarefa =
+  /** O teto de runs concorrentes (`config.agents.maxRuns`) foi atingido. */
+  | 'teto-atingido'
+  /** Harness indisponivel (chats/worktrees ausentes) ou pedido invalido no host. */
+  | 'tarefa-indisponivel'
+
+/**
+ * O veredito de uma tarefa. `jaExistia` e o NOOP honesto do `worktree.create`:
+ * o worktree pedido ja esta la ("ja estava no estado pedido" — e nada foi
+ * destruido, a regra eterna).
+ */
+export type VereditoDeTarefa =
+  | { readonly ok: true; readonly jaExistia?: boolean }
+  | { readonly ok: false; readonly motivo: MotivoDeRecusaDeTarefa }
+
+/**
+ * A porta de SAIDA das tarefas novas (chat/worktree) — a mesma disciplina do
+ * `AgentRegistry` (veredito sincrono, efeito assincrono, relatorio honesto),
+ * numa interface PROPRIA para o contrato de `AgentRegistry` nao mexer: quem
+ * so conhece dispatch de subagentes continua a compilar intocado.
+ */
+export interface TarefasHost {
+  /** `chat.new`: cria a sessao e submete o prompt (o efeito corre depois do ack). */
+  novoChat(pedido: PedidoDeChat): VereditoDeTarefa
+  /** `worktree.create`: cria a worktree git (o efeito corre depois do ack). */
+  novoWorktree(pedido: PedidoDeTarefaWorktree): VereditoDeTarefa
 }
 
 export interface AgentRegistryDeps {
@@ -169,6 +245,18 @@ export interface AgentRegistryDeps {
    * baixo). Chamado em CADA transicao terminal: `agent.report` proativo.
    */
   readonly enviarRelatorio?: ((relatorio: AgentRunReport[]) => void) | undefined
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: o servico de CHATS (a costura de
+   * `src/agents/chats.ts`). AUSENTE, `novoChat` recusa (fail-closed).
+   */
+  readonly chats?: (() => ChatService | undefined) | undefined
+  /** O servico de WORKTRETS (`src/agents/worktrees.ts`). AUSENTE, `novoWorktree` recusa. */
+  readonly worktrees?: (() => WorktreeService | undefined) | undefined
+  /**
+   * O coletor de METRICAS REAIS (`src/agents/metrics.ts`). AUSENTE, o campo
+   * `metrics` do report e OMITIDO — nunca estimado.
+   */
+  readonly metricas?: (() => ColetorDeMetricas | undefined) | undefined
 }
 
 export interface AgentRegistry {
@@ -197,7 +285,7 @@ export interface AgentRegistry {
   dispose(): void
 }
 
-export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
+export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry & TarefasHost {
   const { log } = deps
   /** Ids curtos: ULID completo, so a parte ALEATORIA (os 8 ultimos chars). */
   const ulid = createUlidFactory(deps.now)
@@ -206,6 +294,18 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
   const permitida = (skill: string): boolean => deps.skillsPermitidas.includes(skill)
 
   const contando = (runsAtivos: number): boolean => runsAtivos >= deps.maxRuns
+
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: as metricas REAIS de UM run, lidas AGORA (o
+   * `agent.report` e sincrono). A sessao-alvo: a do chat criado; ou, para um
+   * run de subagente, o `id` do handle — que e "the published child session
+   * id" (`packages/subagent/subagent/src/types.ts:308-314`). Sem sessao (ou
+   * sem coletor) = `undefined` -> o campo `metrics` e OMITIDO (nunca estimado).
+   */
+  const metricasDe = (run: RunInterno): AgentRunMetrics | undefined => {
+    const coletor = deps.metricas?.()
+    return coletor?.daSessao(run.sessao ?? run.run?.id)
+  }
 
   /**
    * A lista COMPLETA (vivos + terminais em memoria) — o corpo do relatorio.
@@ -217,15 +317,27 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
    * difusoes perdidas nao podem acontecer, mesmo que `maxRuns` ou o teto do
    * historico mudem no futuro. A poda de historico (`podarHistorico`) e a
    * outra rede; esta e a da EMISSAO, a ultima antes do canal.
+   *
+   * EMENDA ONDA-2 (campos ADITIVOS) na leitura da EMENDA ONDA-3: `kind` so
+   * viaja quando != 'agent' (contrato: "ausente = agent" — o run antigo emite
+   * EXATAMENTE a linha de sempre), `worktree` so quando ligado, `metrics` so
+   * quando REALMENTE medido. Os runs de subagente continuam a serializar como
+   * sempre quando nao ha nada medido.
    */
   const relatorio = (): AgentRunReport[] =>
-    runs.slice(-MAX_RUNS_PER_REPORT).map((run) => ({
-      id: run.id,
-      skill: run.skill,
-      status: run.status,
-      startedAt: run.startedAt,
-      ...(run.summary === undefined ? {} : { summary: run.summary }),
-    }))
+    runs.slice(-MAX_RUNS_PER_REPORT).map((run) => {
+      const metricas = metricasDe(run)
+      return {
+        id: run.id,
+        skill: run.skill,
+        status: run.status,
+        startedAt: run.startedAt,
+        ...(run.kind === undefined ? {} : { kind: run.kind }),
+        ...(run.worktree === undefined ? {} : { worktree: run.worktree }),
+        ...(metricas === undefined ? {} : { metrics: metricas }),
+        ...(run.summary === undefined ? {} : { summary: run.summary }),
+      }
+    })
 
   const difundir = (): void => {
     try {
@@ -341,6 +453,156 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
     }
   }
 
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: a parte ASSINCRONA de `chat.new` — criar a
+   * sessao, submeter o prompt, e so terminar o run quando o turno atinge a
+   * quiescencia (o `whenIdle` do harness). O run e a TAREFA ("correr este
+   * prompt como chat"); a SESSAO vive depois dele — a conversa continua na Web
+   * UI, e o `summary` diz onde.
+   *
+   * Como em `executar`, uma falha depois de o veredito estar decidido nao
+   * desfaz o ack: o run nasce e termina com o status HONESTO, e o `agent.report`
+   * (difusao) conta a historia ao dono. (A criacao da sessao corre no prefixo
+   * sincrono do veredito — ver `registarTarefa`.)
+   */
+  const executarChat = async (run: RunInterno, pedido: PedidoDeChat): Promise<void> => {
+    const chats = deps.chats?.()
+    if (chats === undefined) {
+      encerrar(run, 'failed', 'O harness nao esta disponivel para criar chats.')
+      return
+    }
+    let sessionId: string | undefined
+    try {
+      const criado = await chats.criar(pedido, { signal: run.abortar.signal })
+      sessionId = criado.sessionId
+      run.sessao = sessionId
+      // DIFUSAO APOS O EFEITO de criacao: o dono passa a ver a tarefa ligada a
+      // sessao (e as metricas reais que ja existirem).
+      difundir()
+      await chats.aguardarQuiete(sessionId)
+      // Cancelado durante a espera: o `cancelar` ja escreveu o estado — aqui
+      // so se fecha o audit/fim (o mesmo padrao do `result` do subagente).
+      const terminal = run.status === 'running' ? 'done' : 'cancelled'
+      const resposta = chats.ultimaResposta(sessionId)
+      encerrar(
+        run,
+        terminal,
+        terminal === 'done'
+          ? resposta
+            ?? `sem resposta do modelo; continua o chat na Web UI (sessao ${sessionId}).`
+          : undefined,
+      )
+    } catch (error) {
+      if (run.status !== 'running') return
+      if (run.abortar.signal.aborted) {
+        encerrar(run, 'cancelled')
+        return
+      }
+      if (error instanceof ChatError) {
+        // A mensagem do ChatError ja e S3-segura (composta pelo host); o
+        // diagnostico bruto vai para o log.
+        if (error.detail !== undefined && error.detail.length > 0) {
+          log.warn(`tarefa de chat ${run.id}: ${error.code}: ${error.detail}`)
+        }
+        encerrar(run, 'failed', error.message)
+        return
+      }
+      log.error(
+        `tarefa de chat ${run.id} falhou: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      encerrar(run, 'failed', 'Nao foi possivel criar o chat (detalhe no log do plugin).')
+    }
+  }
+
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: a parte ASSINCRONA de `worktree.create` — o
+   * `git worktree add` por child process. O run termina quando o git termina;
+   * o `summary` e S3-seguro (o caminho NUNCA viaja para o Telegram — a worktree
+   * e referenciada pelo NOME, que ja e o campo `worktree` do report).
+   */
+  const executarWorktree = async (run: RunInterno, pedido: PedidoDeTarefaWorktree): Promise<void> => {
+    const worktrees = deps.worktrees?.()
+    if (worktrees === undefined) {
+      encerrar(run, 'failed', 'O harness nao esta disponivel para criar worktrees.')
+      return
+    }
+    try {
+      const criada = await worktrees.criar(
+        { nome: pedido.nome, ...(pedido.base === undefined ? {} : { base: pedido.base }) },
+        { signal: run.abortar.signal },
+      )
+      encerrar(
+        run,
+        'done',
+        `worktree "${criada.nome}" criada (branch ${criada.branch}, a partir de ${criada.base}).`,
+      )
+    } catch (error) {
+      if (run.status !== 'running') return
+      if (error instanceof WorktreeError) {
+        if (error.code === 'WORKTREE_CANCELLED') {
+          encerrar(run, 'cancelled')
+          return
+        }
+        if (error.detail !== undefined && error.detail.length > 0) {
+          log.warn(`tarefa de worktree ${run.id}: ${error.code}: ${error.detail}`)
+        }
+        encerrar(run, 'failed', error.message)
+        return
+      }
+      if (run.abortar.signal.aborted) {
+        encerrar(run, 'cancelled')
+        return
+      }
+      log.error(
+        `tarefa de worktree ${run.id} falhou: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      encerrar(run, 'failed', 'Nao foi possivel criar o worktree (detalhe no log do plugin).')
+    }
+  }
+
+  /**
+   * Cria o run de uma tarefa (chat ou worktree) e LANCA o efeito.
+   *
+   * ORDEM REAL (emenda de honestidade apos revisao): o efeito COMECA no
+   * PREFIXO SINCRONO do veredito — `chats.criar` cria a sessao e
+   * `worktrees.criar` faz o spawn do `git` antes de o `novo*` retornar, logo
+   * antes de o ack sair para o worker. O que e assincrono (a submissao do
+   * prompt, o `whenIdle`, o exit do git) continua depois do ack, e e a
+   * transicao terminal que dispara o `agent.report`. Um teste prende esta
+   * ordem (`test/unit/agents/tarefas.test.ts` — "o efeito COMECA no prefixo
+   * sincrono do veredito").
+   */
+  const registarTarefa = (
+    skill: string,
+    kind: AgentRunKind,
+    origem: string,
+    worktree: string | undefined,
+    executar: (run: RunInterno) => Promise<void>,
+  ): void => {
+    const run: RunInterno = {
+      id: ulid().slice(-8),
+      skill,
+      origem,
+      startedAt: deps.now(),
+      status: 'running',
+      abortar: new AbortController(),
+      run: undefined,
+      kind,
+      ...(worktree === undefined ? {} : { worktree }),
+    }
+    runs.push(run)
+    podarHistorico()
+    try {
+      deps.audit.append({
+        evento: comporEventoAgenteDespacho(origem, skill),
+        resultado: 'permitido',
+      })
+    } catch (error) {
+      log.error(`falha ao auditar a tarefa: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    void executar(run)
+  }
+
   return {
     despachar(pedido) {
       // 1. ALLOWLIST — default deny. A comparacao e por inclusao na lista
@@ -416,6 +678,97 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
       return { ok: true }
     },
 
+    /* --- EMENDA ONDA-3-HOST-TAREFAS: as tarefas de chat e de worktree ---- */
+
+    novoChat(pedido) {
+      // 1. HARNESS AUSENTE — fail-closed antes de qualquer efeito.
+      const chats = deps.chats?.()
+      if (chats === undefined) {
+        log.warn('tarefa de chat RECUSADA: o servico de chats do harness nao esta disponivel.')
+        return { ok: false, motivo: 'tarefa-indisponivel' }
+      }
+      // 2. REVALIDACAO S6 (defesa em profundidade: o worker e o codec ja
+      //    recusaram; aqui so um prompt "texto limpo <= 4096" chega ao efeito).
+      if (!promptDeChatValido(pedido.prompt)) {
+        log.warn('tarefa de chat RECUSADA: prompt fora do contrato (texto limpo, 1..4096).')
+        return { ok: false, motivo: 'tarefa-indisponivel' }
+      }
+      // 3. TETO de runs CONCORRENTES (a mesma conta dos subagentes: as tarefas
+      //    tambem consomem o harness — a leitura fechada e a correta).
+      const ativos = runs.filter((run) => run.status === 'running').length
+      if (contando(ativos)) {
+        try {
+          deps.audit.append({
+            evento: comporEventoAgenteDespacho(pedido.origem, ROTULO_TAREFA_CHAT),
+            resultado: 'negado',
+          })
+        } catch (error) {
+          log.error(`falha ao auditar o teto de tarefas: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        log.warn(
+          `tarefa de chat RECUSADA: ${String(ativos)} runs ativos atingem o teto ` +
+            `config agents.maxRuns (${String(deps.maxRuns)}).`,
+        )
+        return { ok: false, motivo: 'teto-atingido' }
+      }
+      // 4. ACEITE: o run nasce e o efeito COMECA neste proprio tick (a sessao e
+      //    criada em sincrono; o resto segue depois do ack). `chat.new` SEM
+      //    worktree emite `worktree` ausente (contrato).
+      registarTarefa(ROTULO_TAREFA_CHAT, 'chat', pedido.origem, pedido.worktree, (run) =>
+        executarChat(run, pedido),
+      )
+      return { ok: true }
+    },
+
+    novoWorktree(pedido) {
+      // 1. HARNESS AUSENTE — fail-closed.
+      const worktrees = deps.worktrees?.()
+      if (worktrees === undefined) {
+        log.warn('tarefa de worktree RECUSADA: o servico de worktrees nao esta disponivel.')
+        return { ok: false, motivo: 'tarefa-indisponivel' }
+      }
+      // 2. REVALIDACAO S6 da gramatica do nome (`/^[a-z0-9-]{1,40}$/`).
+      if (!nomeDeWorktreeValido(pedido.nome)) {
+        log.warn('tarefa de worktree RECUSADA: nome fora da gramatica [a-z0-9-]{1,40}.')
+        return { ok: false, motivo: 'tarefa-indisponivel' }
+      }
+      // 3. JA EXISTE = NOOP honesto ("ja estava no estado pedido") — e
+      //    NUNCA destruir: o caminho ocupado nunca e removido nem recriado.
+      try {
+        if (worktrees.existe(pedido.nome)) {
+          return { ok: true, jaExistia: true }
+        }
+      } catch (error) {
+        log.warn(
+          `tarefa de worktree RECUSADA: nao foi possivel inspecionar o caminho: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        )
+        return { ok: false, motivo: 'tarefa-indisponivel' }
+      }
+      // 4. TETO de runs CONCORRENTES.
+      const ativos = runs.filter((run) => run.status === 'running').length
+      if (contando(ativos)) {
+        try {
+          deps.audit.append({
+            evento: comporEventoAgenteDespacho(pedido.origem, ROTULO_TAREFA_WORKTREE),
+            resultado: 'negado',
+          })
+        } catch (error) {
+          log.error(`falha ao auditar o teto de tarefas: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        log.warn(
+          `tarefa de worktree RECUSADA: ${String(ativos)} runs ativos atingem o teto ` +
+            `config agents.maxRuns (${String(deps.maxRuns)}).`,
+        )
+        return { ok: false, motivo: 'teto-atingido' }
+      }
+      // 5. ACEITE: run `kind: 'worktree'` com o NOME no campo `worktree`.
+      registarTarefa(ROTULO_TAREFA_WORKTREE, 'worktree', pedido.origem, pedido.nome, (run) =>
+        executarWorktree(run, pedido),
+      )
+      return { ok: true }
+    },
+
     estado(): AgentRunReport[] {
       return relatorio()
     },
@@ -432,6 +785,10 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
       // terminal vem por `result` (stopReason 'aborted' -> 'cancelled'); se o
       // result demorar, o relatorio ja difunde o estado novo aqui.
       alvo.abortar.abort('cancelado pelo dono')
+      // EMENDA ONDA-3: uma tarefa de chat cancela tambem o TURNO da sessao
+      // (`SessionController.cancel` — "Cancel one active Agent turn without
+      // dropping its pending inbox"); o abort do sinal so mata a nossa espera.
+      if (alvo.sessao !== undefined) deps.chats?.()?.cancelar(alvo.sessao)
       // O status muda JA: o relatorio reflete o cancelamento no proprio tick
       // (o `result` do harness pode demorar um instante a assentar, e o dono
       // nao pode ver 'running' para um run que acabou de cancelar).
@@ -463,6 +820,9 @@ export function createAgentRegistry(deps: AgentRegistryDeps): AgentRegistry {
       for (const run of runs.toReversed()) {
         if (run.status !== 'running') continue
         run.abortar.abort('desligamento do plugin')
+        // EMENDA ONDA-3: turnos de chat tambem se calam no desligamento (o
+        // turno nao pode sobreviver ao plugin que o abriu).
+        if (run.sessao !== undefined) deps.chats?.()?.cancelar(run.sessao)
         if (run.run !== undefined) {
           void run.run.dispose().catch(() => {
             // O plugin esta a desligar; nao ha para onde registar.

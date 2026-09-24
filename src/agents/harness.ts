@@ -220,10 +220,34 @@ export interface HarnessCreateSessionOptions {
 
 /**
  * A sessao criada (`Session` do core — `packages/core/session/src/index.ts`),
- * no corte consumido: o `id` basta para a costura das ondas 3-4.
+ * no corte consumido: `id` basta para a costura das ondas 3-4; a EMENDA
+ * ONDA-3-HOST-TAREFAS consome tambem `snapshotEvents` (o log duradouro —
+ * `packages/core/session/src/index.ts:646-655`) para dobrar o usage e o texto
+ * da resposta. NOTA HONESTA: `snapshotEvents` esta `@deprecated` NO FONTE do
+ * harness (`packages/core/session/src/index.ts:640-641`, leituras sincronas em
+ * migracao); o propria session-controller le-o assim com a nota "migration
+ * deferred" (`packages/api/session-controller/src/index.ts:210-211`). O
+ * relatorio `agent.report` e SINCRONO por contrato do canal (o codec serializa
+ * no proprio tick), e esta e a unica leitura integra sincrona do log — o
+ * caminho assincrono (`sessionController.inspect`, index.ts:201-215) fica para
+ * quem nao precisa de responder no proprio tick.
  */
 export interface HarnessSession {
   readonly id: string
+  /** O log duradouro imutavel, em ordem de `seq` (corte consumido: `type` + `data`). */
+  snapshotEvents(): readonly HarnessSessionEvent[]
+}
+
+/**
+ * UM evento do log duradouro (`SessionEvent` de `packages/core/session/src/types.ts:470-493`),
+ * no corte consumido: `type` (a chave do mapa de eventos) e `data` (a carga).
+ * O `seq`/`time`/`ignorable` do envelope nao sao consumidos; o `data` viaja
+ * `unknown` de proposito — o narrowing e obrigatorio antes de tocar (e e isso
+ * que impede de congelar acidentalmente o corte errado de um evento).
+ */
+export interface HarnessSessionEvent {
+  readonly type: string
+  readonly data: unknown
 }
 
 /**
@@ -232,10 +256,12 @@ export interface HarnessSession {
  * `create(id?, options?)` e `packages/core/session/src/index.ts:969` — "the
  * live session, already entered and announced"; omitindo `id`, o store cunha
  * `session-<n>`. LANCA com id duplicado, metadata invalida ou `meta.cwd`
- * relativo.
+ * relativo. `get(id)` (:1210-1211) devolve a sessao VIVA (`attachada`) ou
+ * `undefined` — e o caminho de leitura das metricas (EMENDA ONDA-3).
  */
 export interface HarnessSessionsService {
   create(id?: string, options?: HarnessCreateSessionOptions): HarnessSession
+  get(id: string): HarnessSession | undefined
 }
 
 /* --- 2. O CAMINHO DE SUBMISSAO (o chat CORRE de verdade) ------------------ */
@@ -309,6 +335,15 @@ export interface HarnessSubmissionHandle {
  * das ondas 3-4, com o `user-rpc`/inbox do agente no fim do caminho
  * (`SessionPromptRequest`, `packages/api/session-controller/src/types.ts:313`);
  * nada disso foi decidido nem inventado aqui.
+ *
+ * >>> RESOLVIDO NA EMENDA ONDA-3-HOST-TAREFAS (o corte no fim deste ficheiro):
+ * o caminho REAL em processo e o handler de HOST do `SessionPromptRequest` —
+ * o metodo `prompt` do servico `sessionController` (espelho
+ * {@link HarnessSessionController}). O `beginSubmission`/`prompt` do `ISession`
+ * acima e a face de CLIENTE (o eco local de UI do browser); em processo nao ha
+ * eco que registrar, e o `requestId` e "Client-minted"
+ * (`packages/api/session-controller/src/types.ts:314`), pelo que o caminho
+ * host fica COMPLETO sem o `ISession` e sem nunca o inventar. <<<
  */
 export interface HarnessSessionSubmitFace {
   /** Regista o eco local ANTES do prompt; devolve a identidade que `prompt` leva. */
@@ -379,9 +414,163 @@ export interface HarnessTokenUsage {
  * subagente (o `SubagentResult` de `packages/subagent/subagent/src/types.ts`
  * nao o tem), vive AQUI. Corte consumido: `turn`/`step`/`usage`; o resto do
  * evento (`message`, `stream`, `interrupted`) nao e consumido.
+ *
+ * EMENDA ONDA-3-HOST-TAREFAS: passa-se a consumir TAMBEM `message.content` —
+ * so os blocos `{ type: 'text', text }` (`TextBlock`,
+ * `packages/llm/llm/src/types.ts:61-64`; `AssistantMessage extends Message`,
+ * `packages/llm/llm/src/message.ts:148`) — para o `summary` do run de chat ser
+ * a resposta REAL do modelo. `stream`/`interrupted` continuam nao consumidos.
  */
 export interface HarnessSessionUsageEvent {
   readonly turn: number
   readonly step: number
   readonly usage?: HarnessTokenUsage | undefined
+  /** A mensagem montada do step (corte consumido: blocos de conteudo). */
+  readonly message?: { readonly content?: readonly HarnessBlocoDeConteudo[] } | undefined
+}
+
+/**
+ * EMENDA ONDA-3-HOST-TAREFAS: um bloco de conteudo da mensagem montada, no
+ * corte consumido. O `ContentBlock` real e uma UNIAO fechada (`text`/`image`/
+ * `file`/... — `packages/llm/llm/src/types.ts:135-137`); aqui modela-se a
+ * FORMA comum (`type`) mais o `text` do bloco `TextBlock` (:61-64), que e o
+ * unico consumido (o `summary` do run de chat). O narrowing no consumidor
+ * (`type === 'text'`) e a rede de seguranca contra os restantes tipos de bloco
+ * em runtime.
+ */
+export interface HarnessBlocoDeConteudo {
+  readonly type: string
+  readonly text?: string | undefined
+}
+
+/* ========================================================================== */
+/* EMENDA ONDA-3-HOST-TAREFAS — o CAMINHO DE SUBMISSAO EM PROCESSO (a resolucao */
+/* da LACUNA) + a leitura das metricas por tarefa                             */
+/* ========================================================================== */
+/**
+ * O QUE ESTA SECCAO DECIDE — tudo medido no checkout
+ * `/home/ondokai/Projects/deepseek-harness`, com file:line em cada corte:
+ *
+ *   1. SUBMISSAO. A face de submissao em processo e o handler de HOST do
+ *      `SessionPromptRequest`: `SessionController.prompt(request, signal)`
+ *      (`packages/api/session-controller/src/index.ts:346-350`, servico
+ *      registado com `super(ctx, 'sessionController', ...)` em :121 e promovido
+ *      a `Context.sessionController` em :63-68). Ele delega em
+ *      `SessionCommandController.prompt` (`packages/api/session-controller/src/commands.ts:299`),
+ *      que valida o conteudo (:300-306), resolve o agente VIVO da sessao
+ *      (`ApiSessionAgentController.resolveAgent`, :317 /
+ *      `packages/api/session-controller/src/agent.ts:170-172` — que RETOMA ou
+ *      COMPOE o agente de uma sessao criada, via
+ *      `ctx.agents.resume` (agent.ts:437 e :469) e `observeSession` de
+ *      `packages/session-query/session-query/src/observation.ts:104-117` que le
+ *      sessoes ATTACHADAS), monta a `UserMessage` com a source `user-rpc`
+ *      (`{ kind: 'user', rpcId: request.requestId }`, commands.ts:327-331 —
+ *      a augmentacao `MessageSourceMap` e
+ *      `packages/api/session-controller/src/types.ts:378-383`) e entrega-a ao
+ *      inbox do agente: `agent.steer(message)` / `agent.followup(message)`
+ *      (commands.ts:360-361; os verbos sao `packages/core/agent/src/runtime-types.ts:222-231`).
+ *      O `beginSubmission` do `ISession` (`client/contract/session.ts:77`) e o
+ *      eco LOCAL de UI do browser e NAO faz falta em processo (ver o addendum
+ *      de {@link HarnessSessionSubmitFace}).
+ *   2. FIM DO TURNO. `Agent.whenIdle()` (`packages/core/agent/src/runtime-types.ts:191`)
+ *      resolve quando a atividade do agente atinge a quiescencia — e o que
+ *      fecha uma tarefa de chat apos o prompt inicial.
+ *   3. CANCELAMENTO. `SessionController.cancel(request)`
+ *      (`packages/api/session-controller/src/index.ts:377-380`) cancela o turno
+ *      ativo sem descartar o inbox pendente.
+ *   4. METRICAS. `SessionProjectionRegistry.stateOf(session, 'sessionStats')`
+ *      (`packages/session/session-projection/src/index.ts:319-327`) devolve o
+ *      estado da unidade `sessionStats` registada pelo plugin `session-stats`
+ *      (`packages/session/session-stats/src/index.ts:18-29`) — um SUPERCONJUNTO
+ *      de {@link HarnessSessionStatsProjection} (`packages/session/session-stats/src/types.ts:22-39`
+ *      + os campos de fronteira em `packages/session/session-stats/src/projection.ts:57-64`).
+ *      O usage vem DO EVENTO `assistant/message` (espelho
+ *      {@link HarnessSessionUsageEvent}) — nunca de um resultado de subagente.
+ */
+
+/**
+ * O pedido de prompt em processo (`SessionPromptRequest` de
+ * `packages/api/session-controller/src/types.ts:313-321`), no corte consumido.
+ * `requestId` e "Client-minted identity persisted on the exact accepted user
+ * message" (:314) — em processo quem cunha e o host (o ULID do repo).
+ */
+export interface HarnessSessionPromptRequest {
+  /** Identidade cunhada pelo chamador (branded `SessionRequestId` no original). */
+  readonly requestId: string
+  readonly sessionId: string
+  /** `'queue'` acrescenta um turno; `'steer'` intercepta o que corre. */
+  readonly mode: 'queue' | 'steer'
+  /** "At least one non-whitespace text part or attachment" (:318-319). */
+  readonly content: readonly HarnessPromptContentPart[]
+  readonly clientTimeZone?: string | undefined
+}
+
+/** O recibo de prompt aceite (`SessionPromptValue`, types.ts:323-326). */
+export interface HarnessSessionPromptValue {
+  readonly accepted: true
+}
+
+/**
+ * O pedido de cancelamento do turno (`SessionCancelRequest`, types.ts:352-355)
+ * e o recibo (`SessionCancelValue`, types.ts:357-360).
+ */
+export interface HarnessSessionCancelRequest {
+  readonly sessionId: string
+}
+
+export interface HarnessSessionCancelValue {
+  readonly accepted: true
+}
+
+/**
+ * O `Agent` VIVO, no corte da quiescencia (`whenIdle` de
+ * `packages/core/agent/src/runtime-types.ts:185-191` — "Resolve after the
+ * current whole-agent activity reaches quiescence"). O `Agent` real faz muito
+ * mais (`cancel` :183, `send` :215, `followup` :222, `steer` :231); este
+ * espelho e o MINIMO consumido pela tarefa de chat.
+ */
+export interface HarnessAgentAtivo {
+  whenIdle(): Promise<void>
+}
+
+/**
+ * O resultado de `resolveAgent` (`ApiSessionAgentResult` de
+ * `packages/api/session-controller/src/agent.ts:63-66`): o agente vivo ou um
+ * erro estavel do dominio Session. Aqui o erro viaja `unknown` (a direccao
+ * fail-safe ja praticada em {@link HarnessRemoteResult}): narrowing obrigarorio
+ * antes de o tocar.
+ */
+export type HarnessSessionAgentResult =
+  | { readonly agent: HarnessAgentAtivo }
+  | { readonly error: unknown }
+
+/**
+ * O servico `ctx.sessionController` (`SessionController` de
+ * `packages/api/session-controller/src/index.ts:87`, registado em :121), no
+ * corte consumido pelas tarefas de chat: `prompt` (:346-350), `cancel`
+ * (:377-380) e `resolveAgent` (:188-192). ESTE e o fim do caminho conhecido da
+ * LACUNA (`SessionPromptRequest`, types.ts:313): e aqui que o chat CORRE de
+ * verdade, sem reinventar a admissao do harness.
+ */
+export interface HarnessSessionController {
+  prompt(
+    request: HarnessSessionPromptRequest,
+    signal: AbortSignal,
+  ): Promise<HarnessSessionPromptValue>
+  cancel(request: HarnessSessionCancelRequest): HarnessSessionCancelValue
+  resolveAgent(sessionId: string): Promise<HarnessSessionAgentResult>
+}
+
+/**
+ * A face de LEITURA do registry de projecoes (`SessionProjectionRegistry` de
+ * `packages/session/session-projection/src/index.ts:199`, servico `sessionProjections`
+ * (:208)), no corte consumido: `stateOf` (:319-327) — "Read one unit's current
+ * host state after materializing every registered unit at the Session cursor".
+ * A chave consumida e `'sessionStats'`; o valor e o ESTADO da unidade (o
+ * `SessionStatsState` de `packages/session/session-stats/src/projection.ts:57-64`),
+ * que e um superconjunto de {@link HarnessSessionStatsProjection} — leem-se so
+ * os 8 campos do espelho, nunca os campos de fronteira.
+ */
+export interface HarnessSessionProjections {
+  stateOf(session: HarnessSession, key: 'sessionStats'): HarnessSessionStatsProjection | undefined
 }

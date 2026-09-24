@@ -33,6 +33,13 @@
  * consome o nonce no HOST, regenera o segredo (SECRET-008: sessoes invalidadas)
  * e revoga a chave no link, notificando SEM enviar a senha pelo chat. Sem a
  * chave/rotacao fiadas, os dois respondem `INTERNAL` — fail-closed.
+ *
+ * EMENDA ONDA-3-HOST-TAREFAS: `chat.new`/`worktree.create` deixaram de ser STUB
+ * e passam a DISPATCH REAL — idempotencia por `requestId`, nonce `'reset'`
+ * consumido no host, revalidacao S6 da forma, efeitos no registry
+ * (`src/agents/registry.ts` — criar chat/worktree) e difusao `agent.report`
+ * apos o efeito. Sem `tarefas`/`confirm` fiados, as duas respondem `INTERNAL`
+ * (fail-closed — o mesmo padrao de `agent.dispatch`).
  */
 
 import type { AuditSink, SecretStore } from '../contracts/auth.ts'
@@ -40,7 +47,9 @@ import type { ControlAction, ControlIntent, ControlRecusa, ControlResultado } fr
 import { comporTextoLinkMagico } from '../audit/notify.ts'
 import type { ConfirmServiceComVeredito } from './confirm.ts'
 import type { LinkTokenSurface } from '../contracts/link-token.ts'
-import type { AgentRegistry } from '../agents/registry.ts'
+import type { AgentRegistry, TarefasHost } from '../agents/registry.ts'
+import { promptDeChatValido } from '../agents/chats.ts'
+import { baseDeWorktreeValida, nomeDeWorktreeValido } from '../agents/worktrees.ts'
 import type { MagicStore } from '../session/magic.ts'
 import type {
   IpcAckMessage,
@@ -122,6 +131,14 @@ export interface RespondedorIpcDeps {
    */
   readonly agentes?: AgentRegistry | undefined
   /**
+   * EMENDA ONDA-3-HOST-TAREFAS: a PORTA das tarefas novas (`chat.new` e
+   * `worktree.create`) — a face `TarefasHost` do MESMO registry de
+   * `agentes` (interface propria para o contrato de `AgentRegistry` nao
+   * mexer). AUSENTE, as duas intents respondem `error INTERNAL` — fail-closed
+   * (o mesmo padrao de `agent.dispatch` sem registry fiado).
+   */
+  readonly tarefas?: TarefasHost | undefined
+  /**
    * Difunde `agent.report` ao worker (resposta a `agent.status`). Composto
    * pela FIACAO (`src/index.ts`): lê `agentes.estado()`, monta a mensagem e
    * envia pelo canal. AUSENTE: `agent.status` responde INTERNAL (sem relatorio
@@ -202,6 +219,28 @@ function ack(intent: IpcIntentMessage, result: IpcAckMessage['result'], state: T
 
 export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
   const { log } = deps
+
+  /**
+   * EMENDA ONDA-3-HOST-TAREFAS: a IDEMPOTENCIA por `requestId` das DUAS
+   * tarefas novas (o contrato: "E A CHAVE DE IDEMPOTENCIA: repetido devolve o
+   * resultado da primeira execucao"; o `ack` documenta o caso como `noop`).
+   * Um replay de uma intent JA DESPACHADA nunca cria um segundo chat/worktree
+   * nem consome um segundo nonce. A entrada marca-se quando a intent passou o
+   * nonce (houve efeito ou decisao final); uma recusa de NONCE NAO marca — um
+   * clique tardio (nonce expirado) tem de poder voltar a tentar com um nonce
+   * novo, e nada corre nesse caminho. Teto modesto + evicao FIFO: uma tabela
+   * de replay nao pode crescer sem fim.
+   */
+  const MAX_INTENTS_PROCESSADAS = 1024
+  const processadas = new Set<string>()
+  const marcarProcessada = (requestId: string): void => {
+    processadas.add(requestId)
+    while (processadas.size > MAX_INTENTS_PROCESSADAS) {
+      const maisAntiga = processadas.keys().next().value
+      if (maisAntiga === undefined) break
+      processadas.delete(maisAntiga)
+    }
+  }
 
   const estadoAtual = (): TunnelState => deps.controller?.snapshot().state ?? 'STOPPED'
 
@@ -416,10 +455,114 @@ export function criarRespondedorIpc(deps: RespondedorIpcDeps): RespondedorIpc {
         const cancelado = deps.agentes.cancelar(agentId, `telegram:${intent.from}`)
         return ack(intent, cancelado ? 'accepted' : 'noop', estadoAtual())
       }
-      // STUB do contrato (onda2) — onda 3 substitui.
+      /* --- EMENDA ONDA-3-HOST-TAREFAS: as DUAS capacidades novas ----------
+       * `chat.new` (/novo-chat, /novo-chat-wt) e `worktree.create` (/worktree).
+       * AMBAS AUMENTAM exposicao (criar sessoes e correr prompts, criar
+       * worktrees com um `git` no host) -> EXIGEM nonce de 2 etapas, consumido
+       * AQUI no host (S5) com a acao de controlo `'reset'` — o MESMO precedente
+       * de `agent.dispatch`/`secret.rotate` e a MESMA ponte do worker
+       * (`ACAO_PARA_NONCE`). O universo de nonce continua UNICO: `ControlAction`
+       * nao cresceu e o `ConfirmService` ja e generico por acao.
+       *
+       * SEQUENCIA (a mesma disciplina de `agent.dispatch`): identidade S6 ja
+       * verificada acima (dois eixos `from`/`chat` + pareamento persistido) ->
+       * idempotencia por `requestId` -> nonce -> revalidacao S6 da FORMA no
+       * host (defesa em profundidade: o worker e o codec ja recusaram) ->
+       * veredito sincrono do registry -> ack coerente. ORDEM REAL DO EFEITO
+       * (emenda de honestidade apos revisao): o efeito COMECA no prefixo
+       * sincrono do veredito — a criacao da sessao e o spawn do `git` correm
+       * ANTES de o ack sair — e continua depois dele; o desfecho (fim do turno
+       * / exit do git) chega pela difusao `agent.report` que o registry dispara
+       * na transicao terminal.
+       */
       case 'chat.new':
-      case 'worktree.create':
-        return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+      case 'worktree.create': {
+        const tarefa = intent.intent
+        if (deps.tarefas === undefined || deps.confirm === undefined) {
+          log.warn(`intencao '${tarefa}' sem tarefas/confirm fiados; respondida INTERNAL (fail-closed).`)
+          return erro(intent, 'INTERNAL', 'Este comando ainda nao esta disponivel nesta instalacao.')
+        }
+        if (processadas.has(intent.requestId)) {
+          // Replay de uma intent ja decidida: "nao um segundo chat/worktree" —
+          // o mesmo espirito do `noop` do `ack` (idempotencia por requestId).
+          return ack(intent, 'noop', estadoAtual())
+        }
+        const vereditoNonce = deps.confirm.consumirComVeredito(intent.nonce ?? '', 'reset')
+        if (vereditoNonce !== 'ok') {
+          // CTL-021/022: nonce desconhecido/consumido ou expirado. NADA corre e
+          // o `requestId` NAO fica marcado — um clique tardio tem de poder
+          // voltar com um nonce novo (ver o `processadas` acima).
+          return { ...ack(intent, 'rejected', estadoAtual()), code: 'NONCE_INVALID' }
+        }
+        if (tarefa === 'chat.new') {
+          const prompt = intent.params?.prompt
+          const worktree = intent.params?.worktree
+          if (prompt === undefined) {
+            // Defesa em profundidade: o codec ja recusou esta forma (a intent
+            // sem params nao passa do canal); se chegou aqui, e defeito nosso.
+            return erro(intent, 'INTERNAL', 'Nao foi possivel processar o pedido. Tente novamente.')
+          }
+          if (!promptDeChatValido(prompt) || (worktree !== undefined && !nomeDeWorktreeValido(worktree))) {
+            // REVALIDACAO S6 (host): contrato congelado `prompt` texto limpo
+            // <= 4096 + `worktree` `/^[a-z0-9-]{1,40}$/`. Recusa com o vocabulario
+            // FECHADO de codigos (`INTERNAL` e o catch-all; nao ha codigo de
+            // "params invalidos" e o contrato nao cresce).
+            marcarProcessada(intent.requestId)
+            log.warn(`intencao 'chat.new' com params fora do contrato; recusada.`)
+            return { ...ack(intent, 'rejected', estadoAtual()), code: 'INTERNAL' }
+          }
+          const decidido = deps.tarefas.novoChat({
+            prompt,
+            ...(worktree === undefined ? {} : { worktree }),
+            origem: `telegram:${intent.from}`,
+          })
+          marcarProcessada(intent.requestId)
+          if (!decidido.ok) {
+            // RECUSA DE POLITICA (teto/harness) — a mensagem accionavel segue o
+            // padrao de `agent.dispatch` (o vocabulario de codigos nao tem
+            // "teto atingido"; quem mostra texto ao dono e o `error`).
+            return erro(
+              intent,
+              'INTERNAL',
+              decidido.motivo === 'teto-atingido'
+                ? 'Ja ha tarefas a correr ate o limite (config agents.maxRuns). Espera uma terminar ou cancela uma.'
+                : 'O harness nao esta disponivel para criar chats.',
+            )
+          }
+          return ack(intent, 'accepted', estadoAtual())
+        }
+        // `worktree.create` — `{ nome, base? }`.
+        const nome = intent.params?.nome
+        const base = intent.params?.base
+        if (nome === undefined) {
+          return erro(intent, 'INTERNAL', 'Nao foi possivel processar o pedido. Tente novamente.')
+        }
+        if (!nomeDeWorktreeValido(nome) || (base !== undefined && !baseDeWorktreeValida(base))) {
+          // REVALIDACAO S6 (host): nome `/^[a-z0-9-]{1,40}$/` + ref de partida
+          // com higiene de ref (ver `src/agents/worktrees.ts`).
+          marcarProcessada(intent.requestId)
+          log.warn(`intencao 'worktree.create' com params fora do contrato; recusada.`)
+          return { ...ack(intent, 'rejected', estadoAtual()), code: 'INTERNAL' }
+        }
+        const decidido = deps.tarefas.novoWorktree({
+          nome,
+          ...(base === undefined ? {} : { base }),
+          origem: `telegram:${intent.from}`,
+        })
+        marcarProcessada(intent.requestId)
+        if (!decidido.ok) {
+          return erro(
+            intent,
+            'INTERNAL',
+            decidido.motivo === 'teto-atingido'
+              ? 'Ja ha tarefas a correr ate o limite (config agents.maxRuns). Espera uma terminar ou cancela uma.'
+              : 'O harness nao esta disponivel para criar worktrees.',
+          )
+        }
+        // `jaExistia` e o NOOP honesto: o worktree pedido ja estava la ("ja
+        // estava no estado pedido") — e nada foi destruido, nunca.
+        return ack(intent, decidido.jaExistia === true ? 'noop' : 'accepted', estadoAtual())
+      }
       case 'secret.rotate': {
         // Item 5 (costura): /rotacionar regenera o segredo e invalida as
         // sessoes vivas (SECRET-008 — o SecretStore revoga ANTES de publicar).
