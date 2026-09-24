@@ -127,6 +127,25 @@ describe('provider/telegram/transporte — transporte-log', () => {
     assert.match(log.all(), /falhou \(rede\)/u)
   })
 
+  it('amostragem x ESCALATE_AFTER: warn nos pontos 1/2/4 e a primeira linha ERROR no ponto 8 (>= 5)', async () => {
+    const log = captureLog()
+    const transformer = createTransportLogTransformer({ log: log.logger })
+    const prev = async (_method: string, _payload: never, _signal: unknown): Promise<ApiResponse<unknown>> => {
+      throw new Error('ECONNRESET')
+    }
+    for (let i = 0; i < 8; i += 1) {
+      await transformer(prev as never, 'getUpdates' as never, {} as never, undefined).catch(() => undefined)
+    }
+    // Pontos de amostra (potencias de dois): 1, 2, 4, 8. `8 >= ESCALATE_AFTER`
+    // (5) e o primeiro a subir a ERROR; 3, 5, 6, 7 nao amostram.
+    assert.equal(ESCALATE_AFTER, 5)
+    const warns = log.lines.filter((linha) => linha.startsWith('WARN'))
+    const erros = log.lines.filter((linha) => linha.startsWith('ERROR'))
+    assert.equal(warns.length, 3, 'so os pontos 1, 2 e 4 amostram antes da escalada')
+    assert.equal(erros.length, 1, 'so o ponto 8 amostra ja em ERROR')
+    assert.match(erros[0] ?? '', /falhou \(rede\)/u)
+  })
+
   it('registar a recuperacao quando a rede volta', async () => {
     const log = captureLog()
     const transformer = createTransportLogTransformer({ log: log.logger })

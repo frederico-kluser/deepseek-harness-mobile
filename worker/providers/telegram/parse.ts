@@ -26,6 +26,7 @@
  */
 
 import type { SurfaceAction, SurfaceEvent, SurfaceActionEvent, SurfaceActionRejectedEvent, SurfaceCommandEvent, SurfaceIdentity } from '../../surface/contract.ts'
+import { ProviderError, exitCodeFor } from './interno.ts'
 
 /* ========================================================================== */
 /* Ids numericos do Telegram                                                  */
@@ -111,7 +112,12 @@ export function buildCallbackData(action: SurfaceAction, token: string): string 
   const data = `${CALLBACK_SCHEMA}${SEP}${action}${SEP}${token}`
   const bytes = utf8Bytes(data)
   if (bytes > CALLBACK_DATA_MAX_BYTES) {
-    throw new Error(
+    // A causa canonica e `CALLBACK_DATA_TOO_LONG` (vocabulario fechado de
+    // `./interno.ts`, espelho do `WorkerErrorCode`) — classificavel por quem
+    // apanhar, como o `TOKEN_MISSING` do `./token.ts`.
+    throw new ProviderError(
+      exitCodeFor('CALLBACK_DATA_TOO_LONG'),
+      'CALLBACK_DATA_TOO_LONG',
       `callback_data com ${bytes} bytes (limite ${CALLBACK_DATA_MAX_BYTES}); ` +
         `sao BYTES e nao caracteres — a string tem ${data.length} caracteres`,
     )
@@ -378,7 +384,11 @@ export function criarParse(): {
 
     // edited_message / channel_post / edited_channel_post / inline_query /
     // my_chat_member / chat_member / unknown -> fora das superficies accionaveis.
-    if (surface !== 'unknown') descartados += 1
+    // TG-089: DESCARTADO E CONTADO — inclusive o `unknown`: um update que chega
+    // ao fio sem superficie accionavel e um descarte como outro qualquer (o
+    // espelho do discord conta igual o "dispatch-outro"; o protocolo puro e que
+    // nao conta, e nao ha equivalente no stream de updates do Telegram).
+    descartados += 1
     return undefined
   }
 

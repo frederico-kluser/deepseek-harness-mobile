@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { after, describe, it } from 'node:test'
 
 import type { SurfaceEvent } from '../../../../../worker/surface/contract.ts'
+import { COMANDOS_PUBLICADOS } from '../../../../../worker/surface/commands.ts'
 import {
   createTelegramProvider,
   TELEGRAM_LIMITS,
@@ -79,9 +80,21 @@ describe('provider/telegram/adapter — superficie e limites', () => {
     assert.equal(TELEGRAM_LIMITS.supportsEditing, true)
   })
 
-  it('token vazio recusa na construcao (fail-closed)', () => {
+  it('token vazio recusa na construcao (fail-closed) com o CODE do contrato (10, nao 13)', () => {
     const log = captureLog()
-    assert.throws(() => createTelegramProvider({ token: '  ', log: log.logger }), /token vazio/u)
+    let lancou: unknown
+    try {
+      createTelegramProvider({ token: '  ', log: log.logger })
+    } catch (error) {
+      lancou = error
+    }
+    // O boot classifica o erro do `create` pelo campo `code` NUMERICO: sem
+    // ProviderError o erro caia em «falha nao classificada» (13) em vez do
+    // CONFIG (10) — espelha o TOKEN_MISSING de lerTokenDoAmbiente.
+    assert.ok(lancou instanceof ProviderError, 'o erro do contrato comum')
+    assert.match(String(lancou), /token vazio/u)
+    assert.equal(lancou.code, WORKER_EXIT.CONFIG)
+    assert.equal(lancou.reason, 'TOKEN_MISSING')
   })
 })
 
@@ -261,6 +274,33 @@ describe('provider/telegram/adapter — publishCommands', () => {
     assert.equal(cmds.length, 2)
     await parar(adapter)
   })
+
+  it('TG-080: a lista canonica (COMANDOS_PUBLICADOS) publica /ajuda no default e o menu completo no privado', async () => {
+    const srv = await startFakeBotApi()
+    abertos.push(srv)
+    const log = captureLog()
+    const adapter = createTelegramProvider({ token: TOKEN_DE_TESTE, apiRoot: srv.apiRoot, log: log.logger })
+
+    void adapter.start(async () => undefined)
+    await esperar(() => chamadasDe(srv, 'getUpdates').length >= 1)
+
+    await adapter.publishCommands(COMANDOS_PUBLICADOS)
+
+    const sets = chamadasDe(srv, 'setmycommands')
+    assert.equal(sets.length, 2, 'um setMyCommands por scope')
+    const comandosDe = (tipo: string): string[] => {
+      const chamada = sets.find(
+        (c) => (c.payload['scope'] as { readonly type?: string } | undefined)?.type === tipo,
+      )
+      assert.ok(chamada !== undefined, `falta o scope ${tipo}`)
+      return (chamada.payload['commands'] as readonly { readonly command: string }[]).map((c) => c.command)
+    }
+    // Descoberta segura para toda a gente: so /ajuda. O menu de mantenimento
+    // (/menu, /parear) vive SO em DM (all_private_chats).
+    assert.deepEqual(comandosDe('default'), ['ajuda'])
+    assert.deepEqual(comandosDe('all_private_chats'), ['menu', 'parear', 'ajuda'])
+    await parar(adapter)
+  })
 })
 
 describe('provider/telegram/adapter — sender()', () => {
@@ -339,6 +379,26 @@ describe('provider/telegram/adapter — descartados (TG-089)', () => {
       assert.ok(rejeitado.reason !== undefined)
     }
     assert.ok(adapter.descartados() >= 1, 'descartado e contado (TG-089)')
+    await parar(adapter)
+  })
+})
+
+describe('provider/telegram/adapter — S3: o token NUNCA chega ao log', () => {
+  it('uma falha do handleEvent com o token na mensagem e MASCARADA no unico sink bruto do adaptador', async () => {
+    const srv = await startFakeBotApi([updateDeMensagem('/status')])
+    abertos.push(srv)
+    const log = captureLog()
+    const adapter = createTelegramProvider({ token: TOKEN_DE_TESTE, apiRoot: srv.apiRoot, log: log.logger })
+
+    void adapter.start(async () => {
+      // Um erro do nucleo cuja mensagem interpolasse um segredo (o token do
+      // bot, ou o nonce opaco do botao — S5) nao pode sair cru para o log.
+      throw new Error(`falha com segredo no texto: ${TOKEN_DE_TESTE}`)
+    })
+    await esperar(() => log.all().includes('falha ao entregar evento'), 'o erro e registado')
+
+    assert.equal(log.all().includes(TOKEN_DE_TESTE), false, 'o token nao pode sair no log (S3)')
+    assert.match(log.all(), /REDACTED/u)
     await parar(adapter)
   })
 })

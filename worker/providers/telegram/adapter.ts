@@ -45,7 +45,7 @@ import type {
 import { createTelegramBot, type CreateTelegramBotOptions } from './cliente.ts'
 import type { AutoRetryOptions } from './transporte.ts'
 import type { WorkerLogger } from './interno.ts'
-import { systemTime, type TimeSource } from './interno.ts'
+import { describeForLog, ProviderError, systemTime, WORKER_EXIT, type TimeSource } from './interno.ts'
 import { criarParse } from './parse.ts'
 import { ALLOWED_UPDATES, LONG_POLL_MAX_TIMEOUT, runPolling, type PollingOutcome } from './polling.ts'
 import { answerCallbackAlways, editMessageTextInPlace, renderActionRowLayout, type InlineKeyboardApi } from './teclado.ts'
@@ -86,7 +86,15 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
   const log = deps.log
   const token = deps.token.trim()
   if (token === '') {
-    throw new Error('token vazio: nao ha bot para construir (valide antes com lerTokenDoAmbiente)')
+    // O erro do `create` carrega o `code` NUMERICO do CONTRATO COMUM (10 =
+    // CONFIG): o boot classifica por `code` e sem ele este erro cairia em
+    // «falha nao classificada» (13). Espelha o `TOKEN_MISSING` do
+    // `createTelegramBot`/`lerTokenDoAmbiente`.
+    throw new ProviderError(
+      WORKER_EXIT.CONFIG,
+      'TOKEN_MISSING',
+      'token vazio: nao ha bot para construir (valide antes com lerTokenDoAmbiente)',
+    )
   }
   const secretsOf = (): readonly string[] => [token]
 
@@ -106,9 +114,13 @@ export function createTelegramProvider(deps: TelegramProviderDeps): TelegramAdap
         await handleEvent(evento)
       } catch (error) {
         // S4: uma falha de entrega nao pode matar o polling. Registar e seguir.
+        // S3: o texto de terceiros passa SEMPRE por `describeForLog` — este
+        // `detail` era a UNICA saida de log do adaptador sem mascaramento, e um
+        // erro cuja mensagem interpolasse o token (ou o nonce opaco, S5) sairia
+        // cru para o log do host.
         log.error('falha ao entregar evento da superficie ao nucleo', {
           kind: evento.kind,
-          detail: error instanceof Error ? error.message : String(error),
+          detail: describeForLog(error, secretsOf()),
         })
       }
     }

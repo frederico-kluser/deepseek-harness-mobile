@@ -16,8 +16,10 @@ import {
   CONFLICT_OTHER_GET_UPDATES,
   DEFAULT_BOOT_TIMEOUT_MS,
   LONG_POLL_MAX_TIMEOUT,
+  runPolling,
   UNAUTHORIZED,
 } from '../../../../../worker/providers/telegram/polling.ts'
+import { WORKER_EXIT } from '../../../../../worker/providers/telegram/interno.ts'
 import { createTelegramBot } from '../../../../../worker/providers/telegram/cliente.ts'
 import { captureLog, startFakeBotApi, TOKEN_DE_TESTE } from './apoio.ts'
 
@@ -88,6 +90,45 @@ describe('provider/telegram/polling — classificacao terminal', () => {
     assert.notEqual(a, b)
     const c = classifyPollingError(new Error('foo')).code
     assert.notEqual(a, c)
+  })
+})
+
+describe('provider/telegram/polling — prazo de arranque (boot 45 s -> exit 14)', () => {
+  it('arranque ENCRAVADO: fatal BOOT_TIMEOUT com exitCode 14 e o bot e parado com cuidado', async () => {
+    const log = captureLog()
+    let parou = false
+    // `start()` que nunca resolve: o caso medido do bug de unidades do
+    // `withRetries` do getMe (100 s de sono) — o processo nao pode ficar VIVO,
+    // CALADO e SEM SAIR.
+    const bot = {
+      start: () => new Promise<void>(() => undefined),
+      stop: async (): Promise<void> => {
+        parou = true
+      },
+    }
+    const outcome = await runPolling({ bot: bot as never, log: log.logger, bootTimeoutMs: 20 })
+    assert.equal(outcome.kind, 'fatal')
+    if (outcome.kind === 'fatal') {
+      assert.equal(outcome.code, 'BOOT_TIMEOUT')
+      assert.equal(outcome.exitCode, WORKER_EXIT.BOOT_TIMEOUT, 'o code do contrato e 14')
+      assert.equal(outcome.exitCode, 14)
+    }
+    assert.equal(parou, true, 'pararComCuidado chamou bot.stop()')
+    assert.match(log.all(), /ARRANQUE ENCRAVADO/u)
+  })
+
+  it('arranque que COMECA antes do prazo nao dispara o boot-timeout', async () => {
+    const log = captureLog()
+    const bot = {
+      start: async (options?: { onStart?: (info: { username: string | undefined }) => Promise<void> }): Promise<void> => {
+        // O onStart do grammY dispara quando o polling comeca a receber.
+        await options?.onStart?.({ username: 'dsh_spike_bot' })
+      },
+      stop: async (): Promise<void> => undefined,
+    }
+    const outcome = await runPolling({ bot: bot as never, log: log.logger, bootTimeoutMs: 20 })
+    assert.equal(outcome.kind, 'stopped')
+    if (outcome.kind === 'stopped') assert.equal(outcome.exitCode, WORKER_EXIT.OK)
   })
 })
 
