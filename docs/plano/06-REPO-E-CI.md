@@ -407,7 +407,7 @@ O sandbox do DSH NÃO é fronteira de segurança enquanto essas discussões esti
 ## Versões suportadas
 | Versão do plugin | Faixa de rc do DSH | Suporte de segurança |
 | --- | --- | --- |
-| 0.3.x  | 0.1.0-rc.7 .. rc.9 | Sim |
+| 0.3.x  | 0.1.0-rc.7 .. 0.1.1-rc.1 | Sim |
 | 0.2.x  | 0.1.0-rc.6         | Só correções críticas |
 | < 0.2  | —                  | Não |
 
@@ -1316,6 +1316,66 @@ Três camadas, porque nenhuma sozinha resolve:
    leia para negociar compatibilidade (algo como `dsh.compatibility` ou `engines.dsh`). Nada nos
    `.d.ts` nem nos READMEs verificados sugere isso. Enquanto não for confirmado, a faixa suportada é
    **documentação + asserção em runtime**, não contrato declarativo.
+
+**Faixa suportada — declaração em vigor e registro de revisões.** A faixa é
+`@deepseek-ai/dsh 0.1.0-rc.7 .. 0.1.1-rc.1` (N = `0.1.1-rc.*`, N-1 = `0.1.0-rc.*`, piso
+`0.1.0-rc.7`). É ela que `test/contract/dsh-types.test.ts` tranca nos pinos (CONTRACT-003) e que o
+canário CONTRACT-008 exige que a linha `latest` do registry continue a cobrir. Rever a faixa é
+obrigatório **antes** de qualquer re-pino, e cada revisão fica registrada abaixo — data, linhas
+revistas, o que foi conferido e a conclusão:
+
+| Revisão | Gatilho | Linhas revistas | O que foi conferido | Conclusão |
+| --- | --- | --- | --- | --- |
+| 2026-08-21 (`fix-upstream-011rc`) | `latest`/`next` saíram de `0.1.0-rc.*` e entraram em `0.1.1-rc.1` | `0.1.1-rc.1` | `.d.ts` publicados regenerados byte a byte em `types/`; API aditiva; `CONTRACT-001`/`CONTRACT-008` atualizados | Faixa passou a N = `0.1.1-rc.*`, N-1 = `0.1.0-rc.*`; pinos movidos para `0.1.1-rc.1` |
+| 2026-09-24 | canário `CONTRACT-008` acusou `latest` = `0.1.5-rc.3` | `0.1.1-rc.2`, `0.1.2-rc.1`, `0.1.5-rc.1`, `0.1.5-rc.2`, `0.1.5-rc.3` (os `alpha` — `0.1.2-alpha.2..5`, `0.1.3-alpha.2`, `0.1.5-alpha.1/2`, entre outros — ficam fora da política de rc; `0.1.4` nunca foi publicado) | diff byte a byte dos `.d.ts` comuns ao pino e a cada linha revista (cinco pacotes espelhados + `@deepseek-ai/cordis@4.0.2`), mais o inventário de ficheiros de cada tarball (`tar tzf`) e o `diff -r` de `0.1.1-rc.2` contra `0.1.1-rc.1`; as negativas do contrato (`WebUpgradeHandler`, `WebHandler`, `RouteKind`, `Disposer`); `dist-tags` do registry (`latest` `0.1.5-rc.3`, `next` `0.1.7-rc.1`, `alpha` `0.1.7-alpha.2`) | **Faixa mantida.** Estado por linha: `0.1.1-rc.2` coincide com o pino `0.1.1-rc.1` em todo o tarball exceto o `package.json` (campo `version` + faixas `@deepseek-ai/*` internas); `0.1.2-rc.1` perdeu `lib/types/invariant.d.ts` nos cinco pacotes (**não** é alvo de re-pino); `0.1.5-rc.x` mantém o sumiço e ainda remove `SubprocessHandle.pid` (incompatível com `src/tunnel/supervisor.ts:425`) |
+
+Notas da revisão de 2026-09-24, para a próxima pessoa que tocar na faixa:
+
+1. **Estado real por linha revista.** `0.1.1-rc.2` coincide com o pino `0.1.1-rc.1` em todo o
+   tarball — `diff -r` pacote a pacote nos cinco: o **único** ficheiro divergente é o `package.json`
+   (campo `version` e faixas `@deepseek-ai/*` internas) — e todos os `.d.ts` cobertos pelo espelho
+   são byte a byte os mesmos (10/10 nos quatro pacotes instalados; 3/3 de `dsh-subprocess-local`,
+   com a mesma lógica de `mirrored()` do teste); as duas linhas ainda trazem `lib/types/invariant.d.ts`
+   + `lib/invariant.js` nos cinco pacotes. Em
+   `0.1.2-rc.1`, os tarballs dos **cinco** pacotes espelhados **perderam** `lib/types/invariant.d.ts`
+   e `lib/invariant.js` — reproduzir com `npm pack <pkg>@0.1.1-rc.1 <pkg>@0.1.2-rc.1 && tar tzf
+   <tgz> | grep invariant` (rc.1 → 2 ficheiros; 0.1.2-rc.1 → vazio). Por isso **`0.1.2-rc.1` não é
+   alvo de re-pino**: re-pinar deixaria `CONTRACT-001`/`CONTRACT-005`/`CONTRACT-008` e a varredura
+   `CONTRACT-003(e)` vermelhos, pois esses casos (e `scripts/fetch-dsh-types.mjs`, linhas 76–104)
+   leem e espelham esse ficheiro. `0.1.5-rc.x` mantém o sumiço e ainda remove `SubprocessHandle.pid`
+   (nota 3); em `next` = `0.1.7-rc.1` confirmou-se o mesmo par de defeitos (sem `invariant.d.ts` e
+   sem `pid` no `SubprocessHandle`).
+2. **Deltas de conteúdo por pacote (além do sumiço de `invariant.d.ts`, nota 1).**
+   `dsh-home-paths` `index.d.ts` é byte-idêntico ao pino em todas as linhas revistas; `dsh-subprocess`
+   `index.d.ts`/`types.d.ts` são byte-idênticos ao pino até `0.1.2-rc.1` (em `0.1.5-rc.x` mudam a
+   prosa e removem `SubprocessHandle.pid`, nota 3); `dsh-host-webserver` acumula, desde `0.1.2-rc.1`
+   (conteúdo estável de `0.1.2-rc.1` a `0.1.5-rc.3`, medido ficheiro a ficheiro), três deltas nos
+   `.d.ts`: prosa do cabeçalho reescrita, `Config` ganha `compression?`/`compressionLevel?`/
+   `compressionThresholdBytes?` opcionais (mais o campo privado `gzip` em `WebServer`) e
+   `injections.d.ts` ganha um **novo membro** na união `IndexInjection`, `| { kind: 'script-preload';
+   src: string; }`; `dsh-subprocess-local` ganha módulos `.d.ts` e continua `LocalSubprocessRuntime
+   extends SubprocessRuntime`; `@deepseek-ai/cordis@4.0.2` — que `0.1.5-rc.3` pina **exato** — tem os
+   nove `.d.ts` idênticos ao `4.0.1` deste repositório. Os símbolos afirmados
+   por `CONTRACT-001..009` sobrevivem, portanto, onde o ficheiro ainda existe.
+3. **A quebra que decidiu a revisão:** `SubprocessHandle.pid` foi **removido** desde `0.1.5-rc.1`
+   (`0.1.5-rc.1..3`); o README do pacote diz *"Target and managed-range identities remain
+   provider-private"* — decisão, não acidente (`SubprocessTerminalHandle.pid` continua). O plugin lê
+   `handle.pid` em `src/tunnel/supervisor.ts`, no gancho `onSpawned`, para o `recordTunnelProcess`
+   (pidfile do `cloudflared` + varredura de órfãos, `02-SEGURANCA.md` §9). Contra os tipos novos não
+   compila; em runtime `handle.pid` é `undefined`, o `tunnel.pid` persistido deixa de ser inteiro
+   ≥ 1 e o schema de estado rejeita-o na leitura (`tunnel.pid tinha de ser um inteiro >= 1`) — a
+   varredura de órfãos fica sem alvo.
+4. **Segunda quebra de conteúdo, fora do uso deste plugin:** `serveStatic` de
+   `@deepseek-ai/dsh-host-frontend-static` ganhou o parâmetro obrigatório `authorizeIndex` desde
+   `0.1.2-rc.1`. Nada aqui o chama, mas impede tratar a linha como "só aditiva".
+5. **Caminho para verde, nesta ordem:** (a) adaptar `src/` a viver sem observabilidade de pid — o
+   handle novo expõe `done` (exit facts) e `waitForExit()` (quiescência da gama gerida), nunca o
+   alvo — o que redesenha a varredura de órfãos; (b) re-pinar (`@deepseek-ai/dsh-*@0.1.5-rc.3`,
+   `@deepseek-ai/dsh-invariants@0.1.5-rc.3`, `@deepseek-ai/cordis@4.0.2`) e regenerar `types/`
+   (`pnpm types:fetch`), o que obriga a rever `MIRRORED_FILES`/`scripts/fetch-dsh-types.mjs` e os
+   casos que leem `invariant.d.ts` (nota 1); (c) alargar **esta** faixa e a regex de
+   `SUPPORTED_DSH`/`CONTRACT-008` no mesmo commit. Alargar a regex antes de (a) apaga o canário em
+   vez de cumprir a promessa.
 
 ### 11.3 Runbook: o upstream quebrou
 

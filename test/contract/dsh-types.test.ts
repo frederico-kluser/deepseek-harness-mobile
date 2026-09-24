@@ -13,8 +13,28 @@
  *   em `0.1.1-rc.1`; a faixa persegue N = `0.1.1-rc.*` e mantem N-1 = `0.1.0-rc.*`).
  *   A tag `latest` dos subpacotes `dsh-*` aponta para a publicacao mais ANTIGA
  *   (`0.0.1-rc.1`, 2026-08-10), uma linha morta que ninguem executa; a linha
- *   viva e `0.1.1-rc.1` (`next`). CONTRACT-003 tranca o pino dentro da faixa
+ *   viva NA REVISAO 2026-08-21 era `0.1.1-rc.1` (`next` de entao; hoje `next` =
+ *   `0.1.7-rc.1`, ver a REVISAO 2026-09-24 abaixo). CONTRACT-003 tranca o pino
  *   precisamente para que este erro nao se repita.
+ *
+ *   REVISAO 2026-09-24 (gatilho: CONTRACT-008 com `latest` = `0.1.5-rc.3`) --
+ *   FAIXA MANTIDA. Foram revistas, por diff byte-a-byte dos `.d.ts` publicados
+ *   contra o pino `0.1.1-rc.1` MAIS a lista de ficheiros de cada tarball
+ *   (`tar tzf`), as linhas `0.1.1-rc.2`, `0.1.2-rc.1` e `0.1.5-rc.1..3`.
+ *   ESTADO REAL POR LINHA: `0.1.1-rc.2` coincide com o pino `0.1.1-rc.1` em
+ *   todo o tarball exceto o `package.json` (version + faixas internas) -- todos
+ *   os `.d.ts` do espelho byte-a-byte e `lib/types/invariant.d.ts` presente nos
+ *   5 pacotes; `0.1.2-rc.1` PERDEU
+ *   `lib/types/invariant.d.ts` (+ `lib/invariant.js`) nos CINCO pacotes e por
+ *   isso NAO e alvo de re-pino -- CONTRACT-001/005/008 e a varredura
+ *   CONTRACT-003(e) leem esse ficheiro (como `scripts/fetch-dsh-types.mjs` o
+ *   espelha); `0.1.5-rc.x` mantem o sumico e ainda REMOVE `SubprocessHandle.pid`
+ *   (a identidade do alvo ficou `provider-private` por decisao do upstream) e o
+ *   plugin precisa dele em `src/tunnel/supervisor.ts` (pidfile + varredura de
+ *   orfaos do tunel, `02-SEGURANCA.md` §9). O registro completo vive em
+ *   `06-REPO-E-CI.md` §11.2. Estender esta faixa exige ANTES adaptar `src/` a
+ *   viver sem pid e rever o conjunto espelhado; a regex so muda junto, nunca
+ *   antes.
  *
  * ASSERCOES NEGATIVAS -- COMO ESCREVE-LAS SEM CRIAR UM TRINCO
  *   Uma negativa sobre um NOME de simbolo que muda entre linhas transforma o
@@ -40,9 +60,16 @@ const REGISTRY = 'https://registry.npmjs.org'
 const NET_TIMEOUT_MS = 15_000
 
 /** Versoes de `dsh-*` aceites por `06-REPO-E-CI.md` ("Versoes suportadas").
- * N = 0.1.1-rc.* (linha viva) e N-1 = 0.1.0-rc.* com PISO rc.7 (SUPPORTED_RANGE
+ * N = 0.1.1-rc.* (linha viva em 2026-08-21) e N-1 = 0.1.0-rc.* com PISO rc.7 (SUPPORTED_RANGE
  * em `scripts/fetch-dsh-types.mjs`: 0.1.0-rc.7 .. 0.1.1-rc.1). Uma regex que
- * casasse 0.1.0-rc.1 aprovaria um pino abaixo do piso documentado. */
+ * casasse 0.1.0-rc.1 aprovaria um pino abaixo do piso documentado.
+ * Revisao 2026-09-24: limites MANTIDOS. Nenhuma linha RC acima de 0.1.1-rc.2
+ * e alvo de re-pino (0.1.2-rc.1, 0.1.5-rc.1..3 e 0.1.7-rc.1, todas medidas):
+ * 0.1.2-rc.1 ja perde `lib/types/invariant.d.ts` (que os
+ * espelhos e CONTRACT-001/005/008 exigem) e 0.1.5-rc.x/0.1.7-rc.1 perdem tambem
+ * `SubprocessHandle.pid` (ver o cabecalho e `06-REPO-E-CI.md` §11.2). Alargar
+ * esta regex sem essas adaptacoes enfraquece CONTRACT-003 e mente no
+ * CONTRACT-008. */
 const SUPPORTED_DSH = /^0\.1\.(?:0-rc\.(?:[7-9]|[1-9][0-9]+)|1-rc\.[0-9]+)/
 
 /** Pinos EXATOS (D18). O `sha256` e o do tarball de onde o espelho foi extraido. */
@@ -358,8 +385,12 @@ test('CONTRACT-008: dsh-host-frontend-static existe; dsh-host-frontend nao', asy
   // (fix-upstream-011rc): `latest`/`next` entrou em `0.1.1-rc.1` e a faixa agora
   // cobre N = `0.1.1-rc.*` e N-1 = `0.1.0-rc.*`. Se `latest` sair das DUAS linhas,
   // a faixa de `06-REPO-E-CI.md` tem de ser revista ANTES de qualquer re-pino --
-  // e este caso avisa em vez de deixar passar.
-  assert.match(tags['latest'] ?? '', /^0\.1\.(0|1)-rc\./, `@deepseek-ai/dsh latest = ${tags['latest']}: saiu das linhas 0.1.0-rc.*|0.1.1-rc.*. Reveja a faixa suportada em 06-REPO-E-CI.md antes de mexer nos pinos.`)
+  // e este caso avisa em vez de deixar passar. Revisao 2026-09-24: ja foi FEITA
+  // (ate `0.1.5-rc.3`) e decidiu MANTER a faixa -- `0.1.5-rc.x` remove
+  // `SubprocessHandle.pid` (registro em `06-REPO-E-CI.md` §11.2). Enquanto `src/`
+  // nao se adaptar a viver sem pid, este caso fica vermelho POR DECISAO, com a
+  // razao por extenso. NAO alargues a regex para o esverdear: e este o canario.
+  assert.match(tags['latest'] ?? '', /^0\.1\.(0|1)-rc\./, `@deepseek-ai/dsh latest = ${tags['latest']}: fora da faixa suportada 0.1.0-rc.7 .. 0.1.1-rc.1. A REVISAO JA EXISTE (2026-09-24, ate 0.1.5-rc.3 -- registro em 06-REPO-E-CI.md seccao 11.2) e NAO estendeu a faixa: 0.1.5-rc.x e INCOMPATIVEL, porque \`SubprocessHandle.pid\` desapareceu desde 0.1.5-rc.1 (a identidade do alvo ficou provider-private por decisao do upstream) e o plugin precisa dele em \`src/tunnel/supervisor.ts\` -- pidfile e varredura de orfaos do tunel (02-SEGURANCA.md seccao 9). Caminho para verde, nesta ordem: (1) adaptar \`src/\` a viver sem observabilidade de pid -- o handle novo expoe \`done\` e \`waitForExit()\`, nunca o alvo; (2) re-pinar (@deepseek-ai/dsh-*@0.1.5-rc.3, @deepseek-ai/cordis@4.0.2), regenerar types/ com \`pnpm types:fetch\` e alargar ESTA regex + a faixa de 06-REPO-E-CI.md no mesmo commit. Nenhuma linha rc acima de 0.1.1-rc.2 e re-pino sem mudanca correspondente (0.1.2-rc.1, 0.1.5-rc.1..3 e 0.1.7-rc.1, todas medidas): 0.1.2-rc.1 ja perde lib/types/invariant.d.ts (CONTRACT-001/005/008 e a varredura 003(e) leem esse ficheiro) e 0.1.5-rc.x/0.1.7-rc.1 perdem tambem SubprocessHandle.pid. Alargar a regex antes da adaptacao apaga o canario em vez de cumprir a promessa.`)
 })
 
 /* ------------------------------------------------------------------------- */
