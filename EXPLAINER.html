@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Por que a home do DSH parou de criar scroll extra — e para onde foi o controle do túnel</title>
+<title>Cinco entregas numa execução — Telegram auditado, Discord a zero, três capacidades novas, instalação pelo link e repo renomeado</title>
 <meta name="plannotator-theme" content="host">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23231b3d'/%3E%3Cpath d='M20 41V26l12-7 12 7v15l-12 7-12-7Z' fill='none' stroke='%236d3af2' stroke-width='4' stroke-linejoin='round'/%3E%3Ccircle cx='32' cy='33' r='4.5' fill='%23e8963e'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -176,6 +176,40 @@
     line-height: 1.45;
   }
 
+  /* ===== Controle de andaime calibrado pelo leitor ===== */
+  .controle-leitor {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin: 26px 0 8px;
+  }
+  .controle-leitor .rot {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+    margin-right: 4px;
+  }
+  .controle-leitor button {
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--foreground);
+    background: var(--muted);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .controle-leitor button:hover { border-color: var(--primary); color: var(--primary); }
+  .controle-leitor .dica { font-size: 12.5px; color: var(--muted-foreground); flex-basis: 100%; }
+
   /* ===== Personagens (pré-treino) ===== */
   .personagens {
     display: grid;
@@ -326,6 +360,7 @@
   }
   .pill--ok { border-color: color-mix(in oklab, var(--success) 55%, var(--border)); color: var(--success); background: color-mix(in oklab, var(--success) 10%, var(--card)); }
   .pill--warn { border-color: color-mix(in oklab, var(--warning) 55%, var(--border)); color: var(--warning); background: color-mix(in oklab, var(--warning) 12%, var(--card)); }
+  .pill--bad { border-color: color-mix(in oklab, var(--destructive) 55%, var(--border)); color: var(--destructive); background: color-mix(in oklab, var(--destructive) 10%, var(--card)); }
 
   /* ===== Timeline ===== */
   .timeline { list-style: none; border-left: 2px solid var(--border); margin: 22px 0 8px; padding-left: 0; }
@@ -371,7 +406,7 @@
   .code-block .antes { color: var(--destructive); }
   .code-block .depois { color: var(--success); }
 
-  /* ===== Dobrado ===== */
+  /* ===== Dobrado / andaime ===== */
   details.dobrado {
     background: var(--card);
     border: 1.5px solid var(--border);
@@ -391,6 +426,7 @@
   .dobrado-body ul { padding-left: 20px; margin: 8px 0; }
   .dobrado-body li { margin-bottom: 7px; line-height: 1.55; }
   .dobrado-body .dt { font-family: var(--font-mono); font-size: 12.5px; color: var(--primary); }
+  .dobrado-body p { margin-bottom: 10px; max-width: 78ch; }
   .dobrado-tag {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -399,6 +435,7 @@
     color: var(--muted-foreground);
     margin-right: 8px;
   }
+  .dobrado-tag--andaime { color: var(--secondary); }
 
   /* ===== Duas colunas de cards ===== */
   .duas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 16px 0 8px; }
@@ -439,159 +476,220 @@
 <div class="wrap">
 
   <header class="animate" style="--i:0">
-    <p class="eyebrow">Explicação da execução · run 20260917-231253-1842425 · dsh-guard-messenger</p>
-    <h1>Por que a home do DSH parou de criar scroll extra — e para onde foi o controle do túnel</h1>
+    <p class="eyebrow">Explicação da execução · run 20260924-012356-3147443 · dsh-guard-messenger</p>
+    <h1>Telegram auditado bug a bug, Discord a zero, três capacidades novas com métricas reais — e o plugin voltou a instalar pelo link do GitHub</h1>
 
     <div class="resposta">
-      <strong>Resposta em uma frase:</strong> o plugin <strong>dsh-guard-messenger</strong> deixou de
-      injetar qualquer coisa na home do DSH — o bloco visível que enxertava lá foi removido por
-      inteiro, e era ele que deixava a página mais alta do que a janela — e o controle do túnel com
-      as instruções do bot migrou para a aba <strong>Remote Access</strong> do settings, sustentado
-      pelas mesmas <strong>17 rotas API</strong> e provado por <strong>2460/2460 testes</strong>.
+      <strong>Resposta em uma frase:</strong> o plugin <strong>dsh-guard-messenger</strong> (a ponte entre o
+      <strong>Telegram</strong> e o <strong>DeepSeek Harness</strong>) teve o código do Telegram percorrido
+      regra a regra — <strong>4 bugs reais</strong> corrigidos —, perdeu <strong>todo</strong> o código do
+      Discord com guardas permanentes que provam o zero, ganhou <strong>três capacidades novas</strong>
+      (chats reais, worktrees git e status de tarefa com métricas medidas pelo harness), voltou a
+      <strong>instalar pelo link do GitHub</strong> (a causa raiz foi medida nos logs do utilizador: o pnpm 11
+      bloqueia os hooks de build em dependências git) e foi <strong>renomeado</strong> no GitHub — tudo em
+      <strong>13 integrações</strong> com gates verdes e <strong>2490/2490 testes</strong>.
     </div>
+
     <p class="leitor">
-      <span class="dobrado-tag">Leitor</span> misto — escrito para quem está chegando agora; todo
-      bloco dobrável sinaliza o que o experiente pode pular.
-      <span class="dobrado-tag">Validade</span> vale contra o main após a integração final do run
-      (0ca549e … 545d8f7); os números vêm dos fatos registrados em
-      <code>.deep-orchestrator/run-20260917-231253-1842425/</code>.
+      <span class="dobrado-tag">Leitor</span> misto, tratado como quem está chegando agora: cada bloco
+      <span class="dobrado-tag dobrado-tag--andaime">andaime</span> explica o pré-requisito que o texto usa,
+      e a barra logo abaixo abre-os todos de uma vez. Quem já domina o termo pula o bloco com a consciência
+      tranquila — o corpo do texto lê-se sem os abrir.
+      <span class="dobrado-tag">Validade</span> vale contra o <code>main</code> depois do COMMIT-FINAL desta
+      execução; todos os números vêm dos fatos registados em
+      <code>.deep-orchestrator/run-20260924-012356-3147443/</code> (fatos.md e TASK_PLAN.md). Nesta página,
+      <strong>nada é inventado</strong>: o que não está nos registos não entra.
     </p>
+
+    <div class="controle-leitor">
+      <span class="rot">Nível de detalhe</span>
+      <button type="button" id="abrir-andaime">Estou chegando agora — abrir andaime</button>
+      <button type="button" id="fechar-andaime">Já conheço — fechar andaime</button>
+      <p class="dica">O andaime (blocos <code>details</code>) é calibrado por você: abre os conceitos
+      prévios sem desviar a leitura principal; fecha-os quando já não precisar deles.</p>
+    </div>
 
     <div class="kpis">
       <div class="kpi-card">
+        <div class="kpi-num">4</div>
+        <div class="kpi-label">bugs reais corrigidos no Telegram (TG-026, TG-089, S3 e o código de erro do contrato 10) — cada um com teste de regressão</div>
+      </div>
+      <div class="kpi-card">
         <div class="kpi-num">0</div>
-        <div class="kpi-label">ocorrências de “dsh-guard-ui” na resposta da home — prova estrutural + e2e (testes fim a fim)</div>
+        <div class="kpi-label">ocorrências de Discord em código, testes, config, docs atuais e skills — guardado por teste permanente</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-num">17</div>
-        <div class="kpi-label">rotas API preservadas, todas sob <code>/__guard-ui/</code></div>
+        <div class="kpi-num">3+1</div>
+        <div class="kpi-label">capacidades novas: <code>/novo-chat</code>, <code>/novo-chat-wt</code>, <code>/worktree</code> e <code>/status-tarefa</code> (mais <code>/agentes</code> enriquecido)</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-num">2460/2460</div>
-        <div class="kpi-label">testes pós-integração · e2e 63/63 · security 136 pass · 1 skip (pulado)</div>
+        <div class="kpi-num">2490/2490</div>
+        <div class="kpi-label">testes verdes unit+integração · e2e 58/58 · lint 0 erros · typecheck 0 erros</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-num">5</div>
-        <div class="kpi-label">squash commits no main — os commits de cada branch condensados em um só (0ca549e, ec5be3d, 0520fa1, 905cc3e, 545d8f7)</div>
+        <div class="kpi-num">13</div>
+        <div class="kpi-label">filhas MERGED (8 sub-tarefas de feature/fix + 5 subwaves de teste/validação) — nenhuma ficou pelo caminho</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num">8/9</div>
+        <div class="kpi-label">test:contract — o único vermelho é um canário mantido de propósito (CONTRACT-008, incompatibilidade externa)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num">457</div>
+        <div class="kpi-label">artefatos compilados (dist/lib) agora commitados no git — o que torna o install-by-link funcional</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-num">942</div>
+        <div class="kpi-label">ficheiros instalados pelo instalador real dentro do gate e2e <code>check-git-install</code></div>
       </div>
     </div>
   </header>
 
   <section class="animate" style="--i:1">
-    <h2 id="personagens">Os personagens — oito palavras antes da primeira figura</h2>
-    <p class="prose">Antes de desenhar o problema, os termos que o documento inteiro vai usar. Quem
-    já conhece, lê em meio segundo; quem não conhece, sem estes nomes para de ler na terceira
-    linha.</p>
+    <h2 id="personagens">Os personagens — oito nomes antes da primeira figura</h2>
+    <p class="prose">Antes de desenhar o que foi feito, os nomes que o documento inteiro usa. Quem já
+    conhece lê em meio segundo; quem não conhece, sem estes nomes para de ler na terceira linha.</p>
     <div class="personagens">
       <div class="pe-card">
         <div class="pe-termo">DSH</div>
-        <p class="pe-def">DeepSeek Harness — a aplicação web servida pelo servidor; tem uma home
-        page e um modal de settings.</p>
+        <p class="pe-def">DeepSeek Harness — a aplicação que o plugin estende. É ele que fornece as APIs
+        de sessões, worktrees e métricas que os novos comandos consomem.</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">plugin</div>
-        <p class="pe-def">dsh-guard-messenger — extensão que acrescenta túnel e bot ao DSH sem
-        tocar o núcleo da aplicação.</p>
+        <div class="pe-termo">dsh-guard-messenger</div>
+        <p class="pe-def">O plugin desta execução: a ponte entre o Telegram e o DSH (comandos, cliques,
+        túnel de acesso). Antes chamava-se deepseek-harness-mobile no GitHub.</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">túnel</div>
-        <p class="pe-def">Acesso remoto ao DSH pela internet; o painel liga, desliga ou repõe esse
-        acesso.</p>
+        <div class="pe-termo">worker / adaptador</div>
+        <p class="pe-def">O lado que fala com o Telegram: recebe as mensagens do bot, valida-as e devolve
+        respostas e botões. Todo o código do Telegram vive em <code>worker/providers/telegram/</code>.</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">bot</div>
-        <p class="pe-def">Assistente no Telegram que controla o DSH por comandos e cliques; o painel
-        exibe as instruções de uso.</p>
+        <div class="pe-termo">intent</div>
+        <p class="pe-def">Mensagem tipada que o worker manda ao host do plugin. Cada comando vira uma
+        intent de vocabulário fechado: <code>chat.new</code>, <code>worktree.create</code>,
+        <code>agent.status</code>…</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">settings</div>
-        <p class="pe-def">Modal de configurações do DSH, organizado em abas — onde o controle do
-        túnel mora agora.</p>
+        <div class="pe-termo">nonce</div>
+        <p class="pe-def">Palavra-passe aleatória de uso único, colada num botão de confirmação. Prova
+        que o clique veio daquela conversa e obriga à confirmação em 2 etapas.</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">home</div>
-        <p class="pe-def">Página inicial do DSH, servida a cada abertura — a resposta de índice do
-        servidor.</p>
+        <div class="pe-termo">sessão / chat</div>
+        <p class="pe-def">Uma conversa real dentro do DSH. «Emitir um novo chat» = criar uma sessão
+        (<code>ctx.sessions.create</code>) e submeter o primeiro prompt.</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">tap / tapIndex</div>
-        <p class="pe-def">Gancho que acrescenta HTML ao fim de toda resposta de índice — o mecanismo
-        da injeção que causava o scroll.</p>
+        <div class="pe-termo">worktree</div>
+        <p class="pe-def">Cópia de trabalho do mesmo repositório git, em pasta separada e com branch
+        própria. Aqui: <code>guard/&lt;nome&gt;</code> em <code>&lt;repo&gt;-worktrees/&lt;nome&gt;</code>.</p>
       </div>
       <div class="pe-card">
-        <div class="pe-termo">chrome</div>
-        <p class="pe-def">Camada de interface enxertada na página de outra aplicação — o painel do
-        plugin que morava na home.</p>
+        <div class="pe-termo">orquestrador · ondas</div>
+        <p class="pe-def">Quem dirigiu a execução: divide o trabalho em ondas de sub-tarefas paralelas
+        (cada uma na sua worktree), revisa cada diff de forma adversarial e só integra com gate verde.</p>
       </div>
     </div>
   </section>
 
   <section class="animate" style="--i:2">
-    <h2 id="problema"><span class="num">1 ·</span> O problema — o tap que enxertava um painel na home</h2>
-    <p class="prose">A queixa era concreta: rolar a tela da home quebrava a interface. O diagnóstico
-    achou o mecanismo. O plugin se acoplava ao servidor por um <code>tapIndex</code> — e, em
-    <strong>toda</strong> resposta de índice, enxertava três peças antes de fechar o body: um
-    <code>div</code> <strong>visível</strong> com os botões Ligar / Desligar / Repor, o status e o
-    botão Telegram; um <code>meta</code> (etiqueta invisível do HTML) carregando um token de CSRF
-    (Cross-Site Request Forgery — token que prova ao servidor que o POST veio do próprio painel) de
-    reserva; e o <code>script</code> do chrome. O div é o único dos três que ocupa espaço: com ele,
-    a página ficava mais alta que o viewport (área visível da janela; página mais alta que ele
-    ganha scrollbar).</p>
-
-    <figure>
-      <section class="diagram-shell" data-crit="blk,bug">
-        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover ·
-        duplo clique para reenquadrar</p>
-        <div class="mermaid-wrap">
-          <div class="zoom-controls">
-            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
-            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
-            <button type="button" data-action="zoom-fit" title="Reenquadrar">&#8634;</button>
-            <button type="button" data-action="zoom-one" title="Zoom 1:1">1:1</button>
-            <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
-            <span class="zoom-label">carregando…</span>
-          </div>
-          <div class="mermaid-viewport" role="img" aria-label="Diagrama de fluxo: o tap acrescentava um div visível, um meta e um script ao fim do body da home; o div empurrava a página além do viewport e criava o scrollbar extra que quebrava a interface.">
-            <div class="mermaid mermaid-canvas"></div>
-          </div>
-        </div>
-        <script type="text/plain" class="diagram-source">
-flowchart TD
-  abre["Você abre a home do DSH"] -- "a cada abertura" --> resp["Servidor responde o índice<br/>(a home)"]
-  resp -- "tapIndex acrescenta antes de fechar o body" --> blk["div dsh-guard-ui VISÍVEL<br/>botões Ligar · Desligar · Repor<br/>status e botão Telegram"]
-  resp -- "no mesmo tap" --> meta["meta com CSRF de reserva"]
-  resp -- "no mesmo tap" --> scr["script client.js do chrome"]
-  blk -- "o único dos três que ocupa espaço" --> alto["Página fica mais alta que o viewport"]
-  alto -- "conteúdo além do viewport" --> scroll["Scrollbar extra na home"]
-  scroll -- "rolar quebra a interface" --> bug["Interface quebrada"]
-        </script>
-      </section>
-      <figcaption><b>Figura 1 —</b> O tap acrescentava um bloco visível no fim do body da home;
-      é esse excesso que empurra a página além do viewport e cria o scrollbar extra.</figcaption>
-    </figure>
-
-    <p class="callout"><strong>Onde olhar na figura:</strong> os nós em destaque são o
-    <code>div</code> visível e a interface quebrada — o div é a causa nomeada no diagnóstico. Meta
-    e script são invisíveis e não ocupam espaço; é o div extra no fim do body que deixa a home mais
-    alta que o viewport.</p>
+    <h2 id="buzzwords"><span class="num">1 ·</span> Tabela de buzzwords — o glossário desta página</h2>
+    <p class="prose">Cada palavra técnica da página está definida aqui, e a primeira vez que aparece no
+    texto traz a definição encostada. As siglas <code>TG-xxx</code> são invariantes (regras que têm de
+    valer sempre) da skill do adaptador Telegram deste repositório.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Termo</th><th>O que significa, em uma linha</th><th>Onde pesa nesta página</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>invariante</td><td>Regra que tem de valer sempre (ex.: «todo clique é respondido»); auditoria invariante-a-invariante = percorrer cada regra e provar com arquivo:linha + teste.</td><td>Entrega 1 (Telegram)</td></tr>
+          <tr><td>callback_data</td><td>Identificador de clique embutido no botão do Telegram; limitado a <strong>64 bytes</strong> — daí o bug TG-026.</td><td>Entrega 1</td></tr>
+          <tr><td>golden-master</td><td>Teste que fixa, para sempre, um estado esperado do repositório (aqui: «zero Discord fora das classes nomeadas»).</td><td>Entrega 2 (Discord)</td></tr>
+          <tr><td>ratchet</td><td>Trava que só aperta: qualquer menção nova fora das classes nomeadas reprova o teste, mesmo que a antiga já tivesse passado.</td><td>Entrega 2</td></tr>
+          <tr><td>tarball</td><td>O ficheiro <code>.tgz</code> que sai no <code>pnpm pack</code> e seria publicado/instalado — tem de sair sem restos do Discord.</td><td>Entrega 2 · Entrega 4</td></tr>
+          <tr><td>fail-closed</td><td>Em caso de dúvida, nega: provedor desconhecido cai em erro em vez de seguir às cegas.</td><td>Entrega 2 · Entrega 3</td></tr>
+          <tr><td>contrato congelado</td><td>Especificação fixada <em>antes</em> da implementação (intents, campos, limites) e que as ondas seguintes não podem mudar.</td><td>Entrega 3</td></tr>
+          <tr><td>stub</td><td>Substituto temporário que responde «ainda não disponível» e falha fechado, até o comportamento real chegar.</td><td>Entrega 3 · método</td></tr>
+          <tr><td>codec por intent</td><td>Cada intent tem campos fechados; um campo extra mandado pelo outro lado não chega ao consumidor.</td><td>Entrega 3</td></tr>
+          <tr><td>nonce (confirmação 2 etapas)</td><td>Código opaco de uso único no botão de confirmação; sem ele, a ação que escreve em disco ou cria sessão falha fechado.</td><td>Entrega 3</td></tr>
+          <tr><td>session-stats</td><td>Projeção de estatísticas reais do harness por sessão: turns, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens.</td><td>Entrega 3 (métricas)</td></tr>
+          <tr><td>TokenUsage</td><td>Contadores de tokens que viajam no evento <code>assistant/message</code>: input, output, cacheRead, cacheWrite.</td><td>Entrega 3 (métricas)</td></tr>
+          <tr><td>git-dep</td><td>Dependência instalada direto de um repositório git (o caso do install-by-link) — sujeita às regras de build do pnpm.</td><td>Entrega 4</td></tr>
+          <tr><td>prepare / prepack</td><td>Hooks de build que o pnpm tenta correr ao instalar uma git-dep; bloqueados por omissão desde o pnpm 11.</td><td>Entrega 4</td></tr>
+          <tr><td>gate</td><td>Barreira de verificação (build, lint, testes, pacote) que tem de ficar verde antes de qualquer integração.</td><td>método · números</td></tr>
+          <tr><td>gate de freshness</td><td>Gate novo desta execução: rebuild + <code>git diff --exit-code dist lib</code> — impede publicar artefatos compilados desatualizados.</td><td>Entrega 2 · Entrega 4</td></tr>
+          <tr><td>squash</td><td>Condensar os commits de uma branch num único commit no <code>main</code> (13 integrações assim).</td><td>método</td></tr>
+          <tr><td>revisão adversarial</td><td>Revisor independente cujo trabalho é <em>refutar</em> as alegações da entrega; fez-se a todos os diffs (14 revisores).</td><td>método</td></tr>
+          <tr><td>prova por mutação</td><td>Quebrar o código de propósito para ver se o teste reprova; se passar, o teste era cego (~25 mutações feitas).</td><td>método</td></tr>
+          <tr><td>bitola literal</td><td>Uma promessa absoluta («zero», «todos», «exatamente») só vale se for provada grep a grep — a execução foi mordida 5 vezes por promessas falsas.</td><td>método</td></tr>
+          <tr><td>canário</td><td>Teste que avisa de um perigo externo (aqui: incompatibilidade com a versão publicada no npm) e que se mantém vermelho de propósito.</td><td>números (CONTRACT-008)</td></tr>
+          <tr><td>flaky</td><td>Teste que falha por ruído (relógio, carga paralela) e não por bug; esta execução achou e corrigiu um com p≈1/1000.</td><td>método · ressalvas</td></tr>
+          <tr><td>subwave</td><td>Sub-onda de validação/teste lançada ao fim de cada onda (validador de gates + guardas estruturais).</td><td>método</td></tr>
+          <tr><td>handoff</td><td>Relatório de passagem entre agentes: o que foi feito, com que prova, e o que fica para quem vem a seguir.</td><td>método · dobrado</td></tr>
+          <tr><td>surf-skill</td><td>A antiga ferramenta de pesquisa web do orquestrador — aposentada por decisão do utilizador nesta execução.</td><td>decisões</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section class="animate" style="--i:3">
-    <h2 id="decisao"><span class="num">2 ·</span> A decisão D-01 — remover por inteiro, migrar para o settings</h2>
-    <p class="prose">A correção não escondeu o bloco com CSS: <strong>removeu o tap por
-    inteiro</strong>. A superfície do plugin (o módulo que se acopla ao servidor) deixou de tocar
-    o index.html do DSH — sem div, sem
-    meta, sem script — e o controle do túnel + as instruções do bot migraram para a aba
-    <strong>Remote Access</strong> do settings, montada na única contribuição de UI que o plugin
-    registra: o slot <code>settings.section</code> (vaga declarada no settings onde um plugin monta
-    seu conteúdo). O CSRF do painel passou a ter uma fonte única — <code>GET api/csrf</code> — e o
-    fallback pelo meta antigo foi removido até do client (a parte do plugin que roda no navegador):
-    o meta nunca mais vai existir.</p>
+    <h2 id="entregas"><span class="num">2 ·</span> As cinco entregas, num relance</h2>
+    <p class="prose">A tarefa tinha duas mensagens do utilizador; viraram cinco entregas. Eis o antes e o
+    depois de cada uma — as secções seguintes desdobram-nas.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Entrega</th><th>Antes</th><th>Depois</th><th>Prova registada</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1 · Telegram corrigido</strong></td>
+            <td>4 bugs reais escondidos no adaptador (códigos de erro, contagem, log cru)</td>
+            <td>auditoria regra a regra, bugs corrigidos + 12 testes de regressão</td>
+            <td>revisão adversarial <span class="pill pill--ok">APPROVE</span> («nada a refutar»)</td>
+          </tr>
+          <tr>
+            <td><strong>2 · Discord apagado</strong></td>
+            <td>adaptador, testes, config, docs e skills do Discord espalhados pelo repo</td>
+            <td>zero Discord fora da história preservada, com guardas permanentes</td>
+            <td>golden-master + ratchet + contagem 10 com asserção + tarball limpo</td>
+          </tr>
+          <tr>
+            <td><strong>3 · Três capacidades novas</strong></td>
+            <td>impossível criar chats/worktrees ou pedir status pelo Telegram</td>
+            <td><code>/novo-chat</code>, <code>/novo-chat-wt</code>, <code>/worktree</code>, <code>/status-tarefa</code> (+ <code>/agentes</code> com métricas)</td>
+            <td>contrato congelado + 15/15 file:line verificados por revisor independente</td>
+          </tr>
+          <tr>
+            <td><strong>4 · Instalação pelo link</strong></td>
+            <td><code>ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED</code> — o plugin não instalava</td>
+            <td>artefatos compilados no git, zero hooks, gate e2e de instalação</td>
+            <td>RED→GREEN com o instalador real + <code>package:check</code> verde</td>
+          </tr>
+          <tr>
+            <td><strong>5 · Repo renomeado</strong></td>
+            <td>github.com/frederico-kluser/deepseek-harness-mobile</td>
+            <td>github.com/frederico-kluser/dsh-guard-messenger (About + 9 topics + remote)</td>
+            <td>operado via <code>gh</code> CLI e confirmado por <code>gh repo view</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="animate" style="--i:4">
+    <h2 id="terreno"><span class="num">3 ·</span> O terreno — como uma mensagem do Telegram vira uma ação no DSH</h2>
+    <p class="prose">Tudo o que segue pousa nesta arquitetura. Uma mensagem chega ao bot, é traduzida numa
+    <strong>intent</strong> (mensagem tipada de vocabulário fechado), atravessa um canal IPC (a fronteira
+    entre o <em>worker</em>, que fala com o Telegram, e o <em>host</em>, que fala com o DSH) e só então toca
+    nas APIs do harness. A resposta — incluindo as métricas — volta pelo mesmo caminho.</p>
 
     <figure>
-      <section class="diagram-shell" data-crit-ok="home">
-        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover ·
-        duplo clique para reenquadrar</p>
+      <section class="diagram-shell" data-crit-ok="dsh">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover · duplo clique para reenquadrar</p>
         <div class="mermaid-wrap">
           <div class="zoom-controls">
             <button type="button" data-action="zoom-in" title="Aproximar">+</button>
@@ -601,115 +699,128 @@ flowchart TD
             <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
             <span class="zoom-label">carregando…</span>
           </div>
-          <div class="mermaid-viewport" role="img" aria-label="Diagrama de fluxo com três regiões: a resposta da home sai intacta com zero ocorrências de dsh-guard-ui; o plugin registra apenas o slot settings.section e mantém as 17 rotas API; a aba Remote Access do settings monta o card do túnel, que chama as rotas por HTTP.">
+          <div class="mermaid-viewport" role="img" aria-label="Diagrama de fluxo: uma mensagem do Telegram passa pelo parse e validação, vira comando na superfície do worker, é codificada numa intent IPC validada pelo host e só então chama as APIs do DeepSeek Harness; o resultado volta como relatório, vira resposta e é enviado de volta ao Telegram.">
             <div class="mermaid mermaid-canvas"></div>
           </div>
         </div>
         <script type="text/plain" class="diagram-source">
 flowchart TD
-  subgraph S1["Resposta da home do DSH"]
-    home["HTML da home intacto<br/>0 ocorrências de dsh-guard-ui"]
-  end
-  subgraph S2["Plugin dsh-guard-messenger"]
-    slot["Regista SÓ o slot settings.section"]
-    rotas["17 rotas API mantidas<br/>estado · csrf · start · stop · reset · telegram"]
-  end
-  subgraph S3["Settings do DSH (modal)"]
-    aba["Aba Remote Access"]
-    card["Card do túnel<br/>6 estados em PT · 3 botões · passos do bot"]
-  end
-  slot -- "monta conteúdo na aba" --> aba
-  aba -- "renderiza o card" --> card
-  card -- "chama por HTTP com token CSRF" --> rotas
-  slot -. "tap removido: nada cruza para a home" .-> home
+  tg["Mensagem ou clique<br/>no Telegram"] -- "update recebido (long polling)" --> parse["Parse + validação<br/>gramática g1 · limites 4096/64 bytes"]
+  parse -- "intenção do utilizador" --> surf["Superfície (worker/surface)<br/>comandos, botões, textos"]
+  surf -- "intent tipada + nonce" --> canal["Canal IPC<br/>codec por intent, campos fechados"]
+  canal -- "dispatch validado no host" --> host["Host do plugin (src/)<br/>chats · worktrees · métricas"]
+  host -- "chama a API do harness" --> dsh["DeepSeek Harness<br/>sessões · git · estatísticas"]
+  dsh -- "resultado medido (ou campo ausente)" --> host
+  host -- "agent.report difundido" --> surf
+  surf -- "resposta enviada/editada" --> tg
         </script>
       </section>
-      <figcaption><b>Figura 2 —</b> A home deixa de receber qualquer coisa do plugin; a única
-      contribuição de UI vira o card do túnel na aba Remote Access, alimentado pelas 17 rotas API.
-      (A aresta pontilhada é a que foi removida.)</figcaption>
+      <figcaption><b>Figura 1 —</b> Uma ordem do Telegram só toca no DSH depois de atravessar quatro
+      fronteiras (parse → superfície → IPC → host), e a resposta volta por elas: <b>é essa travessia
+      controlada que as novas capacidades respeitam</b> — nenhuma delas atalha para o harness.</figcaption>
     </figure>
 
-    <p class="callout"><strong>Onde olhar na figura:</strong> o nó destacado é a <code>home</code>
-    intacta — e a regra que fecha a tarefa é <strong>testada, não prometida</strong>: a guarda
-    anti-regressão (teste que impede o bug de voltar — falha se o tap reaparecer) vigia o
-    <code>tapIndex</code> em duas camadas (no tipo e na execução real), e a e2e compara a resposta do
-    <code>GET /</code> byte a byte antes e depois do descarrego da superfície.</p>
-  </section>
-
-  <section class="animate" style="--i:4">
-    <h2 id="conversa"><span class="num">3 ·</span> A conversa do painel com o servidor</h2>
-    <p class="prose">Do navegador para o plugin, tudo é HTTP. O painel pede o token de CSRF em uma
-    fonte só, lê o estado projetado (o retrato atual do túnel: seq, estado, tentativas, url quando
-    há) e confirma ações perigosas em duas etapas — o servidor devolve um nonce (número de uso
-    único que o servidor emite e o painel devolve para confirmar Ligar/Repor) e espera a confirmação
-    de volta. Nenhum POST sai sem token: se nenhuma fonte entregar, o botão vira a mensagem
-    “CSRF indisponível — recarregue a página e tente de novo.”</p>
-
-    <figure>
-      <section class="diagram-shell">
-        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover ·
-        duplo clique para reenquadrar</p>
-        <div class="mermaid-wrap">
-          <div class="zoom-controls">
-            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
-            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
-            <button type="button" data-action="zoom-fit" title="Reenquadrar">&#8634;</button>
-            <button type="button" data-action="zoom-one" title="Zoom 1:1">1:1</button>
-            <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
-            <span class="zoom-label">carregando…</span>
-          </div>
-          <div class="mermaid-viewport" role="img" aria-label="Diagrama de sequência: o painel pede o token de CSRF em uma fonte única, lê o estado projetado, confirma Ligar em duas etapas com nonce e pede os passos do bot.">
-            <div class="mermaid mermaid-canvas"></div>
-          </div>
-        </div>
-        <script type="text/plain" class="diagram-source">
-sequenceDiagram
-  autonumber
-  participant painel as Painel (aba Remote Access)
-  participant plug as Plugin (backend)
-  painel->>plug: abre a aba
-  painel->>plug: GET api/csrf
-  plug-->>painel: token CSRF (fonte única)
-  painel->>plug: GET api/state
-  plug-->>painel: estado projetado (estado, tentativas, url)
-  alt Ligar em 2 etapas (túnel desligado)
-    painel->>plug: POST start
-    plug-->>painel: passo confirmar + nonce + expiraEm
-    painel->>plug: POST start/confirm com o nonce
-    plug-->>painel: túnel liga (estado online)
-  end
-  painel->>plug: POST telegram/click
-  plug-->>painel: passos do bot (como ligar)
-        </script>
-      </section>
-      <figcaption><b>Figura 3 —</b> O painel só fala com o plugin por HTTP: token CSRF de uma
-      fonte só e ações confirmadas em 2 etapas com nonce. Caminhos reais sob
-      <code>/__guard-ui/</code>, abreviados na figura.</figcaption>
-    </figure>
+    <details class="dobrado" data-andaime>
+      <summary><span class="dobrado-tag dobrado-tag--andaime">andaime</span>O que é isto de «worker», «host» e «IPC»?</summary>
+      <div class="dobrado-body">
+        <p><span class="dt">worker</span> — o processo que conversa com o Telegram: recebe updates, valida
+        cliques, monta mensagens. Não tem acesso direto ao DSH.</p>
+        <p><span class="dt">host</span> — o lado do plugin instalado dentro do DSH: é ele que cria sessões,
+        corre <code>git</code> e lê estatísticas.</p>
+        <p><span class="dt">IPC</span> — o cano tipado entre os dois lados. Cada mensagem tem nome e campos
+        fechados (o <em>codec por intent</em>); um campo extra mandado a mais é descartado em vez de chegar
+        ao consumidor.</p>
+        <p>Esta separação segue a arquitetura entry→registry→adapter→core→bridge→IPC documentada na skill
+        <code>dsh-provider-bot</code> do repositório.</p>
+      </div>
+    </details>
   </section>
 
   <section class="animate" style="--i:5">
-    <h2 id="estados"><span class="num">4 ·</span> Os seis estados do túnel e os três botões</h2>
-    <p class="prose">O card mostra o túnel em <strong>um</strong> dos seis estados por vez, com
-    rótulos em português copiados verbatim do chrome antigo. Os botões seguem regras por estado:</p>
+    <h2 id="telegram"><span class="num">4 ·</span> Entrega 1 — Telegram auditado invariante-a-invariante</h2>
+    <p class="prose">A ordem foi «garantir que no Telegram todo o código feito está correto». O método não
+    foi reler o código à procura de «feio»: foi percorrer o contrato da skill
+    <code>dsh-telegram-provider</code> <strong>invariante a invariante</strong> (cada regra
+    <code>TG-xxx</code>), exigindo para cada uma prova <code>arquivo:linha</code> mais um teste. Onde a
+    prova não existia, escrevia-se o teste; onde a regra era violada, corrigia-se o bug e deixava-se
+    regressão. Foram encontrados <strong>4 bugs reais</strong>.</p>
 
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>Botão</th><th>Confirmação</th><th>Restrição por estado (registrada nos fatos)</th></tr>
+          <tr><th>Bug</th><th>O que fazia de mal</th><th>Correção + regressão</th></tr>
         </thead>
         <tbody>
-          <tr><td>Ligar</td><td>2 etapas, com nonce</td><td>só aparece em “desligado” (STOPPED)</td></tr>
-          <tr><td>Desligar</td><td>confirmação, sem nonce</td><td>— (nenhuma restrição declarada nos fatos)</td></tr>
-          <tr><td>Repor</td><td>2 etapas, com nonce</td><td>só aparece em “falhou” (FAILED)</td></tr>
+          <tr>
+            <td><strong>TG-026</strong><br/>callback_data</td>
+            <td>Ao montar um clique grande demais, lançava um erro comum em vez da razão
+            <code>CALLBACK_DATA_TOO_LONG</code> do vocabulário fechado — quem tratava do erro perdia o motivo.</td>
+            <td>Razão correta no vocabulário fechado; teste de fronteira 64/65 bytes.</td>
+          </tr>
+          <tr>
+            <td><strong>TG-089</strong><br/>contagem de descartes</td>
+            <td>Descartes de superfície com tipo <code>unknown</code> não eram contados — a contagem de
+            mensagens ignoradas ficava sistematicamente abaixo da real.</td>
+            <td>Todo o descarte conta; teste com contagem exata (12).</td>
+          </tr>
+          <tr>
+            <td><strong>S3</strong><br/>segredos nos logs</td>
+            <td>O <code>catch</code> do adaptador escrevia <code>error.message</code> cru no log — um erro
+            de rede podia levar token ou URL para o registo.</td>
+            <td>Passou a passar por <code>describeForLog</code>, que mascara formatos de segredo; canário de mascaramento.</td>
+          </tr>
+          <tr>
+            <td><strong>contrato 10</strong><br/>código de erro do create</td>
+            <td>Com o token vazio, a criação caía no <code>exit 13</code> em vez do código CONFIG 10 do
+            contrato — o chamador tratava o erro errado.</td>
+            <td>Código de erro conforme o contrato; teste do caminho <code>create</code> com <code>code</code>.</td>
+          </tr>
         </tbody>
       </table>
     </div>
 
+    <p class="prose">Além dos 4 fixes, a auditoria deixou <strong>12 testes de regressão</strong> que
+    fixam invariantes que ainda não tinham asserção dedicada (eixos distintos de autor/mensagem, a regra
+    estrutural TG-008, os limites TG-012..015, o corte 4096, o boot 45s→14, o mascaramento S3, os scopes
+    TG-080). A revisão adversarial deste diff deu <span class="pill pill--ok">APPROVE</span> — «nada a
+    refutar» — e recontou à mão a contagem exata dos descartes.</p>
+
+    <details class="dobrado" data-andaime>
+      <summary><span class="dobrado-tag dobrado-tag--andaime">andaime</span>O que significam os números 4096, 64 e 45s→14?</summary>
+      <div class="dobrado-body">
+        <ul>
+          <li><span class="dt">4096</span> — tamanho máximo de uma mensagem do Telegram; o código corta o
+          texto antes de o mandar, em vez de rebentar no fio.</li>
+          <li><span class="dt">64 bytes</span> — tamanho máximo do <code>callback_data</code> (o identificador
+          embutido num botão); daí o TG-026 ter de avisar em vez de estourar.</li>
+          <li><span class="dt">45s→14</span> — o long polling do bot tem 45 segundos de orçamento de boot;
+          ao estourar, o processo sai com o código 14. Igualmente: 409→11 e 401→12 são os códigos de
+          «conflito» e «token inválido».</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <section class="animate" style="--i:6">
+    <h2 id="discord"><span class="num">5 ·</span> Entrega 2 — Discord apagado por completo, com guarda para não voltar</h2>
+    <p class="prose">Apagar código é fácil; provar que se apagou <em>tudo</em> é que é o trabalho. Saiu o
+    adaptador do Discord e tudo o que o suportava: registry, env, schema, patch de configuração, sonda de
+    provedor, onboarding, textos, client, bin, <strong>192 casos de teste</strong>, docs atuais e menções
+    nas skills do repositório. Ficou a <strong>história preservada</strong> (documentos de plano, spikes e
+    relatórios — não são código nem pretensões atuais) e duas exceções nomeadas: o CHANGELOG e o changeset
+    da remoção, que têm de citar o que removeu.</p>
+
+    <p class="prose">Para o zero ser permanente, ficaram três <strong>guardas</strong>: o
+    <strong>golden-master</strong> (teste que fixa «grep = 0 fora das classes nomeadas»), o
+    <strong>ratchet</strong> de conteúdo inteiro (qualquer menção nova reprova — verificado também por
+    conteúdo de uma ponta à outra, não só por linha) e a <strong>contagem 10 com asserção</strong> (os
+    dez ficheiros que legitimamente nomeiam «discord» são lista fechada). O <strong>tarball</strong> (o
+    <code>.tgz</code> do pacote) sai limpo: <code>clean</code> antes do build, prefixos proibidos no
+    empacotamento e gate de <strong>freshness</strong> ativo no <code>package:check</code>.</p>
+
     <figure>
-      <section class="diagram-shell">
-        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover ·
-        duplo clique para reenquadrar</p>
+      <section class="diagram-shell" data-crit="err">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover · duplo clique para reenquadrar</p>
         <div class="mermaid-wrap">
           <div class="zoom-controls">
             <button type="button" data-action="zoom-in" title="Aproximar">+</button>
@@ -719,269 +830,588 @@ sequenceDiagram
             <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
             <span class="zoom-label">carregando…</span>
           </div>
-          <div class="mermaid-viewport" role="img" aria-label="Máquina de estados do túnel com os seis rótulos em português: desligado, ligando, online, instável tentando de novo, desligando e falhou precisa de ação sua; Ligar e Repor confirmam em duas etapas e Repor só existe no estado falhou.">
+          <div class="mermaid-viewport" role="img" aria-label="Diagrama: o registry passou de dois provedores para um, o Discord foi removido de código, testes, config, docs e skills; ficaram guardas permanentes (golden-master, ratchet, contagem 10) e o tarball sai limpo pelo gate de freshness; quem tinha provider discord na config vê falha no arranque com nota de migração.">
             <div class="mermaid mermaid-canvas"></div>
           </div>
         </div>
         <script type="text/plain" class="diagram-source">
-stateDiagram-v2
-  direction TB
-  state "desligado" as S0
-  state "ligando" as S1
-  state "online" as S2
-  state "instável — tentando de novo" as S3
-  state "desligando" as S4
-  state "falhou — precisa de ação sua" as S5
-  [*] --> S0
-  S0 --> S1 : Ligar (2 etapas com nonce)
-  S1 --> S2 : túnel pronto (url + expiraEm)
-  S1 --> S5 : erro ao ligar
-  S2 --> S3 : problema na conexão
-  S3 --> S2 : tentando de novo
-  S3 --> S5 : tentativas esgotadas
-  S2 --> S4 : Desligar (confirmação, sem nonce)
-  S4 --> S0 : túnel parado
-  S5 --> S1 : Repor (2 etapas — só em falhou)
+flowchart TD
+  antes["Antes: registry com 2 provedores<br/>telegram + discord"] -- "apagar adapter, testes, config,<br/>docs atuais e skills" --> depois["Depois: 1 provedor (telegram)<br/>multi-provedor fail-closed intacto"]
+  depois -- "golden-master: grep = 0<br/>fora das classes nomeadas" --> guarda["Guardas permanentes no repo<br/>ratchet de conteúdo inteiro · contagem 10"]
+  guarda -- "gate de freshness + FORBIDDEN_PREFIXES" --> pacote["Tarball publicado sem restos"]
+  antes -- "quem tinha provider: discord na config" --> err["Falha honesta no arranque"]
+  err -- "nota SECURITY: do CHANGELOG" --> mig["O utilizador remove a linha<br/>e volta a arrancar"]
         </script>
       </section>
-      <figcaption><b>Figura 4 —</b> Os seis estados do card com os rótulos PT exatos; Ligar e Repor
-      confirmam em 2 etapas, e Repor só existe em “falhou — precisa de ação sua”. As etiquetas e as
-      regras de botão por estado são fatos; as arestas de entrada em “instável” e “falhou” leem o sentido dos
-      próprios rótulos (tentativas é campo do estado projetado).</figcaption>
+      <figcaption><b>Figura 2 —</b> A remoção não foi só «apagar»: o repo ganhou guardas que fazem
+      qualquer resíduo novo do Discord reprovar o teste, e quem ainda tiver <code>provider: discord</code>
+      na configuração recebe <b>uma falha no arranque com nota de migração</b> (prefixo
+      <code>SECURITY:</code>) em vez de comportamento silencioso.</figcaption>
     </figure>
-  </section>
 
-  <section class="animate" style="--i:6">
-    <h2 id="execucao"><span class="num">5 ·</span> Como foi executado — ondas, worktrees e a retomada</h2>
-    <p class="prose">A execução seguiu o rito do orquestrador: uma onda (lote de sub-tarefas
-    paralelas executado junto e integrado ao fim) com duas worktrees (pastas de trabalho separadas
-    do mesmo repositório), mapas de arquivo disjuntos e um gate (a bateria
-    obrigatória antes de integrar: build, testes, contract — o contrato de tipos com o pacote
-    externo —, lint, o detector de erros de código, e typecheck, a conferência de tipos) no fim. O turno da sessão anterior morreu
-    com os dois sub-agentes em voo — a retomada verificou o estado parcial nas worktrees e
-    re-dispachou os finishers (agentes que concluem cada sub-tarefa) na mesma pasta (tentativa 2 de 3), reaproveitando o diff não
-    commitado e o commit wip 5506301 (trabalho em andamento já salvo).</p>
+    <p class="prose">Uma coisa sobreviveu de propósito: o mecanismo multi-provedor
+    (<strong>fail-closed</strong> — em caso de dúvida nega). Com um só provedor, um
+    <code>DSH_GUARD_PROVIDER</code> desconhecido continua a cair em erro e a ausência continua a resolver
+    para o Telegram — testado. O boot do Telegram (409→11, 401→12, timeout→14) também continua vivo em
+    e2e (testes fim-a-fim, que correm o sistema quase real).</p>
 
-    <ol class="timeline">
-      <li>
-        <span class="tl-fase">Fase 0–2 · sessão anterior</span>
-        <p class="tl-body">Diagnóstico, decisão D-01 e onda 1 despachada em 2 worktrees.
-        <span class="det">O turno morreu com os sub-agentes em voo — notificações perdidas.</span></p>
-      </li>
-      <li>
-        <span class="tl-fase">Retomada · sessão atual</span>
-        <p class="tl-body">Estado verificado nas worktrees (fonte de verdade); finishers 1.1 e 1.2
-        re-dispachados na mesma pasta. <span class="det">Nada foi refeito: o trabalho parcial
-        sobreviveu.</span></p>
-      </li>
-      <li>
-        <span class="tl-fase">Barreira da onda 1</span>
-        <p class="tl-body">1.1 (d4d3fab) e 1.2 (5506301 + f361d71) concluídos; build, testes, lint
-        e typecheck verdes nas worktrees.</p>
-      </li>
-      <li>
-        <span class="tl-fase">Revisão adversarial + replan</span>
-        <p class="tl-body">1.1 e 1.2: APPROVE, sem CRITICAL/HIGH. Revisor de plano:
-        CONVERGÊNCIA — <span class="det">a onda cobre a tarefa por completo; nenhuma sub-tarefa nova.</span></p>
-      </li>
-      <li>
-        <span class="tl-fase">Integração</span>
-        <p class="tl-body">Squash-merge 1.1 → <code>0ca549e</code> (home limpa) e 1.2 →
-        <code>ec5be3d</code> (painel no settings); gates verdes nos dois snapshots (o main capturado após cada merge).</p>
-      </li>
-      <li>
-        <span class="tl-fase">Subwaves de teste e validação</span>
-        <p class="tl-body">+21 testes de superfície e +24 do client; validador e revisor do diff
-        integrado aprovam. <span class="det">Encontrado e corrigido o bug do rótulo herdado —
-        ver o segmento 6.</span></p>
-      </li>
-      <li>
-        <span class="tl-fase">COMMIT-FINAL</span>
-        <p class="tl-body">5 squash commits no total; gate final: 2460/2460 · e2e 63/63 ·
-        security 136/1 · contract 8/9 (única falha pré-existente no main). <span class="det">Worktrees e snapshots
-        removidos; branches arquivados.</span></p>
-      </li>
-    </ol>
+    <details class="dobrado" data-andaime>
+      <summary><span class="dobrado-tag dobrado-tag--andaime">andaime</span>Por que não basta apagar o código e seguir?</summary>
+      <div class="dobrado-body">
+        <p>Três razões, todas medidas nesta execução:</p>
+        <ul>
+          <li><span class="dt">1.</span> O build pode <em>recompilar</em> código apagado se os artefatos
+          antigos não forem limpos — o Discord compilado chegou a aparecer dentro do tarball e foi preciso
+          um gate para o proibir.</li>
+          <li><span class="dt">2.</span> Promessas como «todas as menções foram removidas» são falsas por
+          definição se não forem grep-provadas — esta execução apanhou (e corrigiu) exatamente isso.</li>
+          <li><span class="dt">3.</span> Sem teste guarda, o resíduo volta no próximo commit. O golden-master
+          e o ratchet transformam o «zero» num facto verificável a cada <code>pnpm test</code>.</li>
+        </ul>
+      </div>
+    </details>
   </section>
 
   <section class="animate" style="--i:7">
-    <h2 id="prova"><span class="num">6 ·</span> A prova — gates, revisões e o bug apanhado no fim</h2>
+    <h2 id="capacidades"><span class="num">6 ·</span> Entrega 3 — três capacidades novas: chats, worktrees e status com métricas</h2>
+    <p class="prose">A segunda ordem do utilizador era funcional: «garantir que consigo emitir novos chats,
+    criar worktrees e pedir o status de uma tarefa com métricas do deepseek harness». Antes de escrever
+    comportamento, o orquestrador <strong>congelou o contrato</strong> — nomes dos comandos, intents,
+    campos e limites — em <code>src/contracts/ipc.ts</code>, para que as ondas de implementação não
+    divergissem.</p>
+
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>Verificação</th><th>Resultado</th></tr>
+          <tr><th>Comando</th><th>O que faz de verdade</th><th>Confirmação</th></tr>
         </thead>
         <tbody>
-          <tr><td>Testes (suíte pós-integração completa)</td><td><span class="pill pill--ok">2460/2460 pass</span></td></tr>
-          <tr><td>e2e (fim a fim)</td><td><span class="pill pill--ok">63/63 pass</span></td></tr>
-          <tr><td>Security (segurança)</td><td><span class="pill pill--ok">136 pass · 1 skip (pulado)</span></td></tr>
-          <tr><td>Contract</td><td><span class="pill pill--warn">8/9</span> — a única falha é a CONTRACT-008 (o teste nº 8 do contract: valida os tipos contra o pacote externo), pré-existente no main</td></tr>
-          <tr><td>Lint + typecheck</td><td><span class="pill pill--ok">0 errors</span></td></tr>
-          <tr><td>Revisões adversariais</td><td><span class="pill pill--ok">APPROVE ×5</span> — 2 da onda, 1 do diff integrado, 2 das subwaves de teste — e CONVERGÊNCIA do revisor de plano</td></tr>
+          <tr>
+            <td><code>/novo-chat &lt;prompt&gt;</code></td>
+            <td>Cria uma <strong>sessão real</strong> no DSH e submete o primeiro prompt; devolve o id do chat.</td>
+            <td>2 etapas com nonce (intent <code>chat.new</code>)</td>
+          </tr>
+          <tr>
+            <td><code>/novo-chat-wt &lt;worktree&gt; &lt;prompt&gt;</code></td>
+            <td>Idem, com a sessão a correr dentro da worktree indicada (<code>meta.cwd</code>).</td>
+            <td>2 etapas com nonce (intent <code>chat.new</code>)</td>
+          </tr>
+          <tr>
+            <td><code>/worktree &lt;nome&gt; [base]</code></td>
+            <td>Cria uma worktree git: branch <code>guard/&lt;nome&gt;</code> em
+            <code>&lt;repo&gt;-worktrees/&lt;nome&gt;</code>. Nunca destrói uma existente.</td>
+            <td>2 etapas com nonce (intent <code>worktree.create</code>)</td>
+          </tr>
+          <tr>
+            <td><code>/status-tarefa &lt;id&gt;</code></td>
+            <td>Detalhe da tarefa com <strong>métricas reais</strong> do harness; se faltarem, mostra «—».</td>
+            <td>leitura pura — sem nonce</td>
+          </tr>
+          <tr>
+            <td><code>/agentes</code></td>
+            <td>Resumo por run, agora com um slot de métrica («📊 tokens / tempo») por tarefa.</td>
+            <td>leitura pura — sem nonce</td>
+          </tr>
         </tbody>
       </table>
     </div>
 
-    <h3>O bug que as subwaves apanharam no fim</h3>
-    <p class="prose">Os testes novos ainda apanharam um bug real. No client, o rótulo do estado era
-    escolhido com o operador <code>in</code> — que casa também as propriedades herdadas (métodos de
-    fábrica que todo objeto JS recebe: <code>toString</code>, <code>constructor</code>…). Um nome de
-    estado que coincidisse com um desses nomes renderizaria uma função no lugar do texto. A correção
-    trocou o <code>in</code> por <code>Object.hasOwn</code> (função JS que enxerga só as propriedades
-    próprias do objeto), com 5 casos de teste novos exatamente com esses nomes — e o fix entrou como
-    o 5º squash commit (<code>545d8f7</code>; +13/−1 em 2 arquivos).</p>
-    <div class="code-block"><span class="cm">// antes — o operador in enxerga propriedades herdadas: 'toString' devolveria uma função</span>
-<span class="antes">estado in ROTULOS_DE_ESTADO_TUNEL</span>
+    <p class="prose">Os comandos que <em>escrevem</em> (criar sessão, criar worktree) aumentam a exposição
+    da instalação e por isso exigem <strong>confirmação em 2 etapas</strong>: o botão de confirmação traz
+    um <strong>nonce</strong> (código opaco de uso único, com prazo e uso único); sem nonce válido, a ação
+    falha fechada e nada acontece. As leituras (<code>/status-tarefa</code>, <code>/agentes</code>) passam
+    direto.</p>
 
-<span class="cm">// depois — Object.hasOwn olha só as propriedades próprias: o nome vira o rótulo tal qual</span>
-<span class="depois"><span class="fn">Object.hasOwn</span>(ROTULOS_DE_ESTADO_TUNEL, estado)</span></div>
+    <figure>
+      <section class="diagram-shell" data-crit="nega">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover · duplo clique para reenquadrar</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
+            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Reenquadrar">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="Zoom 1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
+            <span class="zoom-label">carregando…</span>
+          </div>
+          <div class="mermaid-viewport" role="img" aria-label="Diagrama de fluxo: comandos que escrevem passam por validação de forma, confirmação em duas etapas com nonce, validação no host e efeito real; cliques forjados ou expirados recebem resposta uniforme sem executar; leituras passam sem nonce e devolvem detalhe com métricas.">
+            <div class="mermaid mermaid-canvas"></div>
+          </div>
+        </div>
+        <script type="text/plain" class="diagram-source">
+flowchart TD
+  cmd["/novo-chat · /novo-chat-wt · /worktree"] -- "valida a forma ANTES do host<br/>gramática [a-z0-9-] · prompt 1 linha, 4096" --> conf["Confirmação em 2 etapas<br/>botão com nonce opaco"]
+  conf -- "clique válido: intent + nonce" --> host["Host: valida em 2 eixos<br/>e consome o nonce"]
+  host -- "accepted" --> efeito["Efeito real<br/>sessão criada / git worktree criada"]
+  efeito -- "agent.report com métricas" --> fim["Resposta no Telegram"]
+  conf -- "clique forjado, expirado ou alheio" --> nega["Resposta uniforme<br/>sem executar nada"]
+  leitura["/status-tarefa id · /agentes"] -- "leitura pura: sem nonce" --> ler["Host lê relatórios<br/>teto de 64 runs"]
+  ler -- "detalhe com métricas reais" --> fim
+        </script>
+      </section>
+      <figcaption><b>Figura 3 —</b> O que escreve em disco ou cria sessão só passa com
+      <b>confirmação em 2 etapas e nonce válido</b>; um clique forjado ou expirado recebe uma resposta
+      uniforme e não executa nada, enquanto as leituras seguem direto — <b>é esta assimetria que protege
+      a instalação sem atrapalhar quem só consulta</b>.</figcaption>
+    </figure>
+
+    <h3 id="metricas">As métricas: medidas pelo harness, nunca estimadas</h3>
+    <p class="prose">O pedido era «status de uma tarefa com métricas do deepseek harness», e a regra que
+    guiou tudo foi: <strong>ou a métrica é medida, ou aparece como «—»</strong>. Os números vêm de duas
+    fontes reais do harness — <strong>session-stats</strong> (turns, steps, llmMs, toolMs, ttftMs,
+    ttftSteps, decodeMs, decodeTokens) e o <strong>TokenUsage</strong> (input, output, cacheRead,
+    cacheWrite) que viaja no evento <code>assistant/message</code>. O relatório
+    <code>AgentRunReport</code> ganhou um campo <code>metrics</code> <em>aditivo</em> (campos opcionais —
+    um worker antigo não quebra) e o <code>kind</code>/<code>worktree</code> que distinguem uma tarefa de
+    chat de uma tarefa de agente.</p>
+
+    <figure>
+      <section class="diagram-shell" data-crit-ok="traco">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover · duplo clique para reenquadrar</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
+            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Reenquadrar">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="Zoom 1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
+            <span class="zoom-label">carregando…</span>
+          </div>
+          <div class="mermaid-viewport" role="img" aria-label="Diagrama: as métricas nascem de session-stats e do TokenUsage do evento assistant/message, entram no campo aditivo metrics do AgentRunReport, atravessam o canal IPC com teto de 64 runs e alimentam /status-tarefa e /agentes; campo ausente nunca é estimado e aparece como traço.">
+            <div class="mermaid mermaid-canvas"></div>
+          </div>
+        </div>
+        <script type="text/plain" class="diagram-source">
+flowchart LR
+  run["Run real no harness"] -- "evento assistant/message" --> usage["TokenUsage<br/>input · output · cacheRead · cacheWrite"]
+  run -- "projeção de estatísticas" --> stats["session-stats<br/>turns · steps · llmMs · toolMs<br/>ttftMs · ttftSteps · decodeMs · decodeTokens"]
+  usage -- "campos opcionais" --> rep["AgentRunReport.metrics<br/>contrato aditivo, ordem canônica"]
+  stats -- "campos opcionais" --> rep
+  rep -- "canal IPC · teto 64 runs" --> rend["/status-tarefa id · /agentes"]
+  ausente["Campo ausente no harness"] -- "nunca estimado" --> traco["mostrado como «—»"]
+        </script>
+      </section>
+      <figcaption><b>Figura 4 —</b> As métricas têm duas origens medidas (session-stats e TokenUsage) e
+      um destino honesto: <b>o que o harness não mede aparece como «—», nunca como número estimado</b> —
+      incluindo nos resumos do <code>/agentes</code>.</figcaption>
+    </figure>
+
+    <h3 id="lacuna">A lacuna do harness — e o fallback honesto</h3>
+    <p class="prose">Criar uma sessão era fácil (<code>ctx.sessions.create</code>); <em>submeter o primeiro
+    prompt</em> não tinha caminho pronto: a API de criação devolve a sessão sem a cara de submissão. Em vez
+    de inventar, a execução mediu o caminho real no checkout do harness
+    (<code>ctx.sessionController.prompt(...)</code>), com cada citação <code>file:linha</code> verificada
+    por um revisor independente (15/15 na onda do contrato; 17/18 na revisão do host — a divergente foi
+    corrigida no ciclo de fix). E quando o <code>sessionController</code> não existe na instalação, o
+    comando falha <em>honesto</em>: devolve um <code>ChatError CHAT_SUBMISSAO_INDISPONIVEL</code> com o
+    <code>sessionId</code>, para continuar a conversa na Web UI — nunca um sucesso falso.</p>
+
+    <details class="dobrado" data-andaime>
+      <summary><span class="dobrado-tag dobrado-tag--andaime">andaime</span>O que é exatamente «o contrato congelado»?</summary>
+      <div class="dobrado-body">
+        <p>Uma especificação escrita <em>antes</em> do código, que as ondas de implementação tinham de
+        respeitar letra a letra. Fixou:</p>
+        <ul>
+          <li><span class="dt">intents</span> — <code>chat.new</code> ({prompt ≤ 4096, worktree?}) e
+          <code>worktree.create</code> ({nome /^[a-z0-9-]{1,40}$/, base? ≤ 256}); ambas aumentam exposição
+          e usam a ação de nonce <code>reset</code>; <code>agent.status</code> e as intents de túnel nunca
+          levam params (o filtro do id acontece no worker, sobre o <code>agent.report</code>, teto 64).</li>
+          <li><span class="dt">report</span> — <code>AgentRunReport</code> aditivo:
+          <code>kind?: agent|chat|worktree</code>, <code>worktree?: string</code>,
+          <code>metrics?: {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, turns, steps,
+          llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens}</code> — todos opcionais.</li>
+          <li><span class="dt">codec</span> — por intent, byte-a-byte nos dois lados (o teste compara
+          função a função); canonicalização na ordem fixa das chaves de métricas; número finito ≥ 0;
+          campos inventados caem.</li>
+          <li><span class="dt">superfície</span> — confirmação 2 etapas com nonce opaco (TTL 60s, teto 8,
+          uso único), resposta uniforme em cliques forjados/expirados/alheios, e o menu publicado
+          (<code>COMANDOS_PUBLICADOS</code>) intocado.</li>
+        </ul>
+        <p>Enquanto o comportamento real não chegou, três <em>stubs</em> fail-closed ocuparam o lugar — e
+        foram substituídos, um a um, pelas ondas de implementação.</p>
+      </div>
+    </details>
+
+    <details class="dobrado" data-andaime>
+      <summary><span class="dobrado-tag dobrado-tag--andaime">andaime</span>Como se cria uma worktree sem partir nada?</summary>
+      <div class="dobrado-body">
+        <p>O comando corre <code>git</code> como processo filho (<code>ctx.subprocess.spawn</code>), com
+        argumentos literais e sem <em>shell</em> — defesa contra <em>option-injection</em>, onde um nome
+        como <code>--mal</code> seria interpretado como opção do git. O nome é validado na gramática
+        <code>[a-z0-9-]{1,40}</code> <em>antes</em> de chegar ao host. O caminho é determinístico
+        (<code>&lt;repo&gt;-worktrees/&lt;nome&gt;</code>, branch <code>guard/&lt;nome&gt;</code>), e uma
+        worktree com o mesmo nome nunca é destruída: a resposta é <em>noop</em> («já estava assim»).</p>
+      </div>
+    </details>
   </section>
 
   <section class="animate" style="--i:8">
-    <h2 id="escopo"><span class="num">7 ·</span> O que não mudou — e o que ficou de fora</h2>
+    <h2 id="instalacao"><span class="num">7 ·</span> Entrega 4 — a instalação pelo link do GitHub, consertada na causa raiz</h2>
+    <p class="prose">A queixa era concreta: «não consigo instalar pelo link do github». Em vez de adivinhar,
+    a execução mediu a causa raiz <strong>nos logs reais do utilizador</strong>
+    (<code>~/.dsh/profiles/web/.plugin-manager/logs/</code>): o erro era
+    <code>ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED</code>. Traduzindo: quando o plugin é instalado direto do
+    git (uma <strong>git-dep</strong>), o pnpm 11 <strong>bloqueia os hooks de build</strong>
+    (<code>prepare</code>/<code>prepack</code>) por omissão — e sem esses hooks o artefato instalado vem
+    sem <code>dist/</code> nem <code>lib/</code>, ou seja, o plugin vem morto (a interface do cliente nunca
+    chega). Era um duplo impasse: com hooks, não instala; sem artefatos compilados no git, instala inútil.</p>
+
+    <figure>
+      <section class="diagram-shell" data-crit="err,morto" data-crit-ok="green">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover · duplo clique para reenquadrar</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
+            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Reenquadrar">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="Zoom 1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
+            <span class="zoom-label">carregando…</span>
+          </div>
+          <div class="mermaid-viewport" role="img" aria-label="Diagrama: instalar pelo link com hooks prepare/prepack rebenta no pnpm 11 com ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED; remover só os hooks deixa o plugin morto por falta de dist/lib; a saída é commitar os artefatos compilados sem hooks, provado com o instalador real de vermelho para verde e vigiado pelo gate check-git-install.">
+            <div class="mermaid mermaid-canvas"></div>
+          </div>
+        </div>
+        <script type="text/plain" class="diagram-source">
+flowchart TD
+  add["dsh plugin add<br/>github:.../dsh-guard-messenger"] -- "pnpm 11: git-dep com prepare/prepack" --> err["ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED"]
+  err -- "a chave allowBuilds sugerida e pinada ao SHA:<br/>cada push voltaria a bloquear" --> impasse["Duplo impasse"]
+  impasse -- "se instalasse sem hooks" --> morto["Artefato sem dist/lib<br/>plugin morto (bundle do cliente ausente)"]
+  morto -- "padrao medido do dsh-worktree-jump" --> sol["Artefatos compilados commitados<br/>+ zero hooks de build"]
+  sol -- "instalador real, DSH_HOME isolado: RED → GREEN" --> green["exit 0 · bundle ativada<br/>942 ficheiros instalados"]
+  green -- "gate e2e check-git-install no package:check" --> guarda["Instalação vigiada em cada release"]
+        </script>
+      </section>
+      <figcaption><b>Figura 5 —</b> Só há uma saída do duplo impasse: <b>artefatos compilados dentro do
+      git e zero hooks de build</b> — provado com o instalador real (vermelho → verde) e agora vigiado
+      pelo gate e2e <code>check-git-install</code>, que instala o pacote num repositório sintético a cada
+      release.</figcaption>
+    </figure>
+
+    <p class="prose">A saída foi copiar o padrão <em>medido</em> de um plugin que já instalava bem
+    (<code>dsh-worktree-jump</code>): artefatos compilados commitados (<strong>457</strong> ficheiros,
+    comprovadamente determinísticos — dois builds saem byte a byte iguais) e <strong>zero hooks</strong>
+    (<code>prepare</code>/<code>prepack</code> removidos de propósito; o <code>prepublishOnly</code> fica,
+    para quem publica no npm). A prova foi simétrica e com o <strong>instalador real</strong>: antes,
+    mesmo erro do utilizador; depois, <code>exit 0</code> com bundle ativada e todos os entrypoints no
+    lugar. E para o futuro ficou o gate <code>check-git-install</code> (instalação e2e sem
+    <code>allowBuilds</code>), mais o gate de <strong>freshness</strong> que impede publicar artefatos
+    compilados desatualizados.</p>
+
+    <div class="code-block"><span class="cm"># valido depois de o branch estar no GitHub (antes, o GitHub serve a arvore antiga)</span>
+<span class="fn">dsh plugin add</span> github:frederico-kluser/dsh-guard-messenger</div>
+
+    <div class="callout">
+      <strong>Por que não usar a chave <code>allowBuilds</code>?</strong> Porque a sugestão do próprio erro
+      é <em>pinada ao SHA do commit</em>: cada novo push voltaria a bloquear a instalação, e o utilizador
+      teria de a autorizar outra vez. A solução escolhida elimina o problema em vez de o adiar.
+    </div>
+
+    <details class="dobrado" data-andaime>
+      <summary><span class="dobrado-tag dobrado-tag--andaime">andaime</span>O que são prepare/prepack, entrypoints e freshness?</summary>
+      <div class="dobrado-body">
+        <ul>
+          <li><span class="dt">prepare / prepack</span> — scripts que o gestor de pacotes corre ao empacotar
+          ou instalar a partir do git (tipicamente «compile tudo»). Desde o pnpm 11, em dependências git
+          isso é bloqueado por omissão por razões de segurança da cadeia de suprimentos.</li>
+          <li><span class="dt">entrypoints</span> — os ficheiros que o pacote promete entregar (o bundle do
+          cliente, o worker, o binário de setup, os tipos). O gate confirma que cada um está rastreado no
+          git e coberto pela lista <code>files</code> do pacote.</li>
+          <li><span class="dt">freshness</span> — «o compilado está atualizado?». O gate corre o build e
+          exige <code>git diff --exit-code dist lib</code>: se o código-fonte mudou sem rebuild, o gate
+          reprova em vez de servir artefatos velhos.</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <section class="animate" style="--i:9">
+    <h2 id="repo"><span class="num">8 ·</span> Entrega 5 — o repositório passou a chamar-se dsh-guard-messenger</h2>
+    <p class="prose">O pedido foi «mudar o nome do repositório para dsh- alguma coisa e ajustar
+    package.json, README, About do github e as tags». A escolha de nomenclatura foi
+    <code>dsh-guard-messenger</code> — igual ao nome do pacote e ao padrão do plugin que já funcionava
+    na máquina do utilizador. Antes, o repositório chamava-se <code>deepseek-harness-mobile</code> enquanto
+    o pacote já se chamava <code>dsh-guard-messenger</code>, o que também ajudava a confundir o
+    instalador.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>O que mudou</th><th>Valor</th></tr></thead>
+        <tbody>
+          <tr><td>URL do repositório</td><td><code>github.com/frederico-kluser/dsh-guard-messenger</code></td></tr>
+          <tr><td>About / descrição + topics</td><td>atualizados (9 topics) com os textos alinhados aos docs</td></tr>
+          <tr><td>package.json (repository/homepage/bugs)</td><td>URLs novas, dentro da entrega de instalação</td></tr>
+          <tr><td>remote local</td><td><code>remote.origin.url</code> atualizado (operação de metadado remoto, via <code>gh</code> CLI)</td></tr>
+          <tr><td>README, docs, CHANGELOG, skills</td><td>URLs novas em tudo; o slug antigo só resta na história preservada</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>Transparência:</strong> o rename no GitHub mudou <code>remote.origin.url</code> no checkout
+      local — o verificador de contenção registou a violação, e ela foi classificada como operação de
+      metadado remoto (da mesma natureza do <code>push</code>), pedida pelo utilizador. Fica no registo da
+      execução, não escondida.
+    </div>
+  </section>
+
+  <section class="animate" style="--i:10">
+    <h2 id="metodo"><span class="num">9 ·</span> Como o trabalho foi feito — ondas, revisões adversariais e bitola literal</h2>
+    <p class="prose">O método importa aqui porque é ele que justifica a confiança nos números. A execução
+    correu em <strong>4 ondas</strong> de sub-tarefas paralelas (cada uma na sua worktree, com escopo de
+    ficheiros exclusivo), com <strong>13 filhas integradas</strong> — 8 sub-tarefas de feature/fix e 5
+    subwaves de teste/validação — e <strong>revisão adversarial em todos os diffs</strong>.</p>
+
+    <figure>
+      <section class="diagram-shell" data-crit="fix,gate">
+        <p class="diagram-shell__hint">Ctrl/Cmd + roda do mouse para zoom · arraste para mover · duplo clique para reenquadrar</p>
+        <div class="mermaid-wrap">
+          <div class="zoom-controls">
+            <button type="button" data-action="zoom-in" title="Aproximar">+</button>
+            <button type="button" data-action="zoom-out" title="Afastar">&minus;</button>
+            <button type="button" data-action="zoom-fit" title="Reenquadrar">&#8634;</button>
+            <button type="button" data-action="zoom-one" title="Zoom 1:1">1:1</button>
+            <button type="button" data-action="zoom-expand" title="Abrir em tamanho real">&#x26F6;</button>
+            <span class="zoom-label">carregando…</span>
+          </div>
+          <div class="mermaid-viewport" role="img" aria-label="Diagrama de fluxo do processo: a fase zero prepara o contexto e limpa runs órfãos; cada onda lança sub-tarefas em worktrees; cada entrega passa por revisão adversarial; achados BLOCK ou WARNING vão para ciclos de fix com prova por mutação; APPROVE vai para squash no main com gate serial; gate vermelho é classificado; subwaves de teste validam o diff integrado e a próxima onda só abre depois; no fim, commit final.">
+            <div class="mermaid mermaid-canvas"></div>
+          </div>
+        </div>
+        <script type="text/plain" class="diagram-source">
+flowchart TD
+  fase0["FASE 0<br/>contexto + purge de 2 runs orfaos"] -- "plano de 4 ondas + REPLAN" --> onda["Onda N<br/>sub-tarefas em worktrees paralelas"]
+  onda -- "entrega + handoff com provas" --> revisao["Revisao adversarial<br/>14 revisores · ~25 mutacoes de prova"]
+  revisao -- "BLOCK / WARNING (6x)" --> fix["Ciclos de fix (teto 2)<br/>correcao com prova por mutacao"]
+  fix -- "re-revisao fresca" --> revisao
+  revisao -- "APPROVE" --> squash["Squash no main<br/>gate serial (um de cada vez)"]
+  gate["Gate vermelho"] -- "classificado em 4 vias<br/>bug · ruido · ambiente · regressao" --> fix
+  squash -- "gate verde" --> subwave["Subwaves de teste/validacao<br/>por onda"]
+  subwave -- "portao inter-onda OK" --> onda
+  subwave -- "4 ondas, 13 filhas MERGED" --> final["COMMIT-FINAL"]
+        </script>
+      </section>
+      <figcaption><b>Figura 6 —</b> O ciclo que se repetiu 13 vezes: entregar, ser refutado por um revisor
+      independente, corrigir com prova e só então integrar com gate verde — <b>não existe integração nesta
+      execução que tenha saltado a revisão adversarial</b>.</figcaption>
+    </figure>
+
     <div class="duas">
       <div class="card-mini">
-        <h3>Intacto por decisão</h3>
+        <h3>Bitola literal — a regra que mais doeu</h3>
         <ul>
-          <li>As <strong>17 rotas API</strong> do plugin, com o mesmo comportamento (start/stop/reset com nonce, telegram/click).</li>
-          <li>Os rótulos PT dos estados em <code>src/panel/html.ts</code> (TUNNEL_STATE_LABEL), verbatim.</li>
-          <li>As páginas standalone do próprio painel — pré-existentes, com CSP travada; não são a home do DSH.</li>
+          <li>Toda a afirmação absoluta («zero», «todos», «exatamente») tem de ser provada grep a grep.</li>
+          <li>A execução foi «mordida» <strong>5 vezes</strong> por promessas falsas — cada uma corrigida
+          com prova por mutação (quebrar de propósito e ver o teste reprovar).</li>
+          <li>Exemplo: a promessa «todas as menções removidas» era falsa enquanto restasse uma referência
+          num comentário — e o revisor apanhou-a.</li>
         </ul>
       </div>
       <div class="card-mini">
-        <h3>De fora, registrado para o usuário</h3>
+        <h3>Gates seriais e política de ruído</h3>
         <ul>
-          <li>O <strong>re-pin do upstream</strong> — atualizar a faixa de versão aceita do pacote externo; rito próprio do repo, fora do escopo aprovado. (Upstream: pacote npm de fora que o DSH depende e que evolui por conta própria.)</li>
-          <li>Causa da única falha de contract: <code>@deepseek-ai/dsh</code> chegou a 0.1.5-rc.2 no registry (o catálogo público do npm), fora da faixa pinada 0.1.0-rc.7..0.1.1-rc.1.</li>
-          <li>Vira execução própria futura — decisão do usuário.</li>
+          <li>Cada integração corre o gate completo (build+typecheck, lint, testes, e2e, package:check).</li>
+          <li>Os gates corriam <strong>um de cada vez</strong> (serial) para não fabricar ruído de carga.</li>
+          <li>5 alvos de <em>timing</em> conhecidos: se o gate cair só neles, <strong>re-rodar 1x</strong>
+          antes de concluir gate-vermelho — e registar.</li>
+        </ul>
+      </div>
+      <div class="card-mini">
+        <h3>Surpresas de combinação</h3>
+        <ul>
+          <li>O único gate vermelho real foi uma <em>surpresa de combinação</em>: duas branches paralelas
+          criaram guardas que colidiram no snapshot integrado (cada uma passava isolada).</li>
+          <li>Classificado, corrigido no fix 1/2 e re-integrado — sem invalidar os gates anteriores.</li>
+        </ul>
+      </div>
+      <div class="card-mini">
+        <h3>Pesquisa externa — aposentada</h3>
+        <ul>
+          <li>Por decisão do utilizador, a <em>surf-skill</em> (pesquisa web automática) deixou de ser usada.</li>
+          <li>Tudo o que era externo foi <strong>medido localmente</strong>: logs do utilizador, instalador
+          real, pacotes publicados via gestor de pacotes, e o checkout do próprio harness.</li>
+          <li>A triagem de pesquisa das ondas ficou toda <code>NOT_NEEDED</code> — zero fatos por verificar.</li>
         </ul>
       </div>
     </div>
-    <p class="prose">Sobre o 8/9 do contract: a CONTRACT-008 <strong>já existia no main antes da
-    onda</strong> — verificada no commit-base 4378168 (o estado do main de partida), única falha.
-    Por isso o critério de verde adotado foi “sem falha
-    NOVA contra o baseline (o resultado conhecido do main antes da mudança; é ele que define o que
-    é falha nova)”.</p>
+
+    <h3 id="ondas">O ledger das 13 filhas</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Onda</th><th>Sub-tarefa (squash no main)</th><th>O que entrou</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3">1</td><td>fix-faixa-dsh (<code>e8ba0f8</code>)</td><td>faixa do <code>@deepseek-ai/dsh</code> revista — 0.1.5-rc.x incompatível; canário mantido vermelho por decisão</td></tr>
+          <tr><td>auditar-telegram (<code>0d70c3d</code>)</td><td>4 bugs corrigidos + 12 testes de regressão</td></tr>
+          <tr><td>apagar-discord (<code>0885d19</code>)</td><td>remoção completa + guarda perdida restaurada com prova por mutação</td></tr>
+          <tr><td rowspan="4">2</td><td>fix-flaky-provider (<code>1cfb56b</code>)</td><td>flaky PAIR-008 = relógio de parede não-isolado, p=1/1000; repôs <code>provider: telegram</code></td></tr>
+          <tr><td>contrato-capacidades (<code>4f2d8c9</code>)</td><td>contrato congelado; 15/15 citações file:line verificadas</td></tr>
+          <tr><td>test-onda1-guardas (<code>ddc9622</code>)</td><td>guardas estruturais da limpeza (ratchet por ocorrência exata, pinos ancorados)</td></tr>
+          <tr><td>fix-integracao (<code>6d92463</code>+<code>95eca5e</code>)</td><td>tarball/registos — promessas reescritas com bitola literal</td></tr>
+          <tr><td rowspan="3">3</td><td>superficie-tarefas (<code>eb0ad2d</code>)</td><td>4 comandos reais + 2 stubs substituídos (superfície)</td></tr>
+          <tr><td>host-tarefas (<code>e28bb28</code>)</td><td>chats/worktrees/métricas/dispatch real no host</td></tr>
+          <tr><td>test-onda2-guardas-contrato (<code>8b20010</code>)</td><td>guardas à bitola literal (lockstep bidirecional promessa×isenções)</td></tr>
+          <tr><td rowspan="3">4</td><td>instalar-e-repo (<code>6b416fa</code>)</td><td>457 artefatos + remoção de hooks + gate de instalação pelo link</td></tr>
+          <tr><td>docs-repo-novo (<code>79ba3ad</code>)</td><td>docs completas, URLs novas, notas <code>SECURITY:</code>, instalação confirmada</td></tr>
+          <tr><td>test-onda4-guardas (<code>43155b0</code>)</td><td>golden-master varre artefatos + gate de freshness ativo</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
-  <hr class="rule">
+  <section class="animate" style="--i:11">
+    <h2 id="numeros"><span class="num">10 ·</span> Números finais — medidos, não estimados</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Verificação</th><th>Resultado</th><th>Leitura</th></tr></thead>
+        <tbody>
+          <tr><td>testes unit+integração</td><td><span class="pill pill--ok">2490/2490</span> (0 skipped)</td><td>base de partida 2460 → +30 líquidos (+de 150 novos contra ~120 removidos com o Discord)</td></tr>
+          <tr><td>test:security</td><td><span class="pill pill--ok">136 pass</span> + 1 skip</td><td>o skip (ADV-025) é pré-existente e ficou intocado</td></tr>
+          <tr><td>test:e2e</td><td><span class="pill pill--ok">58/58</span></td><td>inclui o boot do Telegram e o install-by-link</td></tr>
+          <tr><td>lint · typecheck</td><td><span class="pill pill--ok">0 erros</span></td><td>avisos apenas, no estilo pré-existente do repo</td></tr>
+          <tr><td>test:contract</td><td><span class="pill pill--warn">8/9</span></td><td>CONTRACT-008 vermelho <strong>por decisão</strong> — ver abaixo</td></tr>
+          <tr><td>package:check</td><td><span class="pill pill--ok">verde</span></td><td>tarball 463–466 entradas · instalação pelo link com 942 ficheiros · freshness ativo</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-  <section class="animate" style="--i:9">
+    <div class="callout">
+      <strong>O único vermelho é um canário — e ficou vermelho de propósito.</strong> O CONTRACT-008 é um
+      teste de compatibilidade com o estado <em>publicado no npm</em>: avisou que a linha
+      <code>0.1.5-rc.x</code> do <code>@deepseek-ai/dsh</code> saiu do suportado (removeu
+      <code>SubprocessHandle.pid</code>, que este plugin usa). Escolher entre apagar o aviso ou mentir na
+      faixa suportada não era opção: a faixa ficou onde está, o canário ficou vermelho, o gate por-merge
+      foi reclassificado para não o incluir, e o caminho para o verde está documentado (em
+      <code>docs/plano/06-REPO-E-CI.md</code> §11.2) — incluído nos itens <em>fora de escopo</em>.
+    </div>
+  </section>
+
+  <section class="animate" style="--i:12">
+    <h2 id="ressalvas"><span class="num">11 ·</span> Ressalvas, não integrado e fora de escopo</h2>
+    <p class="prose">Primeiro o bom: <strong>nenhuma</strong> filha ficou em NEVER-MERGED ou
+    MERGED-PARTIAL — o ledger fecha tudo em MERGED ou DISPOSABLE. As ressalvas que ficaram são de texto e
+    de escopo, todas registadas de propósito:</p>
+    <div class="duas">
+      <div class="card-mini">
+        <h3>Ressalvas registadas (LOW)</h3>
+        <ul>
+          <li>Inventário do JSDoc omite uma variação de <code>renderIndexInjections</code> (06:1352).</li>
+          <li>O CONTRIBUTING ainda traz a «Nota CI» desatualizada (virou gate de freshness).</li>
+          <li>O <code>ci.yml</code> não corre <code>package:check</code>/freshness em PRs — pré-existente.</li>
+          <li>Paths de pesquisa <code>/home/ondokai</code> em <code>.d.ts</code> compilados (espelham a fonte; não são segredos).</li>
+          <li>Flaky residual ~1e-5 no TG-065 (endurecido, com 1 asserção vizinha ainda sensível).</li>
+        </ul>
+      </div>
+      <div class="card-mini">
+        <h3>Fora de escopo (decidido)</h3>
+        <ul>
+          <li>Migrar para o <code>@deepseek-ai/dsh</code> 0.1.5-rc.x — o caminho está documentado, passo a passo.</li>
+          <li>Multi-turno de chats pelo Telegram — os chats criados continuam conversáveis na Web UI.</li>
+          <li>Ligar o freshness no CI (o gate já existe e corre no <code>package:check</code>).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="animate" style="--i:13">
+    <h2 id="decisoes"><span class="num">12 ·</span> Decisões autónomas — o que foi decidido sem perguntar</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Decisão</th><th>Porquê (registado na execução)</th></tr></thead>
+        <tbody>
+          <tr><td>Nome do repo = <code>dsh-guard-messenger</code></td><td>igual ao nome do pacote; segue o padrão do plugin que já funcionava</td></tr>
+          <tr><td>Gates seriais + política de ruído</td><td>5 alvos de timing conhecidos; re-rodar 1x antes de concluir gate-vermelho, para não perseguir ruído de carga</td></tr>
+          <tr><td>Bitola literal em toda a afirmação absoluta</td><td>a execução foi mordida 5 vezes por promessas falsas; cada correção veio com prova por mutação</td></tr>
+          <tr><td>surf-skill aposentada</td><td>decisão do utilizador; todo o facto externo passou a ser medido localmente</td></tr>
+          <tr><td>Rename/About/topics via <code>gh</code> CLI</td><td>operação de metadado remoto (como o push); a violação de contenção do verify ficou registada</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="animate" style="--i:14">
     <h2 id="dobrado">Dobrado — para quem quer descer um nível</h2>
-    <p class="prose">O experiente pode parar aqui. O que segue é andaime: mapa de arquivos, as
-    perguntas falsificáveis com vereditos, e o registro fino de decisões e infra.</p>
+    <p class="prose">Tudo o que segue é detalhe técnico de apoio. Nenhum é necessário para entender as
+    cinco entregas; abre-se aqui para quem quiser ver as entranhas.</p>
 
     <details class="dobrado">
-      <summary>Tabela de buzzwords (fechada) — onde cada termo é definido</summary>
-      <div class="dobrado-body">
-        <p style="color: var(--muted-foreground); margin: 6px 0 10px;">Todo termo é definido no
-        ponto em que aparece pela primeira vez — esta tabela é só o índice.</p>
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Termo</th><th>Definido em</th></tr></thead>
-            <tbody>
-              <tr><td>DSH · plugin · túnel · bot · settings · home · tap/tapIndex · chrome</td><td>Pré-treino “Os personagens”</td></tr>
-              <tr><td>viewport · CSRF · meta</td><td>Segmento 1</td></tr>
-              <tr><td>slot (settings.section) · guarda anti-regressão · superfície · client</td><td>Segmento 2</td></tr>
-              <tr><td>nonce · estado projetado</td><td>Segmento 3</td></tr>
-              <tr><td>e2e · security (segurança) · skip</td><td>Tira de números no topo</td></tr>
-              <tr><td>squash-merge · worktree · onda · gate · contract · lint · typecheck · finishers · wip · snapshot</td><td>Segmento 5</td></tr>
-              <tr><td>propriedade herdada · Object.hasOwn · CONTRACT-008</td><td>Segmento 6</td></tr>
-              <tr><td>baseline · upstream · re-pin · registry</td><td>Segmento 7</td></tr>
-              <tr><td>espinho · LIFO · idempotente · CSP · flake</td><td>Dobrado (decisões e F1–F10)</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </details>
-
-    <details class="dobrado">
-      <summary>Mapa de arquivos por worktree (e o fix)</summary>
-      <div class="dobrado-body">
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr><th>Trabalho</th><th>Entrega</th><th>Arquivos (movimento)</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>1.1 · <span class="dt">onda1-remover-chrome-home</span></td>
-                <td>Tap da home removido por inteiro + guarda anti-regressão</td>
-                <td>src/index.ts (−1 costura) · src/ui-contrib/html.ts <strong>deletado</strong> (−372) · routes.ts (UI_PATH_CLIENT fora) · surface.ts (tapIndex fora de deps/disposer) · csrf.ts (só comentários) · test/unit/ui-contrib/: html.test.ts deletado (−184), routes, surface (teste de guarda novo), telegram, token</td>
-              </tr>
-              <tr>
-                <td>1.2 · <span class="dt">onda1-tunel-no-settings</span></td>
-                <td>Painel do túnel na aba Remote Access do settings</td>
-                <td>client/index.ts (+494, depois fix CSRF) · client/client.d.ts · client/guard-panel.css (+64) · test/unit/client/index.test.ts (+135 e revisões) · README.md reescrito · package.json (só description)</td>
-              </tr>
-              <tr>
-                <td>Subwaves · testes e fix</td>
-                <td>+21 testes de superfície, +24 do client, fix do rótulo herdado</td>
-                <td>test/unit/ui-contrib/chrome-removido.test.ts (14 testes unitários) · test/e2e/superficie-home-sem-chrome.test.ts (7 e2e) · test/unit/client/index.test.ts (18 testes unitários + 6 de casos-limite + 5 casos herdados) · client/index.ts (fix, +13/−1)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </details>
-
-    <details class="dobrado">
-      <summary>Perguntas falsificáveis (F1–F10) e vereditos</summary>
+      <summary><span class="dobrado-tag">detalhe</span>Os 4 bugs do Telegram, com o que a regressão fixa</summary>
       <div class="dobrado-body">
         <ul>
-          <li><span class="dobrado-tag">1.1</span> <strong>F1</strong> — a resposta de índice serve ZERO ocorrências de “dsh-guard-ui”? <em>Provada por estrutura + e2e (taps vazio após o descarrego, nas chamadas locais e via túnel).</em></li>
-          <li><span class="dobrado-tag">1.1</span> <strong>F2</strong> — GET api/csrf continua emitindo e o POST com x-dsh-csrf validando? <em>CSRF intacto (issue L1079 / verify L440).</em></li>
-          <li><span class="dobrado-tag">1.1</span> <strong>F3</strong> — o disposer reverte TUDO (LIFO — desfaz na ordem inversa do registro; idempotente — repetir não estraga nada) e não registra mais tapIndex, sem registro parcial em erro? <em>Confirmada.</em></li>
-          <li><span class="dobrado-tag">1.1</span> <strong>F4</strong> — não sobra código morto (renderChrome, createIndexTap, createClientScript, CHROME_MARKER, UI_PATH_CLIENT…)? <em>Zero código morto no escopo.</em></li>
-          <li><span class="dobrado-tag">1.1</span> <strong>F5</strong> — gate verde na worktree? <em>Sim.</em></li>
-          <li><span class="dobrado-tag">1.2</span> <strong>F6</strong> — card Túnel com os 6 estados rotulados PT e os 3 botões com as regras de botão certas? <em>Confirmada.</em></li>
-          <li><span class="dobrado-tag">1.2</span> <strong>F7</strong> — instruções “como ligar o bot” chegam e entram no DOM por textContent (nunca innerHTML)? <em>Confirmada (zero innerHTML no bundle).</em></li>
-          <li><span class="dobrado-tag">1.2</span> <strong>F8</strong> — nenhum POST quebra sem o meta antigo? <em>Fonte única api/csrf; falha vira “CSRF indisponível”.</em></li>
-          <li><span class="dobrado-tag">1.2</span> <strong>F9</strong> — a home não ganha NADA do plugin? <em>apply registra só settings.section; 0 injects além dele.</em></li>
-          <li><span class="dobrado-tag">1.2</span> <strong>F10</strong> — README e package.json descrevem a UI nova e a suíte passa? <em>Sim.</em></li>
-        </ul>
-        <p><em>Veredito das revisões adversariais: F1–F10 refutadas sem sucesso — APPROVE.</em></p>
-      </div>
-    </details>
-
-    <details class="dobrado">
-      <summary>Decisões menores e registro de infra</summary>
-      <div class="dobrado-body">
-        <ul>
-          <li><strong>Guarda implementada como espinho</strong> (dublê de teste que detecta se o gancho proibido voltou a ser chamado) do tapIndex em 2 camadas: no tipo e na execução.</li>
-          <li><strong>NaN documentado</strong> (client/index.ts:420): renderizaria “expira em NaN s”; o backend nunca envia NaN — fora de contrato, registrado.</li>
-          <li><strong>Fallback ao meta antigo removido do client</strong> — fonte única api/csrf; testes provam que meta residual é ignorado e que nenhum POST sai sem token.</li>
-          <li><strong>O client carrega via <code>__ModuleLoader__</code></strong> (o carregador de módulos do próprio DSH), não pela rota client.js removida — sem brecha de integração entre as duas metades.</li>
-          <li><strong>Páginas standalone do painel</strong> (src/panel/html.ts) são pré-existentes e com CSP (Content Security Policy — a política que restringe o que a página pode carregar e executar) travada — não são a home do DSH.</li>
-          <li><strong>test:cov travou</strong> (pré-existente, registrado); a falha intermitente de timing isolada 4/4 sob carga.</li>
-          <li><strong>Gate do fix travou 7h27m</strong> (hang do node --test — flake: falha intermitente de infraestrutura, não do código); re-run limpo confirmou 2460/2460.</li>
-          <li><strong>Cobertura escopada ≥80%</strong> (routes 90,64% · csrf/surface 100% · src/index.ts 86,01% linhas); cobertura do bundle do client estruturalmente não-mensurável pelo instrumentador de cobertura (o bundle roda via <code>new Function</code>) — justificada por caminhos.</li>
-          <li><strong>Falsificabilidade provada por mutação</strong>: abort do CSRF → falha por timeout; nonce afrouxado → o teste pega a diferença; artefato restaurado depois.</li>
-          <li><strong>Gaps documentados</strong> (teto da doutrina do repo, sem montar DOM real): fiação botão→handler não executada; ciclo de atualização por pin estático; render não exercitado por valor. Caminho futuro: teste de integração DOM real.</li>
-          <li><strong>Limpeza completa</strong>: worktrees filhas + snapshots removidos; branches arquivados em refs/do-archive/20260917-231253-1842425/.</li>
+          <li><span class="dt">TG-026</span> — <code>buildCallbackData</code> lançava <code>Error</code>
+          simples; passou a lançar a razão <code>CALLBACK_DATA_TOO_LONG</code> do vocabulário fechado.
+          Regressão: fronteira 64/65 bytes.</li>
+          <li><span class="dt">TG-089</span> — descartes <code>unknown</code> da superfície não eram
+          contados; agora conta-se todo o descarte. Regressão: contagem exata de 12.</li>
+          <li><span class="dt">S3</span> — o <code>catch</code> do <code>handleEvent</code> logava
+          <code>error.message</code> cru (único sink cru encontrado numa varredura de todos os logs);
+          passou a <code>describeForLog</code>. Regressão: canário de mascaramento.</li>
+          <li><span class="dt">contrato 10</span> — <code>create</code> sem <code>code</code>: token vazio
+          caía em exit 13; agora cai no CONFIG 10 do contrato. Regressão: caminho <code>create</code>.</li>
         </ul>
       </div>
     </details>
 
     <details class="dobrado">
-      <summary>Fontes — de onde vem cada fato</summary>
+      <summary><span class="dobrado-tag">detalhe</span>CONTRACT-008: o que o canário exatamente disse</summary>
+      <div class="dobrado-body">
+        <p>«<code>@deepseek-ai/dsh</code> latest = 0.1.5-rc.3: saiu das linhas
+        <code>0.1.0-rc.*|0.1.1-rc.*</code>.» A revisão da faixa confirmou a incompatibilidade: o membro
+        <code>SubprocessHandle.pid</code> foi <em>removido</em> desde 0.1.5-rc.1 (usado em
+        <code>src/tunnel/supervisor.ts</code>), e o <code>serveStatic</code> ganhou um parâmetro
+        obrigatório a 0.1.2-rc.1. Caminho ordenado para o verde: (1) adaptar o <code>src/</code> a viver
+        sem observabilidade de pid; (2) só depois re-pinar 0.1.5-rc.3 + cordis 4.0.2, regenerar os tipos e
+        alargar faixa e regex <em>no mesmo commit</em>. Fora de escopo desta execução.</p>
+      </div>
+    </details>
+
+    <details class="dobrado">
+      <summary><span class="dobrado-tag">detalhe</span>O flaky do relógio (p ≈ 1/1000) e como caiu</summary>
+      <div class="dobrado-body">
+        <p>O caso PAIR-008 do onboarding falhava ao acaso. Causa raiz medida ao byte: um relógio de parede
+        não-isolado — <code>registarAuditoria</code> usava <code>Date.now()</code>, o timestamp ISO levava
+        milissegundos, e a asserção procurava a substring «111» — que aparecia quando
+        <code>Date.now() % 1000 === 111</code>, probabilidade exata 1/1000. Fix: congelar o relógio nos
+        testes (instante fixo, restauração idempotente), zero asserções alteradas. Prova A/B com o relógio
+        forçado em ms=111: antes falhava com o <code>.111Z</code> exato, depois passa.</p>
+      </div>
+    </details>
+
+    <details class="dobrado">
+      <summary><span class="dobrado-tag">detalhe</span>As surpresas de combinação — quando branches paralelas colidem</summary>
+      <div class="dobrado-body">
+        <p>O único gate vermelho com culpa real: a sub-tarefa de guardas criou um ratchet que não conhecia
+        as <em>guard-strings</em> que a sub-tarefa de integração (em branch paralela) ia criar — cada suíte
+        passava isolada e colidiu no snapshot integrado (23 «resíduos novos» que eram, na verdade, as
+        próprias guardas anti-regressão). Classificado como <em>bug de combinação</em>, corrigido alinhando
+        o ratchet às classes nomeadas da promessa, re-integrado. Ensino: em trabalho paralelo, o teste que
+        nasceu num ramo pode não conhecer o mundo do outro — e é isso que a revisão do diff
+        <em>integrado</em> existe para apanhar.</p>
+      </div>
+    </details>
+
+    <details class="dobrado">
+      <summary><span class="dobrado-tag">detalhe</span>O ciclo de revisão adversarial, em números</summary>
       <div class="dobrado-body">
         <ul>
-          <li><span class="dt">fatos.md</span> — .deep-orchestrator/run-20260917-231253-1842425/explainer/fatos.md (fonte primária: tarefa, diagnóstico, D-01, ondas, commits, decisões, gates).</li>
-          <li><span class="dt">TASK_PLAN.md</span> — .deep-orchestrator/run-20260917-231253-1842425/TASK_PLAN.md (registro completo: verbatims das subwaves, F1–F10, handoffs, fix).</li>
-          <li>Números posteriores à escrita do fatos.md (subwaves concluídas), verificados no TASK_PLAN.md: 2460/2460 · e2e 63/63 · security 136 pass/1 skip · contract 8/9 · APPROVE ×2 dos revisores de teste · fix Object.hasOwn mergeado · 5 squash commits no total.</li>
-          <li>Nada foi acrescentado além do que esses dois arquivos registram — o repositório foi lido só como contexto.</li>
+          <li><span class="dt">14</span> revisores adversariais, um por diff (nunca o autor).</li>
+          <li><span class="dt">6</span> vereditos BLOCK/WARNING que levaram a ciclos de fix (teto de 2
+          ciclos por entrega; depois integra com ressalva listada — para não deixar mentiras originais no main).</li>
+          <li><span class="dt">~25</span> mutações de prova (quebrar de propósito para confirmar que o teste
+          reprova) — incluindo refazer as mutações do revisor para confirmar a reprodução.</li>
+          <li><span class="dt">5</span> promessas falsas corrigidas pela bitola literal.</li>
+          <li>Validação integrada por onda (validador de gates + revisor do diff integrado) antes de abrir a
+          seguinte; o COMMIT-FINAL só saiu com o plano esgotado e a convergência declarada.</li>
         </ul>
       </div>
     </details>
   </section>
 
   <footer>
-    <p>Explicação da execução <strong>20260917-231253-1842425</strong> do repositório
-    dsh-guard-messenger — remessa da UI do plugin para fora da home do DSH. O conteúdo vale
-    contra o main após <code>545d8f7</code> (5 squash commits, setembro de 2026); se o upstream
-    evoluir, a nota da CONTRACT-008 pode mudar. Arquivo self-contained: CSS embutido, favicon
-    inline e diagramas Mermaid 11 (paletas clara e escura).</p>
+    <p><strong>Fontes:</strong> <code>.deep-orchestrator/run-20260924-012356-3147443/explainer/fatos.md</code>
+    (fatos primários) e <code>.deep-orchestrator/run-20260924-012356-3147443/TASK_PLAN.md</code>
+    (handoffs, decisões e detalhe). Nenhum facto externo foi usado; onde os registos não dizem, esta página
+    também não diz.</p>
+    <p style="margin-top:8px">Diagramas em Mermaid 11 no shell canônico <code>diagram-shell</code> (zoom,
+    arraste, expandir). Tema Plannotator (tokens semânticos, claro/escuro). Página auto-contida — CSS
+    embutido e favicon próprio.</p>
   </footer>
 
 </div>
@@ -1016,7 +1446,7 @@ stateDiagram-v2
     || (colorScheme === 'normal'
       && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  // Tokens Mermaid LITERAIS (hex) — oklch/var não atravessam o limite do Mermaid.
+  // Tokens Mermaid LITERAIS (hex) — oklch/var nao atravessam o limite do Mermaid.
   const mermaidThemeVariables = isDark
     ? {
         darkMode: true,
@@ -1048,7 +1478,7 @@ stateDiagram-v2
         noteBorderColor: '#d4d8de'
       };
 
-  // Sinalização do caminho crítico por paleta (cores literais, compatíveis com o Mermaid).
+  // Sinalizacao de caminhos por paleta (cores literais, compativeis com o Mermaid).
   const critClass = isDark
     ? 'classDef crit fill:#33201d,stroke:#e08a7e,stroke-width:2.5px,color:#f6d9d4;'
     : 'classDef crit fill:#fdecea,stroke:#c0392b,stroke-width:2.5px,color:#6e211a;';
@@ -1077,11 +1507,9 @@ stateDiagram-v2
 
   const rerenderers = [];
 
-  // O primaryTextColor branco (certo sobre os nós violeta) é derivado pelo Mermaid para
-  // textos que caem sobre o FUNDO CLARO da página na paleta light — mensagens, rótulos de
-  // bloco alt, rótulos de aresta e pontas de seta da sequência. Este patch devolve o texto
-  // escuro (a família do lineColor) a esses elementos, sem tocar em nada sobre violeta.
-  // No dark os derivados já nascem claros sobre escuro — nada a fazer.
+  // O primaryTextColor branco (certo sobre nos violeta) e derivado pelo Mermaid para
+  // textos que caem sobre o FUNDO CLARO da pagina na paleta light. Este patch devolve o
+  // texto escuro a esses elementos; no dark os derivados ja nascem claros.
   function patchLegibilidade(svg) {
     if (isDark) {
       svg.querySelectorAll('.sequenceNumber').forEach((el) => { el.style.fill = '#1e242e'; });
@@ -1257,7 +1685,7 @@ stateDiagram-v2
       const bg = getComputedStyle(document.documentElement)
         .getPropertyValue('--background').trim() || (isDark ? '#070b14' : '#f3f5f9');
 
-      const html = '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">' +
+      const html = '<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">' +
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
         '<title>Diagrama</title><style>' +
         'body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;' +
@@ -1420,6 +1848,15 @@ stateDiagram-v2
   document.querySelectorAll('.diagram-shell').forEach(initDiagram);
 
   window.rerenderDiagrams = () => Promise.all(rerenderers.map((render) => render()));
+
+  // Andaime calibrado pelo leitor: abre/fecha apenas os blocos de andaime (data-andaime).
+  const blocosAndaime = () => document.querySelectorAll('details.dobrado[data-andaime]');
+  document.getElementById('abrir-andaime')?.addEventListener('click', () => {
+    blocosAndaime().forEach((d) => { d.open = true; });
+  });
+  document.getElementById('fechar-andaime')?.addEventListener('click', () => {
+    blocosAndaime().forEach((d) => { d.open = false; });
+  });
 </script>
 
 </body>
