@@ -50,18 +50,21 @@ linha `[Unreleased]` é substituído a cada `changeset version`.
   `test/unit/estrutural/golden-master.test.ts`, que precisa do nome para o procurar e dos paths
   das classes para as nomear (auto-isenção, agora nomeada). Fora destas classes não resta
   qualquer menção — e o recorte desta promessa é a **árvore versionada**. **Fora do recorte**
-  `node_modules/**` · `.git/**` · `.deep-orchestrator/**` · `dist/**` · `lib/**` — categorias
-  fora do recorte (dependências instaladas, controlo de versão, logs do orquestrador e emitidos de
-  build — rastreados no git desde o fix da instalação, mas continuam fora da varredura) que o
+  `node_modules/**` · `.git/**` · `.deep-orchestrator/**` — categorias
+  fora do recorte (dependências instaladas, controlo de versão e logs do orquestrador) que o
   grep cru sem exclusões também varre; a contagem nelas NÃO é facto e varia com a
-  instalação e com o clone. Facto estável, o único número desta promessa: git grep -il discord na
+  instalação e com o clone. Os emitidos de build (dist/lib, 457 artefactos rastreados no git
+  desde o fix da instalação) passam a ser VARRIDOS pelo guarda desde esta versão: o texto
+  compilado não pode trazer a literal de volta e um artefacto que a contenha é um achado a
+  reportar, nunca uma isenção. Facto estável, o único número desta promessa: git grep -il discord na
   árvore versionada devolve **10** ficheiros, exactamente as classes (a)-(d) acima (a verificação
-  `git grep -il discord | wc -l` dá 10, e o mesmo sai de `grep -ril discord .
-  --exclude-dir=node_modules --exclude-dir=.deep-orchestrator --exclude-dir=dist
-  --exclude-dir=lib --exclude-dir=.git`). O guarda
+  `git grep -il discord | wc -l` dá 10 — número com asserção no guarda —, e o mesmo sai de
+  `grep -ril discord . --exclude-dir=node_modules --exclude-dir=.deep-orchestrator
+  --exclude-dir=.git`). O guarda
   `test/unit/estrutural/golden-master.test.ts` impõe este texto em `pnpm test` nos DOIS sentidos —
   toda a isenção que ele concede está aqui nomeada (caso «lockstep») e toda a classe aqui nomeada
-  tem isenção viva no guarda — e qualquer menção nova fora das classes reprova, **excepto nos
+  tem isenção viva no guarda — e qualquer menção nova fora das classes reprova — incluindo nos emitidos de build dist/lib,
+  agora varridos, e nas variantes obfuscadas (dis-cord, dis cord) —, **excepto nos
   formatos que o guarda não varre**: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.ico`, `.svg`,
   `.tgz`, `.gz`, `.zip`, `.woff`, `.woff2`, `.ttf`, `.otf`, `.pdf`, `.lock`, `.tsbuildinfo`
   (logos, tarballs, fontes e artefactos de build; `.svg` e `.lock` são textuais e ficam de fora
@@ -74,8 +77,10 @@ linha `[Unreleased]` é substituído a cada `changeset version`.
   (2) o seu eco compilado em `dist/worker/providers/telegram/parse.js` (produto de build, hoje
   rastreado no git desde o fix da instalação) — o `clean` determinístico do `build:all` recompila
   sempre para uma árvore limpa, e
-  o que sobrar é build stale, fora do recorte. Não há pendências: se o `grep -ri discord` voltar
-  a encontrar o nome fora das classes acima, o golden master reprova o `pnpm test`.
+  o que sobrar é build stale que o golden master reprova —
+  os emitidos de build passaram a ser varridos. Não há pendências: se o `grep -ri discord` voltar
+  a encontrar o nome fora das classes acima — incluindo nos artefactos compilados, que o guarda
+  agora varre —, o golden master reprova o `pnpm test`.
 
   **SECURITY: exige ação do utilizador (migração):** quem tem `worker.provider: 'discord'` na
   configuração (o `INSTALL.md` antigo ensinava-o) tem de **remover a linha ou mudá-la para

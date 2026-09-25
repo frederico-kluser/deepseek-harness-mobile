@@ -139,6 +139,37 @@ describe('install-by-link — o que `dsh plugin add github:...` exige do repo', 
     }
   })
 
+  it('a lista REQUIRED do ciclo e2e cobre TODOS os entrypoints do manifest e o runtime (sem drift)', () => {
+    // O ciclo de ponta a ponta (`scripts/check-git-install.mjs`, passo do
+    // `package:check`) prova o install por link, mas a sua lista REQUIRED e
+    // MANUAL: sem esta coser, um entrypoint novo do manifest podia faltar no
+    // pacote INSTALADO e o gate continuava verde — o caso "entrypoint faltando
+    // na instalacao" so e apanhado se a lista o nomear. (O caso "entrypoint
+    // faltando no GIT" e coberto pelo it acima, que deriva os alvos do
+    // manifest e exige-os em `git ls-files`.)
+    const fonte = readFileSync(join(RAIZ, 'scripts/check-git-install.mjs'), 'utf8')
+    // O bloco fecha em `]` na coluna 0: os comentarios dos itens levam `]`
+    // (`exports["."]`) e um `\[...\]` guloso parava la.
+    const bloco = /const REQUIRED = \[([\s\S]*?)\n\]/.exec(fonte)
+    assert.ok(bloco, 'scripts/check-git-install.mjs deixou de declarar REQUIRED')
+    const required = [...(bloco[1] ?? '').matchAll(/'([^']*)'/g)].map((m) => m[1] ?? '')
+    assert.ok(required.length >= 9, `REQUIRED do e2e encolheu: ${required.join(', ')}`)
+    // Os alvos derivados do manifest (entrypoints + bundle) MAIS o que o
+    // manifest nao declara mas o runtime exige (entry do worker e o modulo que
+    // ele importa).
+    const obrigados = [
+      ...alvosDeEntrada(),
+      'dist/worker/telegram-bot.js',
+      'dist/src/contracts/ipc.js',
+    ]
+    const faltantes = obrigados.filter((alvo) => !required.includes(alvo))
+    assert.deepEqual(
+      faltantes,
+      [],
+      `entrypoints fora da lista REQUIRED do e2e — "faltou X na instalacao por link" deixaria de ser apanhado: ${faltantes.join(', ')}`,
+    )
+  })
+
   it('dsh.bundle.patch esta declarado, rastreado e coberto (sem ele o dsh plugin add nao ativa a bundle)', (t) => {
     const patch = pkg.dsh?.bundle?.patch
     assert.equal(patch, './cordis.patch.yml', 'dsh.bundle.patch tem de apontar para ./cordis.patch.yml (bundle: {} vazio nao ativa nada)')

@@ -9,7 +9,8 @@
  *
  *   1. copia os ficheiros RASTREADOS pelo git (`git ls-files`) para um repo
  *      sintetico em tmpdir - ou seja, exatamente o que um clone/codeload do
- *      GitHub entrega (nada de `dist/`/`lib/` gitignored, nada de `node_modules`);
+ *      GitHub entrega (os artefactos `dist/`/`lib/` sao COMMITADOS de proposito
+ *      e vao na copia; `node_modules` e que nao entra);
  *   2. `pnpm add git+file://<repo-sintetico>` num consumidor limpo, SEM
  *      `allowBuilds` no pnpm-workspace.yaml (como nas instalacoes reais);
  *   3. afirma que o pacote instalado CONTEM os artefactos compilados e o

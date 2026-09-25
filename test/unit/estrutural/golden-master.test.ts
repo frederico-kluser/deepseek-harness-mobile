@@ -26,8 +26,11 @@
  *       e dos paths das classes para as nomear; o CONTEUDO dele e auto-isento
  *       e o CAMINHO entra na varredura (prova de que o walker chegou aqui).
  * Fora do recorte (nao sao ficheiros de repo): `.deep-orchestrator/**` (logs
- * do orquestrador, gitignored) e os emitidos `dist/`/`lib/` da raiz (ver
- * DIRS_FORA) — um `grep -ri` sem exclusoes tambem por la passa.
+ * do orquestrador, gitignored). Os emitidos `dist/`/`lib/` da raiz — RASTREADOS
+ * pelo git desde o fix da instalacao (6b416fa), 457 artefactos commitados —
+ * estao DENTRO da varredura desde esta versao: o texto compilado nao pode
+ * trazer a literal de volta (o fonte nao a tem; se um artefato a trouxer, isso
+ * e um ACHADO a reportar, nunca uma isencao).
  *
  * ESTADO ATUAL: o residuo que reprovava o contrato (um comentario de producao
  * em `worker/providers/telegram/parse.ts:389`) foi CORRIGIDO e o caso do
@@ -41,6 +44,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,10 +55,13 @@ const EU = resolve(fileURLToPath(import.meta.url))
 
 /**
  * Diretorios que NAO sao ficheiro-atual-de-repo: controlo de versao,
- * dependencias instaladas, estado local do orquestrador e EMITIDOS de build
- * (`dist/`/`lib/` da RAIZ — `worker/lib/` e FONTE e continua a ser varrido).
+ * dependencias instaladas e estado local do orquestrador. Os emitidos de build
+ * (`dist/`/`lib/` da RAIZ) ja NAO estao aqui: sao RASTREADOS pelo git desde o
+ * fix da instalacao e passaram a ser varridos como qualquer ficheiro atual
+ * (`worker/lib/` e FONTE e sempre foi varrido; `lib/` da raiz e o emitido do
+ * client).
  */
-const DIRS_FORA = new Set(['.git', 'node_modules', 'dist', '.deep-orchestrator'])
+const DIRS_FORA = new Set(['.git', 'node_modules', '.deep-orchestrator'])
 
 /** Extensoes nao-texto (logos, tarballs, fontes) + artefactos de build. */
 const EXTS_FORA = new Set([
@@ -98,19 +105,49 @@ interface Mencoes {
  * O TERMO procurado, montado em tempo de execucao: o nome do provedor removido
  * (e variantes coladas simples, ex. `dis-cord`), em qualquer caixa. Montado
  * por partes para este ficheiro nao se citar a si mesmo no `grep` futuro. As
- * variantes sao limitadas a UM separador: com `\S*` aberto, o cruzamento entre
- * duas ocorrencias de `cordis` (lockfiles, espelhos `types/`) casava falso.
+ * variantes coladas sao limitadas a UM separador: com `\S*` aberto, o cruzamento
+ * entre duas ocorrencias de `cordis` (lockfiles, espelhos `types/`) casava
+ * falso. A varredura e de CONTEUDO INTEIRO (a regex e aplicada ao ficheiro
+ * todo; `[-_.]?` nunca casa uma quebra de linha, por aqui o resultado e o mesmo
+ * da antiga varredura por linha) — a linha do relato vem do offset do match.
  */
-const TERMOS = new RegExp(`${'dis'}[-_.]?${'cord'}`, 'iu')
+const TERMOS = new RegExp(`${'dis'}[-_.]?${'cord'}`, 'giu')
+
+/**
+ * A variante ESPACADA/ESCAPADA — o obfuscador barato que passava pelos DOIS
+ * guardioes: nao casa o `git grep -il discord` (a contagem) nem o TERMOS
+ * colado. Casa `dis` + uma CORRIDA de (whitespace | escape `\n`/`\t`/`\r`
+ * literal de minificado) + `cord`, sobre o CONTEUDO INTEIRO: uma mencao
+ * dividida por quebra de linha (`dis` no fim de uma linha, `cord` no inicio da
+ * seguinte) e apanhada, e tambem a forma escapada que vive dentro de strings
+ * minificadas. A UNICA protecao de cruzamento e `(?<!cor)`: `cordis` termina em
+ * `dis` e a ocorrencia seguinte comeca em `cord`, por isso sem ela o par
+ * `cordis\ncordis` dos espelhos `types/` casava falso (medido: continua
+ * bloqueado com whitespace e com escapes). NAO ha ancoras de palavra — e uma
+ * correcao deliberada face a `(?<![a-z])`/`(?![a-z])`: o repro obrigatorio da
+ * revisao (`xxdis\ncordxx`, embebido em letras) passava com as ancoras de
+ * palavra (medido), e a mencao embebida e exatamente a forma de minificado que
+ * esta aqui para apanhar (repro: `printf 'xxdis\ncordxx\n' >> dist/index.js`
+ * tem de reprovar o `pnpm test`).
+ */
+const TERMOS_ESPACADO = new RegExp(String.raw`(?<!cor)${'dis'}(?:\s|\\[nrt])+${'cord'}`, 'giu')
+
+/** Os dois matchers, aplicados ao CONTEUDO INTEIRO de cada ficheiro varrido. */
+const TERMOS_TODOS: readonly RegExp[] = [TERMOS, TERMOS_ESPACADO]
+
+/** A linha (1-based) de um offset num conteudo — para o relato `caminho:linha`. */
+function linhaDe(texto: string, offset: number): number {
+  let linha = 1
+  for (let i = 0; i < offset; i += 1) if (texto.charAt(i) === '\n') linha += 1
+  return linha
+}
 
 function varrer(dir: string, acc: Mencoes): void {
-  const naRaiz = resolve(dir) === resolve(RAIZ)
   for (const entrada of readdirSync(dir, { withFileTypes: true })) {
     const caminho = join(dir, entrada.name)
     const rel = relative(RAIZ, caminho).split(sep).join('/')
     if (entrada.isDirectory()) {
       if (DIRS_FORA.has(entrada.name)) continue
-      if (naRaiz && entrada.name === 'lib') continue // emitido do client (gitignorado)
       if (eHistoria(rel + '/')) continue
       varrer(caminho, acc)
       continue
@@ -124,9 +161,15 @@ function varrer(dir: string, acc: Mencoes): void {
     const euSouEu = caminho === EU
     acc.ficheiros.push(rel)
     if (euSouEu) continue
-    const linhas = readFileSync(caminho, 'utf8').split('\n')
-    for (let i = 0; i < linhas.length; i += 1) {
-      if (TERMOS.test(linhas[i] ?? '')) acc.linhas.push(`${rel}:${String(i + 1)}`)
+    const texto = readFileSync(caminho, 'utf8')
+    const vistas = new Set<string>()
+    for (const termo of TERMOS_TODOS) {
+      for (const achado of texto.matchAll(termo)) {
+        const marcador = `${rel}:${String(linhaDe(texto, achado.index))}`
+        if (vistas.has(marcador)) continue
+        vistas.add(marcador)
+        acc.linhas.push(marcador)
+      }
     }
   }
 }
@@ -186,10 +229,10 @@ function literaisDasIsencoes(): string[] {
     ...EXACTOS_HISTORIA,
     // (b) guard-strings — os 3 paths exatos
     ...GUARDAS_ANTIREGRESSION,
-    // FORA DO RECORTE — dirs nao-varridos (nome, qualquer profundidade) + o
-    // emitido da RAIZ (`naRaiz && name === 'lib'`)
+    // FORA DO RECORTE — dirs nao-varridos (nome, qualquer profundidade). Os
+    // emitidos `dist/`/`lib/` da raiz deixaram de ser isencao: sao rastreados
+    // e estao DENTRO da varredura.
     ...Array.from(DIRS_FORA).map((dir) => `${dir}/**`),
-    'lib/**',
     // FORA DO RECORTE — extensoes nao-varridas (a lista de formatos tem de
     // estar NOMEADA na promessa: `.svg`/`.lock` sao textuais e ficam de fora)
     ...EXTS_FORA,
@@ -258,11 +301,6 @@ function provasDeIsencaoViva(): Array<{ literal: string; prova: () => void }> {
           `a varredura entrou em ${dir}/ — o dir ja nao e isento`,
         ),
     })),
-    {
-      literal: 'lib/**',
-      prova: () =>
-        assert.ok(!ficheiros.some((f) => f.startsWith('lib/')), 'a varredura entrou em lib/ da raiz — o emitido ja nao e isento'),
-    },
     ...Array.from(EXTS_FORA).map((ext) => ({
       literal: ext,
       prova: () =>
@@ -286,17 +324,52 @@ function promessasExistentes(): Array<{ nome: string; texto: string }> {
   return vivas.map((c) => ({ nome: c.nome, texto: readFileSync(c.caminho, 'utf8') }))
 }
 
+/**
+ * O FACTO ESTAVEL, o UNICO numero da promessa: `git grep -il discord` na
+ * arvore versionada devolve 10 ficheiros, exactamente as classes (a)-(d).
+ * Pinned aqui porque um numero sem assercao e prosa: se a arvore mudar, o
+ * lockstep exige atualizar promessa E guarda juntos.
+ */
+const ARVORE_VERSIONADA_ESPERADA: readonly string[] = [
+  '.changeset/remocao-provedor-discord.md', // (a) registro da remocao
+  'CHANGELOG.md', // (a) registro da remocao
+  'docs/plano/02-SEGURANCA.md', // (c) arquivo historico
+  'docs/plano/07-COMUNIDADE.md', // (c)
+  'docs/plano/08-PESQUISA-E-FONTES.md', // (c)
+  'docs/plano/manifesto.md', // (c)
+  'package.json', // (b) guard-string
+  'scripts/check-tarball.mjs', // (b) guard-string
+  'test/unit/estrutural/golden-master.test.ts', // (d) o proprio guarda
+  'test/unit/scripts/release-artefacts.test.ts', // (b) guard-string
+]
+
+/** Motivo do SALTO sem git/repo (vermelho de ambiente, nao de comportamento). */
+function motivoDeSaltoGit(): string | undefined {
+  try {
+    execFileSync('git', ['-C', RAIZ, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' })
+    return undefined
+  } catch {
+    return 'sem git ou sem repo em ' + RAIZ + ' — o facto estavel da promessa mede `git grep` na arvore versionada'
+  }
+}
+
 describe('golden master da limpeza — nenhuma mencao ao provedor removido fora das classes nomeadas', () => {
   it('a varredura cobre MESMO a arvore inteira (guarda anti-vazio)', () => {
     const { ficheiros } = mencoesForaDaHistoria()
     // Sem esta checagem, um bug no walker tornaria todos os casos verdes por
-    // varrer zero ficheiros — o classico guarda vazio.
+    // varrer zero ficheiros — o classico guarda vazio. Os emitidos `dist/` e
+    // `lib/` tambem sao obrigatorios: sao RASTREADOS desde o fix da instalacao
+    // e a promessa cobre-os (457 artefatos, varridos desde a escolha (a)).
     for (const obrigatorio of [
       'worker/providers/registry.ts',
       'worker/providers/telegram/parse.ts',
       'src/proc/env.ts',
       'package.json',
       'cordis.patch.yml',
+      'dist/index.js',
+      'dist/worker/telegram-bot.js',
+      'lib/client.js',
+      'lib/client.d.ts',
       'test/unit/estrutural/golden-master.test.ts',
     ]) {
       assert.ok(
@@ -304,7 +377,7 @@ describe('golden master da limpeza — nenhuma mencao ao provedor removido fora 
         `a varredura nao chegou a ${obrigatorio} — o walker regrediu`,
       )
     }
-    assert.ok(ficheiros.length > 50, 'a varredura leu poucos ficheiros')
+    assert.ok(ficheiros.length > 400, `a varredura leu poucos ficheiros (${String(ficheiros.length)}) — os emitidos estao de fora?`)
   })
 
   it('as isencoes sao EXATAMENTE as classes nomeadas (nada escapa por typo)', () => {
@@ -357,7 +430,7 @@ describe('golden master da limpeza — nenhuma mencao ao provedor removido fora 
     // listas sao EXTRAIDAS do texto da promessa (code-spans entre ancoras) e
     // comparadas com as constantes nos DOIS sentidos: uma classe citada a mais
     // (inventada) ou a menos reprova aqui.
-    const foraDeRecorte = [...Array.from(DIRS_FORA).map((dir) => `${dir}/**`), 'lib/**'].toSorted()
+    const foraDeRecorte = Array.from(DIRS_FORA).map((dir) => `${dir}/**`).toSorted()
     const formatosNaoVarridos = Array.from(EXTS_FORA).toSorted()
     for (const promessa of promessasExistentes()) {
       // (i) a lista «fora do recorte» e EXATAMENTE as categorias nao-varridas do guarda
@@ -428,6 +501,61 @@ describe('golden master da limpeza — nenhuma mencao ao provedor removido fora 
       assert.ok(
         linhas.some((m) => m.slice(0, m.lastIndexOf(':')) === guarda),
         `a guard-string de ${guarda} desapareceu — a isencao da classe (b) ficou vazia`,
+      )
+    }
+  })
+
+  it('os emitidos de build (dist/ e lib/) estao DENTRO da varredura — 457 artefactos, zero isencao', () => {
+    // Escolha (a) do gap da revisao integrada da onda 3: `dist/**` e `lib/**`
+    // eram saltados (DIRS_FORA + skip root-lib) por serem gitignorados — desde
+    // o fix da instalacao (6b416fa) os 457 artefactos estao RASTREADOS e a
+    // promessa declara "qualquer mencao nova fora das classes reprova". O
+    // texto compilado nao pode trazer a literal de volta: se algum artefato a
+    // trouxer, isso e um ACHADO a reportar, nunca uma isencao.
+    const { ficheiros } = mencoesForaDaHistoria()
+    const emitidos = ficheiros.filter((f) => f.startsWith('dist/') || f.startsWith('lib/'))
+    assert.ok(
+      emitidos.length >= 450,
+      `a varredura so levou ${String(emitidos.length)} emitidos — os artefactos commitados estao de fora`,
+    )
+    // NENHUM emitido volta a entrar na lista de nao-varridos: a isencao morreu
+    // com a escolha (a) e o lockstep deriva as constantes — se `dist` voltar a
+    // DIRS_FORA ou o skip root-lib renascer, o anti-vazio acima reprova.
+    assert.ok(
+      !emitidos.some((f) => eHistoria(f)),
+      'um emitido caiu numa isencao de historia — a varredura dos artefactos foi furada',
+    )
+  })
+
+  it('o FACTO ESTAVEL da promessa: `git grep -il discord` devolve 10 ficheiros, exactamente as classes (a)-(d)', (t) => {
+    // O UNICO numero da promessa ganha assercao: um numero sem assercao e
+    // prosa. Medido com o PROPRIO comando nomeado na promessa, sobre a arvore
+    // versionada (o que o clone/codeload entrega). Cada ficheiro encontrado
+    // tem de ser classe nomeada — (a) registos, (b) guard-strings, (c)
+    // historico, (d) o proprio guarda.
+    const salto = motivoDeSaltoGit()
+    if (salto !== undefined) return t.skip(salto)
+    let encontrados: string[]
+    try {
+      encontrados = execFileSync('git', ['-C', RAIZ, 'grep', '-il', 'discord'], { encoding: 'utf8' })
+        .split('\n')
+        .filter(Boolean)
+    } catch (error) {
+      // `git grep` sai em 1 sem matches — zero mencoes tambem reprova: a
+      // promessa declara 10, nao 0.
+      const e = error as { stdout?: string }
+      encontrados = (e.stdout ?? '').split('\n').filter(Boolean)
+    }
+    assert.deepEqual(
+      encontrados.toSorted(),
+      [...ARVORE_VERSIONADA_ESPERADA].toSorted(),
+      'o facto estavel (10 ficheiros da arvore versionada) mudou — atualizar a promessa E este guarda em lockstep',
+    )
+    const euRel = relative(RAIZ, EU).split(sep).join('/')
+    for (const encontrado of encontrados) {
+      assert.ok(
+        eHistoria(encontrado) || GUARDAS_ANTIREGRESSION.includes(encontrado) || encontrado === euRel,
+        `${encontrado} contem a literal mas NAO e classe nomeada (a)-(d)`,
       )
     }
   })
